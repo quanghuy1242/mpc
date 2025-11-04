@@ -1,0 +1,23 @@
+[package]
+name = "bridge-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bridge-traits = { path = "../bridge-traits" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+
+# Desktop-specific dependencies
+reqwest = { workspace = true }
+keyring = { workspace = true, optional = true }
+
+[features]
+default = ["secure-store"]
+secure-store = ["keyring"]

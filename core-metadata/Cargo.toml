@@ -1,0 +1,31 @@
+[package]
+name = "core-metadata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bridge-traits = { path = "../bridge-traits" }
+core-runtime = { path = "../core-runtime" }
+core-library = { path = "../core-library" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+sha2 = { workspace = true }
+
+# Audio tag extraction
+lofty = { workspace = true }
+
+# Image processing (for artwork)
+image = { workspace = true }
+
+[features]
+lyrics = []
+artwork-remote = []
+
+[dev-dependencies]
+mockall = { workspace = true }

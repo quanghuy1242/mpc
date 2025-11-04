@@ -1,0 +1,35 @@
+[package]
+name = "core-playback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bridge-traits = { path = "../bridge-traits" }
+core-runtime = { path = "../core-runtime" }
+core-auth = { path = "../core-auth" }
+core-library = { path = "../core-library" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+
+# Audio decoding
+symphonia = { workspace = true, optional = true }
+
+# Cache management
+lru = { workspace = true }
+
+# Optional: encryption for offline cache
+aes-gcm = { version = "0.10", optional = true }
+
+[features]
+default = ["core-decoder"]
+core-decoder = ["symphonia"]
+offline-cache = ["aes-gcm"]
+
+[dev-dependencies]
+mockall = { workspace = true }

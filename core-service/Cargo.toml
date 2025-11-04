@@ -1,0 +1,42 @@
+[package]
+name = "core-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+core-runtime = { path = "../core-runtime" }
+core-auth = { path = "../core-auth" }
+core-sync = { path = "../core-sync" }
+core-library = { path = "../core-library" }
+core-metadata = { path = "../core-metadata" }
+core-playback = { path = "../core-playback" }
+bridge-traits = { path = "../bridge-traits" }
+bridge-desktop = { path = "../bridge-desktop", optional = true }
+
+provider-google-drive = { path = "../provider-google-drive" }
+provider-onedrive = { path = "../provider-onedrive" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+
+# Optional FFI support
+uniffi = { workspace = true, optional = true }
+
+# Optional WASM support
+wasm-bindgen = { workspace = true, optional = true }
+
+[features]
+default = ["desktop-shims"]
+desktop-shims = ["bridge-desktop"]
+ffi = ["uniffi"]
+wasm = ["wasm-bindgen"]
+lyrics = ["core-metadata/lyrics"]
+artwork-remote = ["core-metadata/artwork-remote"]
+offline-cache = ["core-playback/offline-cache"]
+
+[dev-dependencies]
+mockall = { workspace = true }

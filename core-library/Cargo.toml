@@ -1,0 +1,20 @@
+[package]
+name = "core-library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+core-runtime = { path = "../core-runtime" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }

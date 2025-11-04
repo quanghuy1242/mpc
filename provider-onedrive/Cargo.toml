@@ -1,0 +1,22 @@
+[package]
+name = "provider-onedrive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bridge-traits = { path = "../bridge-traits" }
+core-runtime = { path = "../core-runtime" }
+core-auth = { path = "../core-auth" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
