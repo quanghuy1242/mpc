@@ -142,7 +142,7 @@ mod tests {
     #[tokio::test]
     async fn test_network_monitor_creation() {
         let _monitor = DesktopNetworkMonitor::new();
-        assert!(true); // Just verify it constructs
+        // Just verify it constructs
     }
 
     #[tokio::test]

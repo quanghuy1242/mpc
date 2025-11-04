@@ -34,20 +34,20 @@
 //! }
 //! ```
 
-mod http;
-mod filesystem;
-mod settings;
-mod network;
 mod background;
+mod filesystem;
+mod http;
+mod network;
+mod settings;
 
 #[cfg(feature = "secure-store")]
 mod secure_store;
 
-pub use http::ReqwestHttpClient;
+pub use background::{DesktopLifecycleObserver, TokioBackgroundExecutor};
 pub use filesystem::TokioFileSystem;
-pub use settings::SqliteSettingsStore;
+pub use http::ReqwestHttpClient;
 pub use network::DesktopNetworkMonitor;
-pub use background::{TokioBackgroundExecutor, DesktopLifecycleObserver};
+pub use settings::SqliteSettingsStore;
 
 #[cfg(feature = "secure-store")]
 pub use secure_store::KeyringSecureStore;

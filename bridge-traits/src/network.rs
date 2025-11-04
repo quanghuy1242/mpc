@@ -74,7 +74,10 @@ pub trait NetworkMonitor: Send + Sync {
     async fn is_connected(&self) -> bool {
         matches!(
             self.get_network_info().await,
-            Ok(NetworkInfo { status: NetworkStatus::Connected, .. })
+            Ok(NetworkInfo {
+                status: NetworkStatus::Connected,
+                ..
+            })
         )
     }
 
@@ -94,7 +97,10 @@ pub trait NetworkMonitor: Send + Sync {
     async fn is_metered(&self) -> bool {
         matches!(
             self.get_network_info().await,
-            Ok(NetworkInfo { is_metered: true, .. })
+            Ok(NetworkInfo {
+                is_metered: true,
+                ..
+            })
         )
     }
 

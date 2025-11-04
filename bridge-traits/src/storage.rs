@@ -82,16 +82,22 @@ pub trait FileSystemAccess: Send + Sync {
     /// Open a file for streaming reads
     ///
     /// This is more efficient than `read_file` for large files.
-    async fn open_read_stream(&self, path: &Path) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
+    async fn open_read_stream(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
 
     /// Open a file for streaming writes
-    async fn open_write_stream(&self, path: &Path) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>;
+    async fn open_write_stream(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>;
 
     /// Calculate total size of a directory recursively
     async fn directory_size(&self, path: &Path) -> Result<u64> {
         let mut total = 0u64;
         let entries = self.list_directory(path).await?;
-        
+
         for entry in entries {
             let metadata = self.metadata(&entry).await?;
             if metadata.is_directory {
@@ -100,7 +106,7 @@ pub trait FileSystemAccess: Send + Sync {
                 total += metadata.size;
             }
         }
-        
+
         Ok(total)
     }
 }

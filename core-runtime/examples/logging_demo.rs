@@ -17,8 +17,10 @@
 //! cargo run --example logging_demo -- pretty "core_runtime=trace"
 //! ```
 
-use core_runtime::logging::{init_logging, redact_if_sensitive, strip_path, LogFormat, LoggingConfig};
 use bridge_traits::time::LogLevel;
+use core_runtime::logging::{
+    init_logging, redact_if_sensitive, strip_path, LogFormat, LoggingConfig,
+};
 use std::env;
 use tracing::{debug, error, info, instrument, span, trace, warn, Level};
 
@@ -26,12 +28,13 @@ use tracing::{debug, error, info, instrument, span, trace, warn, Level};
 async fn main() {
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
-    
+
     let format = if args.len() > 1 {
         match args[1].as_str() {
             "json" => LogFormat::Json,
             "compact" => LogFormat::Compact,
-            "pretty" | _ => LogFormat::Pretty,
+            "pretty" => LogFormat::Pretty,
+            _ => LogFormat::Pretty,
         }
     } else {
         LogFormat::default()
@@ -90,7 +93,7 @@ fn demo_structured_logging() {
     let _enter = span.enter();
 
     info!("Simple message without fields");
-    
+
     info!(
         track_id = "12345",
         title = "Song Title",
@@ -111,11 +114,11 @@ async fn demo_spans() {
     let _enter = span.enter();
 
     info!("Starting sync operation");
-    
+
     {
         let inner_span = span!(Level::DEBUG, "list_files");
         let _inner = inner_span.enter();
-        
+
         debug!(count = 150, "Listed files from provider");
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
@@ -123,7 +126,7 @@ async fn demo_spans() {
     {
         let inner_span = span!(Level::DEBUG, "download_metadata");
         let _inner = inner_span.enter();
-        
+
         debug!(processed = 50, total = 150, "Downloading metadata");
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
@@ -155,7 +158,7 @@ fn demo_pii_redaction() {
 #[instrument]
 async fn demo_instrumentation() {
     info!("Instrumented function automatically creates spans");
-    
+
     let items = vec!["item1", "item2", "item3"];
     process_items(&items).await;
 }
@@ -163,11 +166,11 @@ async fn demo_instrumentation() {
 #[instrument(fields(count = items.len()))]
 async fn process_items(items: &[&str]) {
     debug!("Processing items");
-    
+
     for (idx, item) in items.iter().enumerate() {
         process_item(idx, item).await;
     }
-    
+
     info!("All items processed");
 }
 

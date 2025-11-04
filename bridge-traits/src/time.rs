@@ -168,7 +168,7 @@ impl LoggerSink for ConsoleLogger {
                 LogLevel::Warn => "WARN",
                 LogLevel::Error => "ERROR",
             };
-            
+
             println!(
                 "[{}] {} {}: {}",
                 entry.timestamp.format("%Y-%m-%d %H:%M:%S%.3f"),
@@ -176,7 +176,7 @@ impl LoggerSink for ConsoleLogger {
                 entry.target,
                 entry.message
             );
-            
+
             if !entry.fields.is_empty() {
                 println!("  Fields: {:?}", entry.fields);
             }
@@ -198,7 +198,7 @@ mod tests {
         let clock = SystemClock;
         let now = clock.now();
         let timestamp = clock.unix_timestamp();
-        
+
         assert!(timestamp > 0);
         assert!(now.timestamp() == timestamp);
     }
@@ -220,7 +220,7 @@ mod tests {
     async fn test_console_logger() {
         let logger = ConsoleLogger::default();
         let entry = LogEntry::new(LogLevel::Info, "test", "Test log");
-        
+
         logger.log(entry).await.unwrap();
     }
 }

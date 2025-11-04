@@ -233,7 +233,7 @@ mod tests {
     fn test_task_id() {
         let id1 = TaskId::new("sync_job");
         let id2 = TaskId::new("sync_job");
-        
+
         assert_eq!(id1, id2);
     }
 }

@@ -10,8 +10,9 @@
 //!
 //! ## Example
 //!
-//! ```no_run
-//! use core_service::{CoreService, CoreConfig};
+//! ```ignore
+//! use core_service::CoreService;
+//! use core_runtime::config::CoreConfig;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

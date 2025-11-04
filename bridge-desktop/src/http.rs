@@ -103,7 +103,7 @@ impl ReqwestHttpClient {
             match req_builder.send().await {
                 Ok(response) => {
                     let status = response.status().as_u16();
-                    
+
                     // Check if we should retry on this status code
                     if status >= 500 || status == 429 {
                         warn!(
@@ -145,7 +145,9 @@ impl ReqwestHttpClient {
                     );
 
                     if e.is_timeout() {
-                        last_error = Some(BridgeError::OperationFailed("Request timed out".to_string()));
+                        last_error = Some(BridgeError::OperationFailed(
+                            "Request timed out".to_string(),
+                        ));
                     } else if e.is_connect() {
                         last_error = Some(BridgeError::OperationFailed(format!(
                             "Connection failed: {}",
@@ -190,7 +192,8 @@ impl Default for ReqwestHttpClient {
 impl HttpClient for ReqwestHttpClient {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse> {
         // Use default retry policy
-        self.execute_with_retry(request, RetryPolicy::default()).await
+        self.execute_with_retry(request, RetryPolicy::default())
+            .await
     }
 
     async fn execute_with_retry(
@@ -219,9 +222,7 @@ impl HttpClient for ReqwestHttpClient {
             )));
         }
 
-        let stream = response
-            .bytes_stream()
-            .map_err(std::io::Error::other);
+        let stream = response.bytes_stream().map_err(std::io::Error::other);
 
         use futures_util::TryStreamExt;
         let reader = tokio_util::io::StreamReader::new(stream);
@@ -246,7 +247,7 @@ mod tests {
     #[tokio::test]
     async fn test_http_client_creation() {
         let _client = ReqwestHttpClient::new();
-        assert!(true); // Just verify it constructs
+        // Just verify it constructs
     }
 
     #[tokio::test]

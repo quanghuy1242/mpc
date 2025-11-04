@@ -52,10 +52,12 @@ impl HttpRequest {
     }
 
     pub fn json<T: Serialize>(mut self, body: &T) -> Result<Self> {
-        let json = serde_json::to_vec(body)
-            .map_err(|e| BridgeError::OperationFailed(format!("JSON serialization failed: {}", e)))?;
+        let json = serde_json::to_vec(body).map_err(|e| {
+            BridgeError::OperationFailed(format!("JSON serialization failed: {}", e))
+        })?;
         self.body = Some(Bytes::from(json));
-        self.headers.insert("Content-Type".to_string(), "application/json".to_string());
+        self.headers
+            .insert("Content-Type".to_string(), "application/json".to_string());
         Ok(self)
     }
 
@@ -81,8 +83,9 @@ pub struct HttpResponse {
 impl HttpResponse {
     /// Parse response body as JSON
     pub fn json<T: DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_slice(&self.body)
-            .map_err(|e| BridgeError::OperationFailed(format!("JSON deserialization failed: {}", e)))
+        serde_json::from_slice(&self.body).map_err(|e| {
+            BridgeError::OperationFailed(format!("JSON deserialization failed: {}", e))
+        })
     }
 
     /// Get response body as UTF-8 string
@@ -167,7 +170,11 @@ pub trait HttpClient: Send + Sync {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse>;
 
     /// Execute an HTTP request with custom retry policy
-    async fn execute_with_retry(&self, request: HttpRequest, policy: RetryPolicy) -> Result<HttpResponse> {
+    async fn execute_with_retry(
+        &self,
+        request: HttpRequest,
+        policy: RetryPolicy,
+    ) -> Result<HttpResponse> {
         // Default implementation: just call execute
         // Implementations can override for custom retry logic
         let _ = policy; // Mark as used
@@ -177,7 +184,10 @@ pub trait HttpClient: Send + Sync {
     /// Download a file as a stream of bytes
     ///
     /// This is useful for large files that should not be loaded entirely into memory.
-    async fn download_stream(&self, url: String) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
+    async fn download_stream(
+        &self,
+        url: String,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
 
     /// Check network connectivity
     async fn is_connected(&self) -> bool {
@@ -199,7 +209,7 @@ mod tests {
 
         assert_eq!(request.url, "https://example.com");
         assert_eq!(request.headers.get("User-Agent"), Some(&"test".to_string()));
-        assert!(request.headers.get("Authorization").is_some());
+        assert!(request.headers.contains_key("Authorization"));
     }
 
     #[test]

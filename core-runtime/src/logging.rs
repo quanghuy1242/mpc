@@ -38,11 +38,7 @@ use std::io;
 use std::sync::Arc;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{
-    filter::EnvFilter,
-    layer::SubscriberExt,
-    registry::LookupSpan,
-    util::SubscriberInitExt,
-    Layer,
+    filter::EnvFilter, layer::SubscriberExt, registry::LookupSpan, util::SubscriberInitExt, Layer,
 };
 
 /// Log output format
@@ -60,7 +56,7 @@ impl Default for LogFormat {
     fn default() -> Self {
         #[cfg(debug_assertions)]
         return Self::Pretty;
-        
+
         #[cfg(not(debug_assertions))]
         return Self::Json;
     }
@@ -173,7 +169,7 @@ impl LoggingConfig {
 /// ```
 pub fn init_logging(config: LoggingConfig) -> Result<()> {
     let filter = build_filter(&config)?;
-    
+
     match config.format {
         LogFormat::Pretty => init_pretty_logging(config, filter),
         LogFormat::Json => init_json_logging(config, filter),
@@ -199,10 +195,17 @@ fn build_filter(config: &LoggingConfig) -> Result<EnvFilter> {
              core_metadata={},core_playback={},core_service={},\
              provider_google_drive={},provider_onedrive={},\
              bridge_desktop={},h2=warn,hyper=warn,reqwest=warn,sqlx=warn",
-            env!("CARGO_PKG_NAME"), base_level,
-            base_level, base_level, base_level, base_level,
-            base_level, base_level, base_level,
-            base_level, base_level,
+            env!("CARGO_PKG_NAME"),
+            base_level,
+            base_level,
+            base_level,
+            base_level,
+            base_level,
+            base_level,
+            base_level,
+            base_level,
+            base_level,
+            base_level,
             base_level
         )
     };
@@ -224,9 +227,7 @@ fn init_pretty_logging(config: LoggingConfig, filter: EnvFilter) -> Result<()> {
         })
         .with_writer(io::stdout);
 
-    let subscriber = tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt_layer);
+    let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
 
     if config.redact_pii {
         subscriber
@@ -253,9 +254,7 @@ fn init_json_logging(config: LoggingConfig, filter: EnvFilter) -> Result<()> {
         .with_thread_names(config.display_thread_info)
         .with_writer(io::stdout);
 
-    let subscriber = tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt_layer);
+    let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
 
     if config.redact_pii {
         subscriber
@@ -279,9 +278,7 @@ fn init_compact_logging(config: LoggingConfig, filter: EnvFilter) -> Result<()> 
         .with_thread_names(config.display_thread_info)
         .with_writer(io::stdout);
 
-    let subscriber = tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt_layer);
+    let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
 
     if config.redact_pii {
         subscriber
@@ -368,8 +365,12 @@ pub fn redact_if_sensitive(field_name: &str, value: &str) -> String {
 /// // Logs: file="song.mp3"
 /// ```
 pub fn strip_path(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
-        .rsplit('\\').next().unwrap_or(path)
+    path.rsplit('/')
+        .next()
+        .unwrap_or(path)
+        .rsplit('\\')
+        .next()
+        .unwrap_or(path)
 }
 
 #[cfg(test)]
@@ -399,15 +400,18 @@ mod tests {
     #[test]
     fn test_redact_if_sensitive() {
         // Tokens should be redacted
-        assert_eq!(redact_if_sensitive("access_token", "secret123"), "[REDACTED]");
+        assert_eq!(
+            redact_if_sensitive("access_token", "secret123"),
+            "[REDACTED]"
+        );
         assert_eq!(redact_if_sensitive("token", "abc"), "[REDACTED]");
         assert_eq!(redact_if_sensitive("password", "pass"), "[REDACTED]");
-        
+
         // Emails should be partially redacted
         let redacted = redact_if_sensitive("email", "user@example.com");
         assert!(redacted.starts_with('u'));
         assert!(redacted.contains("[REDACTED]"));
-        
+
         // Normal values should pass through
         assert_eq!(redact_if_sensitive("track_id", "12345"), "12345");
         assert_eq!(redact_if_sensitive("name", "Song Name"), "Song Name");
@@ -425,7 +429,7 @@ mod tests {
     fn test_default_format() {
         #[cfg(debug_assertions)]
         assert_eq!(LogFormat::default(), LogFormat::Pretty);
-        
+
         #[cfg(not(debug_assertions))]
         assert_eq!(LogFormat::default(), LogFormat::Json);
     }
@@ -440,8 +444,7 @@ mod tests {
 
     #[test]
     fn test_build_custom_filter() {
-        let config = LoggingConfig::default()
-            .with_filter("core_auth=trace,core_sync=debug");
+        let config = LoggingConfig::default().with_filter("core_auth=trace,core_sync=debug");
         let filter = build_filter(&config).unwrap();
         assert!(filter.to_string().contains("core_auth=trace"));
     }

@@ -38,12 +38,18 @@ impl TokioFileSystem {
             })
             .join("music-platform-core");
 
-        Self { cache_dir, data_dir }
+        Self {
+            cache_dir,
+            data_dir,
+        }
     }
 
     /// Create a new file system accessor with custom directories
     pub fn with_directories(cache_dir: PathBuf, data_dir: PathBuf) -> Self {
-        Self { cache_dir, data_dir }
+        Self {
+            cache_dir,
+            data_dir,
+        }
     }
 
     /// Convert std::io::Error to BridgeError
@@ -83,9 +89,7 @@ impl FileSystemAccess for TokioFileSystem {
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
-        Ok(fs::try_exists(path)
-            .await
-            .map_err(Self::map_io_error)?)
+        Ok(fs::try_exists(path).await.map_err(Self::map_io_error)?)
     }
 
     async fn metadata(&self, path: &Path) -> Result<FileMetadata> {
@@ -108,9 +112,7 @@ impl FileSystemAccess for TokioFileSystem {
     }
 
     async fn create_dir_all(&self, path: &Path) -> Result<()> {
-        fs::create_dir_all(path)
-            .await
-            .map_err(Self::map_io_error)?;
+        fs::create_dir_all(path).await.map_err(Self::map_io_error)?;
         debug!(path = ?path, "Created directory");
         Ok(())
     }
@@ -163,9 +165,7 @@ impl FileSystemAccess for TokioFileSystem {
     }
 
     async fn delete_dir_all(&self, path: &Path) -> Result<()> {
-        fs::remove_dir_all(path)
-            .await
-            .map_err(Self::map_io_error)?;
+        fs::remove_dir_all(path).await.map_err(Self::map_io_error)?;
         debug!(path = ?path, "Deleted directory");
         Ok(())
     }
@@ -174,11 +174,7 @@ impl FileSystemAccess for TokioFileSystem {
         let mut entries = Vec::new();
         let mut read_dir = fs::read_dir(path).await.map_err(Self::map_io_error)?;
 
-        while let Some(entry) = read_dir
-            .next_entry()
-            .await
-            .map_err(Self::map_io_error)?
-        {
+        while let Some(entry) = read_dir.next_entry().await.map_err(Self::map_io_error)? {
             entries.push(entry.path());
         }
 
@@ -235,7 +231,7 @@ mod tests {
     #[tokio::test]
     async fn test_filesystem_creation() {
         let _fs = TokioFileSystem::new();
-        assert!(true); // Just verify it constructs
+        // Just verify it constructs
     }
 
     #[tokio::test]

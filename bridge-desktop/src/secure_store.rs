@@ -176,7 +176,7 @@ mod tests {
                 match store.get_secret(key).await {
                     Ok(Some(retrieved)) => {
                         assert_eq!(retrieved, value.to_vec());
-                        
+
                         // Clean up
                         let _ = store.delete_secret(key).await;
                     }

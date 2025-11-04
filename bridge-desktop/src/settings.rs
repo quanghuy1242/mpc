@@ -161,10 +161,9 @@ impl SettingsStore for SqliteSettingsStore {
 
     async fn get_bool(&self, key: &str) -> Result<Option<bool>> {
         match self.get_value(key, "bool").await? {
-            Some(s) => Ok(Some(
-                s.parse()
-                    .map_err(|e| BridgeError::OperationFailed(format!("Parse error: {}", e)))?,
-            )),
+            Some(s) => Ok(Some(s.parse().map_err(|e| {
+                BridgeError::OperationFailed(format!("Parse error: {}", e))
+            })?)),
             None => Ok(None),
         }
     }
@@ -175,10 +174,9 @@ impl SettingsStore for SqliteSettingsStore {
 
     async fn get_i64(&self, key: &str) -> Result<Option<i64>> {
         match self.get_value(key, "i64").await? {
-            Some(s) => Ok(Some(
-                s.parse()
-                    .map_err(|e| BridgeError::OperationFailed(format!("Parse error: {}", e)))?,
-            )),
+            Some(s) => Ok(Some(s.parse().map_err(|e| {
+                BridgeError::OperationFailed(format!("Parse error: {}", e))
+            })?)),
             None => Ok(None),
         }
     }
@@ -189,10 +187,9 @@ impl SettingsStore for SqliteSettingsStore {
 
     async fn get_f64(&self, key: &str) -> Result<Option<f64>> {
         match self.get_value(key, "f64").await? {
-            Some(s) => Ok(Some(
-                s.parse()
-                    .map_err(|e| BridgeError::OperationFailed(format!("Parse error: {}", e)))?,
-            )),
+            Some(s) => Ok(Some(s.parse().map_err(|e| {
+                BridgeError::OperationFailed(format!("Parse error: {}", e))
+            })?)),
             None => Ok(None),
         }
     }
@@ -202,7 +199,9 @@ impl SettingsStore for SqliteSettingsStore {
             .bind(key)
             .execute(&self.pool)
             .await
-            .map_err(|e| BridgeError::OperationFailed(format!("Failed to delete setting: {}", e)))?;
+            .map_err(|e| {
+                BridgeError::OperationFailed(format!("Failed to delete setting: {}", e))
+            })?;
 
         debug!(key = key, "Deleted setting");
         Ok(())
@@ -232,7 +231,9 @@ impl SettingsStore for SqliteSettingsStore {
         sqlx::query("DELETE FROM settings")
             .execute(&self.pool)
             .await
-            .map_err(|e| BridgeError::OperationFailed(format!("Failed to clear settings: {}", e)))?;
+            .map_err(|e| {
+                BridgeError::OperationFailed(format!("Failed to clear settings: {}", e))
+            })?;
 
         debug!("Cleared all settings");
         Ok(())
@@ -255,10 +256,9 @@ struct SqliteSettingsTransaction {
 #[async_trait]
 impl SettingsTransaction for SqliteSettingsTransaction {
     async fn set_string(&mut self, key: &str, value: &str) -> Result<()> {
-        let tx = self
-            .tx
-            .as_mut()
-            .ok_or_else(|| BridgeError::OperationFailed("Transaction already committed".to_string()))?;
+        let tx = self.tx.as_mut().ok_or_else(|| {
+            BridgeError::OperationFailed("Transaction already committed".to_string())
+        })?;
 
         sqlx::query(
             r#"
@@ -281,10 +281,9 @@ impl SettingsTransaction for SqliteSettingsTransaction {
     }
 
     async fn commit(mut self: Box<Self>) -> Result<()> {
-        let tx = self
-            .tx
-            .take()
-            .ok_or_else(|| BridgeError::OperationFailed("Transaction already committed".to_string()))?;
+        let tx = self.tx.take().ok_or_else(|| {
+            BridgeError::OperationFailed("Transaction already committed".to_string())
+        })?;
 
         tx.commit()
             .await
@@ -295,10 +294,9 @@ impl SettingsTransaction for SqliteSettingsTransaction {
     }
 
     async fn rollback(mut self: Box<Self>) -> Result<()> {
-        let tx = self
-            .tx
-            .take()
-            .ok_or_else(|| BridgeError::OperationFailed("Transaction already committed".to_string()))?;
+        let tx = self.tx.take().ok_or_else(|| {
+            BridgeError::OperationFailed("Transaction already committed".to_string())
+        })?;
 
         tx.rollback()
             .await
@@ -316,7 +314,7 @@ mod tests {
     #[tokio::test]
     async fn test_settings_store_creation() {
         let _store = SqliteSettingsStore::in_memory().await.unwrap();
-        assert!(true); // Just verify it constructs
+        // Just verify it constructs
     }
 
     #[tokio::test]
@@ -345,8 +343,8 @@ mod tests {
         assert_eq!(store.get_i64("i64_key").await.unwrap(), Some(42));
 
         // f64
-        store.set_f64("f64_key", 3.14).await.unwrap();
-        assert_eq!(store.get_f64("f64_key").await.unwrap(), Some(3.14));
+        store.set_f64("f64_key", 2.5).await.unwrap();
+        assert_eq!(store.get_f64("f64_key").await.unwrap(), Some(2.5));
     }
 
     #[tokio::test]

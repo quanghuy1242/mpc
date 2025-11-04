@@ -208,7 +208,7 @@ This document provides a structured task breakdown for implementing the Music Pl
 
 ---
 
-### TASK-005: Create Core Configuration System [P0, Complexity: 2]
+### TASK-005: Create Core Configuration System [P0, Complexity: 2] ✅ COMPLETED
 **Description**: Define `CoreConfig` struct and builder pattern for initialization.
 
 **Implementation Steps**:
@@ -226,11 +226,41 @@ This document provides a structured task breakdown for implementing the Music Pl
 4. Add fail-fast checks for missing required bridges with actionable error messages
 
 **Acceptance Criteria**:
-- Config builder validates all required dependencies
-- Missing capabilities produce descriptive panic messages
-- Default configuration works for desktop builds
+- ✅ Config builder validates all required dependencies
+- ✅ Missing capabilities produce descriptive panic messages
+- ✅ Default configuration works for desktop builds
 
 **Dependencies**: TASK-002, TASK-003
+
+**Completion Notes**:
+- Created comprehensive `core-runtime/src/config.rs` module (978 lines)
+- Implemented `CoreConfig` struct with all required fields:
+  - Required: database_path, cache_dir, secure_store, settings_store
+  - Optional: http_client, file_system, network_monitor, background_executor, lifecycle_observer
+  - Configuration: cache_size_mb (default 200MB), feature flags
+- Built fluent `CoreConfigBuilder` with extensive validation:
+  - Fail-fast validation for missing required bridges
+  - Platform-specific error messages (desktop/mobile/web guidance)
+  - Accepts both `&str` and `PathBuf` for paths
+  - Cache size validation (1MB to 10GB limits)
+  - Feature consistency checks (e.g., background_sync requires BackgroundExecutor)
+- Implemented `FeatureFlags` struct with Default derive:
+  - enable_lyrics - Toggle lyrics fetching
+  - enable_artwork_remote - Toggle remote artwork fetching
+  - enable_offline_cache - Toggle encrypted offline caching
+  - enable_background_sync - Requires BackgroundExecutor bridge
+  - enable_network_awareness - Requires NetworkMonitor bridge
+- Custom Debug implementation for CoreConfig (trait objects don't auto-derive Debug)
+- Comprehensive test suite with 21 passing unit tests:
+  - Builder validation (required fields, type flexibility)
+  - Feature flag defaults and customization
+  - Configuration validation (cache limits, feature consistency)
+  - Cloneability and ergonomics
+- Comprehensive documentation with usage examples for each method
+- Doc tests properly marked as `ignore` for illustrative code
+- Zero clippy warnings across entire workspace
+- All 58 workspace tests passing (29 unit tests, 29 doc tests)
+- Code formatted with `cargo fmt`
 
 ---
 
