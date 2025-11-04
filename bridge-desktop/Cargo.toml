@@ -7,16 +7,21 @@ license.workspace = true
 [dependencies]
 bridge-traits = { path = "../bridge-traits" }
 
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util"] }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }
+futures-util = { workspace = true }
+tokio-util = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite", "runtime-tokio"] }
 
 # Desktop-specific dependencies
-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
 keyring = { workspace = true, optional = true }
+dirs = "5.0"
+base64 = "0.22"
 
 [features]
 default = ["secure-store"]
