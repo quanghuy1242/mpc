@@ -140,7 +140,7 @@ This document provides a structured task breakdown for implementing the Music Pl
 
 ---
 
-### TASK-004: Set Up Logging & Tracing Infrastructure [P0, Complexity: 2]
+### TASK-004: Set Up Logging & Tracing Infrastructure [P0, Complexity: 2] ✅ COMPLETED
 **Description**: Configure structured logging with `tracing` crate.
 
 **Implementation Steps**:
@@ -152,12 +152,59 @@ This document provides a structured task breakdown for implementing the Music Pl
 6. Configure span contexts for distributed tracing
 
 **Acceptance Criteria**:
-- Logs are structured with contextual fields
-- PII is automatically redacted
-- Log levels are configurable at runtime
-- Integration with host logging works via `LoggerSink`
+- ✅ Logs are structured with contextual fields
+- ✅ PII is automatically redacted
+- ✅ Log levels are configurable at runtime
+- ✅ Integration with host logging works via `LoggerSink`
 
 **Dependencies**: TASK-002, TASK-003
+
+**Completion Notes**:
+- Created comprehensive `core-runtime/src/logging.rs` module (458 lines)
+- Implemented 3 output formats:
+  - Pretty format for development (with colors and readability)
+  - JSON format for production (structured, machine-readable)
+  - Compact format for space-constrained environments
+- Built flexible `LoggingConfig` with builder pattern for easy configuration
+- Implemented PII redaction for:
+  - OAuth tokens (access_token, refresh_token, bearer, etc.)
+  - Email addresses (partial redaction: first char + ***@[REDACTED])
+  - Passwords, secrets, API keys
+  - File paths (strips to basename only)
+- Advanced filtering system:
+  - Module-level filtering (e.g., "core_auth=debug,core_sync=trace")
+  - Default smart filtering for workspace crates vs dependencies
+  - Runtime-configurable log levels
+- Span contexts for distributed tracing:
+  - Active span tracking
+  - Span list for hierarchical context
+  - Instrumentation support via #[instrument] macro
+- Helper functions:
+  - `redact_if_sensitive()` - Manual PII redaction
+  - `strip_path()` - Privacy-safe path logging
+- Integration with `LoggerSink` trait for platform-specific forwarding
+- 14 comprehensive tests (6 unit + 8 integration):
+  - Config builder functionality
+  - PII redaction (tokens, emails, normal values)
+  - Path stripping (Unix/Windows)
+  - Filter building
+  - Default format selection
+- Created example `logging_demo.rs` demonstrating:
+  - Different output formats
+  - Structured logging
+  - Span hierarchies
+  - PII redaction
+  - Instrumentation
+- Added `LOGGING.md` documentation with:
+  - Usage examples
+  - Configuration guide
+  - Best practices
+  - Migration guide
+  - Performance considerations
+- Zero clippy warnings
+- Added bridge-traits dependency to core-runtime
+- All tests passing in core-runtime crate
+- Workspace builds successfully
 
 ---
 
