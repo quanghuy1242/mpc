@@ -46,10 +46,16 @@ use crate::error::{AuthError, Result};
 use crate::types::{OAuthTokens, ProviderKind};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use bridge_traits::http::{HttpClient, HttpMethod, HttpRequest};
+use bytes::Bytes;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use serde_urlencoded;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
 use tracing::{instrument, warn};
 use url::Url;
 
@@ -147,6 +153,7 @@ impl Default for PkceVerifier {
 /// Handles the complete OAuth 2.0 authorization code flow with PKCE support.
 pub struct OAuthFlowManager {
     config: OAuthConfig,
+    http_client: Arc<dyn HttpClient>,
 }
 
 impl OAuthFlowManager {
@@ -172,10 +179,14 @@ impl OAuthFlowManager {
     ///     token_url: "https://oauth2.googleapis.com/token".to_string(),
     /// };
     ///
-    /// let manager = OAuthFlowManager::new(config);
+    /// let http_client = Arc::new(MyHttpClient::new());
+    /// let manager = OAuthFlowManager::new(config, http_client);
     /// ```
-    pub fn new(config: OAuthConfig) -> Self {
-        Self { config }
+    pub fn new(config: OAuthConfig, http_client: Arc<dyn HttpClient>) -> Self {
+        Self {
+            config,
+            http_client,
+        }
     }
 
     /// Build the authorization URL with PKCE challenge.
@@ -321,25 +332,30 @@ impl OAuthFlowManager {
 
         tracing::debug!("Exchanging authorization code for tokens");
 
-        // Make token request
-        let client = reqwest::Client::new();
-        let response = client
-            .post(&self.config.token_url)
-            .form(&params)
-            .send()
+        let encoded_body = serde_urlencoded::to_string(&params)
+            .map_err(|e| AuthError::Other(format!("Failed to encode token request: {}", e)))?;
+        let body = Bytes::from(encoded_body);
+
+        let request = HttpRequest::new(HttpMethod::Post, self.config.token_url.clone())
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body);
+
+        let response = self
+            .http_client
+            .execute(request)
             .await
             .map_err(|e| AuthError::NetworkError(e.to_string()))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        if !response.is_success() {
+            let status = response.status;
             let error_body = response
                 .text()
-                .await
                 .unwrap_or_else(|_| "Unable to read error response".to_string());
 
             warn!(
-                "Token exchange failed with status {}: {}",
-                status, error_body
+                status = status,
+                error = %error_body,
+                "Token exchange failed while exchanging authorization code"
             );
 
             return Err(AuthError::InvalidAuthCode(format!(
@@ -351,7 +367,6 @@ impl OAuthFlowManager {
         // Parse token response
         let token_response: TokenResponse = response
             .json()
-            .await
             .map_err(|e| AuthError::Other(format!("Failed to parse token response: {}", e)))?;
 
         tracing::info!(
@@ -421,24 +436,28 @@ impl OAuthFlowManager {
 
         tracing::debug!("Refreshing access token");
 
-        // Make token refresh request with retry logic
-        let client = reqwest::Client::new();
+        let encoded_body = serde_urlencoded::to_string(&params)
+            .map_err(|e| AuthError::Other(format!("Failed to encode token request: {}", e)))?;
+        let body = Bytes::from(encoded_body);
+
         let mut attempts = 0;
         const MAX_RETRIES: u32 = 3;
 
         loop {
             attempts += 1;
 
-            let response = client
-                .post(&self.config.token_url)
-                .form(&params)
-                .send()
-                .await
-                .map_err(|e| AuthError::NetworkError(e.to_string()))?;
+            let request = HttpRequest::new(HttpMethod::Post, self.config.token_url.clone())
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .body(body.clone());
 
-            if response.status().is_success() {
-                // Parse token response
-                let token_response: TokenResponse = response.json().await.map_err(|e| {
+            let response = self
+                .http_client
+                .execute(request)
+                .await
+                .map_err(|e| AuthError::TokenRefreshFailed(e.to_string()))?;
+
+            if response.is_success() {
+                let token_response: TokenResponse = response.json().map_err(|e| {
                     AuthError::Other(format!("Failed to parse token response: {}", e))
                 })?;
 
@@ -456,18 +475,17 @@ impl OAuthFlowManager {
                 ));
             }
 
-            let status = response.status();
+            let status = response.status;
 
-            // If it's a client error (4xx), don't retry
-            if status.is_client_error() {
+            if (400..500).contains(&status) {
                 let error_body = response
                     .text()
-                    .await
                     .unwrap_or_else(|_| "Unable to read error response".to_string());
 
                 warn!(
-                    "Token refresh failed with status {}: {}",
-                    status, error_body
+                    status = status,
+                    error = %error_body,
+                    "Token refresh failed without retry"
                 );
 
                 return Err(AuthError::TokenRefreshFailed(format!(
@@ -476,11 +494,9 @@ impl OAuthFlowManager {
                 )));
             }
 
-            // For server errors (5xx), retry with exponential backoff
             if attempts >= MAX_RETRIES {
                 let error_body = response
                     .text()
-                    .await
                     .unwrap_or_else(|_| "Unable to read error response".to_string());
 
                 return Err(AuthError::TokenRefreshFailed(format!(
@@ -489,15 +505,14 @@ impl OAuthFlowManager {
                 )));
             }
 
-            let delay = std::time::Duration::from_millis(100 * 2u64.pow(attempts - 1));
-            tracing::warn!(
-                "Token refresh failed with {}, retrying in {:?} (attempt {}/{})",
-                status,
-                delay,
-                attempts,
-                MAX_RETRIES
+            let delay = Duration::from_millis(100 * 2u64.pow(attempts - 1));
+            warn!(
+                status = status,
+                attempts = attempts,
+                delay_ms = delay.as_millis(),
+                "Token refresh failed, retrying"
             );
-            tokio::time::sleep(delay).await;
+            sleep(delay).await;
         }
     }
 }
@@ -525,6 +540,30 @@ fn default_expires_in() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bridge_traits::error::{BridgeError, Result as BridgeResult};
+    use bridge_traits::http::{HttpClient, HttpRequest, HttpResponse};
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct StubHttpClient;
+
+    #[async_trait::async_trait]
+    impl HttpClient for StubHttpClient {
+        async fn execute(&self, _request: HttpRequest) -> BridgeResult<HttpResponse> {
+            Err(BridgeError::OperationFailed(
+                "HTTP client not mocked for unit test".to_string(),
+            ))
+        }
+
+        async fn download_stream(
+            &self,
+            _url: String,
+        ) -> BridgeResult<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+            Err(BridgeError::OperationFailed(
+                "HTTP client not mocked for unit test".to_string(),
+            ))
+        }
+    }
 
     #[test]
     fn test_pkce_verifier_generation() {
@@ -593,7 +632,7 @@ mod tests {
             token_url: "https://provider.com/token".to_string(),
         };
 
-        let manager = OAuthFlowManager::new(config);
+        let manager = OAuthFlowManager::new(config, Arc::new(StubHttpClient::default()));
         let result = manager.build_auth_url();
 
         assert!(result.is_ok());
@@ -623,7 +662,7 @@ mod tests {
             token_url: "https://provider.com/token".to_string(),
         };
 
-        let manager = OAuthFlowManager::new(config);
+        let manager = OAuthFlowManager::new(config, Arc::new(StubHttpClient::default()));
         let result = manager.build_auth_url();
 
         assert!(result.is_err());

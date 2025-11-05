@@ -874,6 +874,8 @@ mod tests {
 
     #[cfg(feature = "desktop-shims")]
     #[tokio::test]
+    // TODO(#TASK-005): Re-enable once desktop keyring support is available in CI
+    #[ignore = "TODO: Enable once desktop environment is available"]
     async fn test_build_with_desktop_defaults_inside_runtime() {
         let (base_dir, db_path, cache_dir) = desktop_test_paths();
 

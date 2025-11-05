@@ -6,4 +6,4 @@ Verification against `docs/core_architecture.md` surfaced several gaps in tasks 
 - ✅ Default desktop configuration now initializes `SecureStore` and `SettingsStore` automatically via background runtime bootstrap (`core-runtime/src/config.rs`). Added regression tests to cover building inside and outside Tokio runtimes.
 
 ## TASK-102 – Implement OAuth 2.0 Flow Manager
-- `OAuthFlowManager::exchange_code` constructs a `reqwest::Client` directly (`core-auth/src/oauth.rs:325-330`), bypassing the host-provided `HttpClient` abstraction mandated for portability (`docs/core_architecture.md:25-33`). Pass an injected `HttpClient` (or reuse one from `CoreConfig`) so mobile/Web hosts can supply their own stacks.
+- ✅ `OAuthFlowManager` now relies on the injected `HttpClient` trait for code exchange and refresh logic with retries (`core-auth/src/oauth.rs`). `AuthManager::new` requires the host HTTP client, keeping platform networking under trait control.

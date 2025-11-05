@@ -56,7 +56,7 @@ use crate::token_store::TokenStore;
 #[cfg(test)]
 use crate::types::OAuthTokens;
 use crate::types::{AuthState, ProfileId, ProviderKind};
-use bridge_traits::SecureStore;
+use bridge_traits::{http::HttpClient, SecureStore};
 use core_runtime::events::{AuthEvent, CoreEvent, EventBus};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -135,6 +135,7 @@ impl AuthManager {
     ///
     /// * `secure_store` - Platform-specific secure storage for tokens
     /// * `event_bus` - Event bus for emitting authentication events
+    /// * `http_client` - Host-provided HTTP client abstraction for OAuth calls
     ///
     /// # Examples
     ///
@@ -157,18 +158,22 @@ impl AuthManager {
     /// let secure_store = Arc::new(MockSecureStore);
     /// let manager = AuthManager::new(secure_store, event_bus);
     /// ```
-    pub fn new(secure_store: Arc<dyn SecureStore>, event_bus: EventBus) -> Self {
+    pub fn new(
+        secure_store: Arc<dyn SecureStore>,
+        event_bus: EventBus,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Self {
         let token_store = TokenStore::new(secure_store);
 
         // Initialize OAuth managers for each provider
         let mut oauth_managers = HashMap::new();
         oauth_managers.insert(
             ProviderKind::GoogleDrive,
-            OAuthFlowManager::new(Self::google_drive_config()),
+            OAuthFlowManager::new(Self::google_drive_config(), http_client.clone()),
         );
         oauth_managers.insert(
             ProviderKind::OneDrive,
-            OAuthFlowManager::new(Self::onedrive_config()),
+            OAuthFlowManager::new(Self::onedrive_config(), http_client.clone()),
         );
 
         Self {
@@ -803,7 +808,8 @@ impl AuthManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bridge_traits::error::Result as BridgeResult;
+    use bridge_traits::error::{BridgeError, Result as BridgeResult};
+    use bridge_traits::http::{HttpClient, HttpRequest, HttpResponse};
     use bridge_traits::SecureStore;
     use std::collections::HashMap as StdHashMap;
     use tokio::sync::Mutex as TokioMutex;
@@ -852,11 +858,33 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct MockHttpClient;
+
+    #[async_trait::async_trait]
+    impl HttpClient for MockHttpClient {
+        async fn execute(&self, _request: HttpRequest) -> BridgeResult<HttpResponse> {
+            Err(BridgeError::OperationFailed(
+                "HTTP client not mocked for AuthManager tests".to_string(),
+            ))
+        }
+
+        async fn download_stream(
+            &self,
+            _url: String,
+        ) -> BridgeResult<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+            Err(BridgeError::OperationFailed(
+                "HTTP client not mocked for AuthManager tests".to_string(),
+            ))
+        }
+    }
+
     #[test]
     fn test_create_auth_manager() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
-        let manager = AuthManager::new(secure_store, event_bus);
+        let http_client = Arc::new(MockHttpClient::default());
+        let manager = AuthManager::new(secure_store, event_bus, http_client);
 
         // Verify providers are initialized
         let providers = manager.list_providers();
@@ -871,7 +899,8 @@ mod tests {
     async fn test_list_providers() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
-        let manager = AuthManager::new(secure_store, event_bus);
+        let http_client = Arc::new(MockHttpClient::default());
+        let manager = AuthManager::new(secure_store, event_bus, http_client);
 
         let providers = manager.list_providers();
         assert_eq!(providers.len(), 2);
@@ -895,7 +924,8 @@ mod tests {
     async fn test_sign_in_initiates_flow() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
-        let manager = AuthManager::new(secure_store, event_bus.clone());
+        let http_client = Arc::new(MockHttpClient::default());
+        let manager = AuthManager::new(secure_store, event_bus.clone(), http_client);
 
         // Subscribe to events
         let mut receiver = event_bus.subscribe();
@@ -923,7 +953,8 @@ mod tests {
     async fn test_concurrent_sign_in_prevented() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
-        let manager = AuthManager::new(secure_store, event_bus);
+        let http_client = Arc::new(MockHttpClient::default());
+        let manager = AuthManager::new(secure_store, event_bus, http_client.clone());
 
         // First sign-in should succeed
         let result1 = manager.sign_in(ProviderKind::GoogleDrive).await;
@@ -942,7 +973,8 @@ mod tests {
     async fn test_cancel_sign_in() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
-        let manager = AuthManager::new(secure_store, event_bus);
+        let http_client = Arc::new(MockHttpClient::default());
+        let manager = AuthManager::new(secure_store, event_bus, http_client);
 
         // Initiate sign-in
         let result = manager.sign_in(ProviderKind::GoogleDrive).await;
@@ -965,7 +997,8 @@ mod tests {
     async fn test_sign_out() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
-        let manager = AuthManager::new(secure_store, event_bus.clone());
+        let http_client = Arc::new(MockHttpClient::default());
+        let manager = AuthManager::new(secure_store, event_bus.clone(), http_client);
 
         let profile_id = ProfileId::new();
 
@@ -1010,7 +1043,8 @@ mod tests {
     async fn test_current_session_none_initially() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
-        let manager = AuthManager::new(secure_store, event_bus);
+        let http_client = Arc::new(MockHttpClient::default());
+        let manager = AuthManager::new(secure_store, event_bus, http_client);
 
         let session = manager.current_session().await;
         assert!(session.is_none());
@@ -1020,7 +1054,8 @@ mod tests {
     async fn test_get_valid_token_no_profile() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
-        let manager = AuthManager::new(secure_store, event_bus);
+        let http_client = Arc::new(MockHttpClient::default());
+        let manager = AuthManager::new(secure_store, event_bus, http_client);
 
         let profile_id = ProfileId::new();
         let result = manager.get_valid_token(profile_id).await;
@@ -1036,7 +1071,8 @@ mod tests {
     async fn test_provider_info_completeness() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
-        let manager = AuthManager::new(secure_store, event_bus);
+        let http_client = Arc::new(MockHttpClient::default());
+        let manager = AuthManager::new(secure_store, event_bus, http_client);
 
         let providers = manager.list_providers();
 

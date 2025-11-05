@@ -16,9 +16,9 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
-reqwest = { workspace = true }
 sha2 = { workspace = true }
 bytes = { workspace = true }
+serde_urlencoded = "0.7"
 
 # URL handling
 url = "2.5"
