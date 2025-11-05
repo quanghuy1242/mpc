@@ -26,6 +26,9 @@ pub enum MetadataError {
     #[error("Invalid metadata: {0}")]
     InvalidMetadata(String),
 
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+
     #[error("Image processing error: {message}")]
     ImageProcessing { message: String },
 

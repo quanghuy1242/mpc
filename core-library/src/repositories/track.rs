@@ -106,6 +106,21 @@ pub trait TrackRepository: Send + Sync {
         provider_id: &str,
         provider_file_id: &str,
     ) -> Result<Option<Track>>;
+
+    /// Find tracks missing artwork (artwork_id IS NULL)
+    ///
+    /// Returns all tracks that don't have artwork associated with them.
+    /// Useful for enrichment jobs.
+    async fn find_by_missing_artwork(&self) -> Result<Vec<Track>>;
+
+    /// Find tracks by lyrics status
+    ///
+    /// # Arguments
+    /// * `status` - Lyrics status filter ('not_fetched', 'fetching', 'available', 'unavailable')
+    ///
+    /// Returns all tracks matching the specified lyrics status.
+    /// Useful for enrichment jobs to find tracks needing lyrics.
+    async fn find_by_lyrics_status(&self, status: &str) -> Result<Vec<Track>>;
 }
 
 /// SQLite implementation of TrackRepository
@@ -388,6 +403,27 @@ impl TrackRepository for SqliteTrackRepository {
         .await?;
 
         Ok(track)
+    }
+
+    async fn find_by_missing_artwork(&self) -> Result<Vec<Track>> {
+        let tracks = query_as::<_, Track>(
+            "SELECT * FROM tracks WHERE artwork_id IS NULL ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(tracks)
+    }
+
+    async fn find_by_lyrics_status(&self, status: &str) -> Result<Vec<Track>> {
+        let tracks = query_as::<_, Track>(
+            "SELECT * FROM tracks WHERE lyrics_status = ? ORDER BY created_at DESC",
+        )
+        .bind(status)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(tracks)
     }
 }
 
