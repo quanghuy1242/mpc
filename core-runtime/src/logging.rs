@@ -11,7 +11,9 @@
 //!
 //! This module configures the `tracing-subscriber` infrastructure and provides
 //! utilities for forwarding logs to platform-specific logging systems through
-//! the `LoggerSink` trait.
+//! the `LoggerSink` trait. When a sink is configured, every event that survives
+//! filtering is mirrored to the host logger while still flowing through the
+//! standard `tracing` layers.
 //!
 //! ## Usage
 //!
@@ -24,21 +26,48 @@
 //! async fn main() {
 //!     let config = LoggingConfig::default()
 //!         .with_format(LogFormat::Pretty)
-//!         .with_level(LogLevel::Debug);
+//!         .with_level(LogLevel::Debug)
+//!         .with_logger_sink(Arc::new(ConsoleLogger::default()));
 //!     
 //!     init_logging(config).expect("Failed to initialize logging");
 //!     
 //!     tracing::info!("Application started");
 //! }
 //! ```
+//!
+//! ## LoggerSink integration
+//!
+//! Provide a custom `LoggerSink` to mirror log events into a host-specific
+//! pipeline (e.g., `os_log`/`Logcat`). The sink receives structured
+//! [`LogEntry`](bridge_traits::time::LogEntry) instances with the original
+//! message plus any fields emitted on the event.
+//!
+//! ```ignore
+//! use bridge_traits::time::{ConsoleLogger, LoggerSink};
+//! use core_runtime::logging::{init_logging, LoggingConfig};
+//! use std::sync::Arc;
+//!
+//! let sink = Arc::new(ConsoleLogger::default());
+//! let config = LoggingConfig::default().with_logger_sink(sink);
+//! init_logging(config)?;
+//! tracing::warn!(target: "sync", "Slow request");
+//! ```
 
 use crate::error::{Error, Result};
-use bridge_traits::time::{LogLevel, LoggerSink};
+use bridge_traits::time::{LogEntry, LogLevel, LoggerSink};
+use futures::executor;
+use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::sync::Arc;
+use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{
-    filter::EnvFilter, layer::SubscriberExt, registry::LookupSpan, util::SubscriberInitExt, Layer,
+    filter::EnvFilter,
+    layer::{Context, SubscriberExt},
+    registry::LookupSpan,
+    util::SubscriberInitExt,
+    Layer,
 };
 
 /// Log output format
@@ -227,7 +256,10 @@ fn init_pretty_logging(config: LoggingConfig, filter: EnvFilter) -> Result<()> {
         })
         .with_writer(io::stdout);
 
-    let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
+    let subscriber = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(LoggerSinkLayer::new(config.logger_sink.clone()));
 
     if config.redact_pii {
         subscriber
@@ -254,7 +286,10 @@ fn init_json_logging(config: LoggingConfig, filter: EnvFilter) -> Result<()> {
         .with_thread_names(config.display_thread_info)
         .with_writer(io::stdout);
 
-    let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
+    let subscriber = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(LoggerSinkLayer::new(config.logger_sink.clone()));
 
     if config.redact_pii {
         subscriber
@@ -278,7 +313,10 @@ fn init_compact_logging(config: LoggingConfig, filter: EnvFilter) -> Result<()> 
         .with_thread_names(config.display_thread_info)
         .with_writer(io::stdout);
 
-    let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
+    let subscriber = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt_layer)
+        .with(LoggerSinkLayer::new(config.logger_sink.clone()));
 
     if config.redact_pii {
         subscriber
@@ -311,6 +349,120 @@ where
         // PII redaction is handled through careful field naming conventions
         // and avoiding logging sensitive data in the first place.
         // This is a placeholder for more advanced redaction if needed.
+    }
+}
+
+/// Layer that forwards events to a `LoggerSink` implementation.
+struct LoggerSinkLayer {
+    sink: Option<Arc<dyn LoggerSink>>,
+}
+
+impl LoggerSinkLayer {
+    fn new(sink: Option<Arc<dyn LoggerSink>>) -> Self {
+        Self { sink }
+    }
+}
+
+impl<S> Layer<S> for LoggerSinkLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
+        let Some(sink) = self.sink.as_ref() else {
+            return;
+        };
+
+        let metadata = event.metadata();
+        let level = tracing_level_to_log_level(*metadata.level());
+
+        if level < sink.min_level() {
+            return;
+        }
+
+        let mut visitor = SinkVisitor::default();
+        event.record(&mut visitor);
+
+        let message = visitor
+            .message
+            .unwrap_or_else(|| metadata.name().to_string());
+
+        let mut entry = LogEntry::new(level, metadata.target(), message);
+
+        for (key, value) in visitor.fields {
+            entry = entry.with_field(key, value);
+        }
+
+        if let Some(span) = ctx.lookup_current() {
+            entry.span_id = Some(span.name().to_string());
+        }
+
+        let sink = Arc::clone(sink);
+
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if let Err(err) = sink.log(entry).await {
+                    eprintln!("LoggerSink error: {}", err);
+                }
+            });
+        } else if let Err(err) = executor::block_on(sink.log(entry)) {
+            eprintln!("LoggerSink error: {}", err);
+        }
+    }
+}
+
+#[derive(Default)]
+struct SinkVisitor {
+    message: Option<String>,
+    fields: HashMap<String, String>,
+}
+
+impl SinkVisitor {
+    fn record_value(&mut self, field: &Field, value: String) {
+        if field.name() == "message" {
+            self.message = Some(value);
+        } else {
+            self.fields.insert(field.name().to_string(), value);
+        }
+    }
+}
+
+impl Visit for SinkVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.record_value(field, value.to_string());
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.record_value(field, value.to_string());
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.record_value(field, value.to_string());
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.record_value(field, value.to_string());
+    }
+
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        self.record_value(field, value.to_string());
+    }
+
+    fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
+        self.record_value(field, value.to_string());
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        self.record_value(field, format!("{:?}", value));
+    }
+}
+
+fn tracing_level_to_log_level(level: tracing::Level) -> LogLevel {
+    match level {
+        tracing::Level::TRACE => LogLevel::Trace,
+        tracing::Level::DEBUG => LogLevel::Debug,
+        tracing::Level::INFO => LogLevel::Info,
+        tracing::Level::WARN => LogLevel::Warn,
+        tracing::Level::ERROR => LogLevel::Error,
     }
 }
 
@@ -376,6 +528,9 @@ pub fn strip_path(path: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use bridge_traits::error::Result as SinkResult;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_logging_config_builder() {
@@ -447,5 +602,41 @@ mod tests {
         let config = LoggingConfig::default().with_filter("core_auth=trace,core_sync=debug");
         let filter = build_filter(&config).unwrap();
         assert!(filter.to_string().contains("core_auth=trace"));
+    }
+
+    #[test]
+    fn test_logger_sink_layer_forwards_event() {
+        let sink = Arc::new(TestLoggerSink::default());
+        let trait_sink: Arc<dyn LoggerSink> = sink.clone();
+        let layer = LoggerSinkLayer::new(Some(trait_sink));
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        tracing::info!(target: "test.target", user = "alice", "hello world");
+
+        let entries = sink.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+        assert_eq!(entry.target, "test.target");
+        assert_eq!(entry.message, "hello world");
+        assert_eq!(entry.fields.get("user"), Some(&"alice".to_string()));
+    }
+
+    #[derive(Default)]
+    struct TestLoggerSink {
+        entries: Mutex<Vec<LogEntry>>,
+    }
+
+    #[async_trait]
+    impl LoggerSink for TestLoggerSink {
+        async fn log(&self, entry: LogEntry) -> SinkResult<()> {
+            let mut entries = self.entries.lock().unwrap();
+            entries.push(entry);
+            Ok(())
+        }
+
+        fn min_level(&self) -> LogLevel {
+            LogLevel::Trace
+        }
     }
 }

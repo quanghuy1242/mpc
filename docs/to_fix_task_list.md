@@ -2,9 +2,6 @@
 
 Verification against `docs/core_architecture.md` surfaced several gaps in tasks marked ✅ in `docs/ai_task_list.md`. Addressing these will keep the implementation aligned with the documented architecture.
 
-## TASK-004 – Set Up Logging & Tracing Infrastructure
-- Although `LoggingConfig` accepts an optional `LoggerSink` (`core-runtime/src/logging.rs:65-139`), the initialization paths never wire it into the subscriber stack (`core-runtime/src/logging.rs:170-239`). Forward log events to the sink to meet the host logging integration goal stated in the architecture (`docs/core_architecture.md:230`).
-
 ## TASK-005 – Create Core Configuration System
 - `CoreConfig::build` always errors unless callers manually inject `SecureStore` and `SettingsStore` (`core-runtime/src/config.rs:592-612`), which contradicts the acceptance note that the default desktop configuration works out of the box. Provide desktop defaults when the `desktop-shims` feature is enabled or update the task status.
 
