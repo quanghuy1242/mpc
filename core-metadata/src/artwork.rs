@@ -52,10 +52,13 @@ use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 #[cfg(feature = "artwork-remote")]
 use bridge_traits::http::HttpClient;
+
+#[cfg(feature = "artwork-remote")]
+use crate::providers::{lastfm::LastFmClient, musicbrainz::MusicBrainzClient};
 
 /// Standard artwork sizes for optimization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +114,12 @@ pub struct ArtworkService {
     /// HTTP client for remote artwork fetching (optional)
     #[cfg(feature = "artwork-remote")]
     http_client: Option<Arc<dyn HttpClient>>,
+    /// MusicBrainz API client (optional)
+    #[cfg(feature = "artwork-remote")]
+    musicbrainz_client: Option<MusicBrainzClient>,
+    /// Last.fm API client (optional)
+    #[cfg(feature = "artwork-remote")]
+    lastfm_client: Option<LastFmClient>,
 }
 
 impl ArtworkService {
@@ -136,11 +145,64 @@ impl ArtworkService {
             cache_size: Arc::new(RwLock::new(0)),
             #[cfg(feature = "artwork-remote")]
             http_client: None,
+            #[cfg(feature = "artwork-remote")]
+            musicbrainz_client: None,
+            #[cfg(feature = "artwork-remote")]
+            lastfm_client: None,
         }
     }
 
-    /// Create a new ArtworkService with HTTP client for remote fetching
+    /// Create a new ArtworkService with HTTP client and API configuration for remote fetching
+    ///
+    /// # Arguments
+    ///
+    /// * `repository` - Artwork repository for persistence
+    /// * `http_client` - HTTP client for making API requests
+    /// * `max_cache_size` - Maximum cache size in bytes
+    /// * `musicbrainz_user_agent` - Optional MusicBrainz User-Agent string
+    /// * `lastfm_api_key` - Optional Last.fm API key
+    /// * `rate_limit_delay_ms` - Rate limit delay in milliseconds (default 1000)
+    ///
+    /// # Returns
+    ///
+    /// New ArtworkService instance with remote fetching enabled
     #[cfg(feature = "artwork-remote")]
+    pub fn with_remote_fetching(
+        repository: Arc<dyn ArtworkRepository>,
+        http_client: Arc<dyn HttpClient>,
+        max_cache_size: usize,
+        musicbrainz_user_agent: Option<String>,
+        lastfm_api_key: Option<String>,
+        rate_limit_delay_ms: u64,
+    ) -> Self {
+        let cache_capacity = NonZeroUsize::new(100).unwrap();
+        
+        // Create MusicBrainz client if user agent provided
+        let musicbrainz_client = musicbrainz_user_agent.map(|ua| {
+            MusicBrainzClient::new(http_client.clone(), ua, rate_limit_delay_ms)
+        });
+
+        // Create Last.fm client if API key provided
+        let lastfm_client = lastfm_api_key.map(|key| {
+            LastFmClient::new(http_client.clone(), key, rate_limit_delay_ms)
+        });
+
+        Self {
+            repository,
+            cache: Arc::new(RwLock::new(LruCache::new(cache_capacity))),
+            max_cache_size,
+            cache_size: Arc::new(RwLock::new(0)),
+            http_client: Some(http_client),
+            musicbrainz_client,
+            lastfm_client,
+        }
+    }
+
+    /// Create a new ArtworkService with HTTP client for remote fetching (deprecated)
+    ///
+    /// Use `with_remote_fetching` instead for better control over API configuration.
+    #[cfg(feature = "artwork-remote")]
+    #[deprecated(since = "0.1.0", note = "Use with_remote_fetching instead")]
     pub fn with_http_client(
         repository: Arc<dyn ArtworkRepository>,
         http_client: Arc<dyn HttpClient>,
@@ -153,6 +215,8 @@ impl ArtworkService {
             max_cache_size,
             cache_size: Arc::new(RwLock::new(0)),
             http_client: Some(http_client),
+            musicbrainz_client: None,
+            lastfm_client: None,
         }
     }
 
@@ -505,35 +569,113 @@ impl ArtworkService {
     #[cfg(feature = "artwork-remote")]
     async fn fetch_from_musicbrainz(
         &self,
-        _artist: &str,
-        _album: &str,
-        _mbid: Option<&str>,
+        artist: &str,
+        album: &str,
+        mbid: Option<&str>,
         _http_client: &Arc<dyn HttpClient>,
     ) -> Result<Option<ProcessedArtwork>> {
-        // TODO: Implement MusicBrainz API integration
-        // 1. Search for release by artist + album or use MBID
-        // 2. Query Cover Art Archive for release artwork
-        // 3. Download high-resolution cover (preferably front)
-        // 4. Store with deduplication
-        warn!("MusicBrainz artwork fetching not yet implemented");
-        Ok(None)
+        // Check if MusicBrainz client is configured
+        let client = match &self.musicbrainz_client {
+            Some(c) => c,
+            None => {
+                debug!("MusicBrainz client not configured");
+                return Ok(None);
+            }
+        };
+
+        // Fetch cover art
+        match client.fetch_cover_art(artist, album, mbid).await? {
+            Some(artwork_data) => {
+                info!(
+                    "Fetched {} bytes of artwork from MusicBrainz for '{} - {}'",
+                    artwork_data.len(),
+                    artist,
+                    album
+                );
+
+                // Store artwork with automatic hash calculation and deduplication
+                let processed = self.store_remote_artwork(artwork_data).await?;
+                Ok(Some(processed))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Fetch artwork from Last.fm API
     #[cfg(feature = "artwork-remote")]
     async fn fetch_from_lastfm(
         &self,
-        _artist: &str,
-        _album: &str,
+        artist: &str,
+        album: &str,
         _http_client: &Arc<dyn HttpClient>,
     ) -> Result<Option<ProcessedArtwork>> {
-        // TODO: Implement Last.fm API integration
-        // 1. Call album.getInfo API with artist + album
-        // 2. Extract image URL (prefer 'extralarge' or 'mega' size)
-        // 3. Download image
-        // 4. Store with deduplication
-        warn!("Last.fm artwork fetching not yet implemented");
-        Ok(None)
+        // Check if Last.fm client is configured
+        let client = match &self.lastfm_client {
+            Some(c) => c,
+            None => {
+                debug!("Last.fm client not configured");
+                return Ok(None);
+            }
+        };
+
+        // Fetch artwork
+        match client.fetch_artwork(artist, album).await? {
+            Some(artwork_data) => {
+                info!(
+                    "Fetched {} bytes of artwork from Last.fm for '{} - {}'",
+                    artwork_data.len(),
+                    artist,
+                    album
+                );
+
+                // Store artwork with automatic hash calculation and deduplication
+                let processed = self.store_remote_artwork(artwork_data).await?;
+                Ok(Some(processed))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Store remotely-fetched artwork with automatic format detection and deduplication
+    ///
+    /// This is a helper method for remote artwork that automatically:
+    /// - Calculates the content hash
+    /// - Detects the image format/MIME type
+    /// - Checks for duplicates
+    /// - Stores new artwork if unique
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Raw image data
+    ///
+    /// # Returns
+    ///
+    /// ProcessedArtwork with deduplication flag set appropriately
+    #[cfg(feature = "artwork-remote")]
+    async fn store_remote_artwork(&self, data: Bytes) -> Result<ProcessedArtwork> {
+        // Calculate hash
+        let hash = self.calculate_hash(&data);
+
+        // Check if artwork already exists (deduplication)
+        if let Some(existing) = self.repository.find_by_hash(&hash).await.map_err(|e| {
+            MetadataError::Database(format!("Failed to check for existing artwork: {}", e))
+        })? {
+            debug!("Artwork already exists with hash {}, using existing", hash);
+            return Ok(ProcessedArtwork {
+                id: existing.id,
+                hash: existing.hash,
+                original_width: existing.width as u32,
+                original_height: existing.height as u32,
+                dominant_color: existing.dominant_color,
+                deduplicated: true,
+            });
+        }
+
+        // Detect MIME type from data
+        let mime_type = detect_mime_type(&data).unwrap_or_else(|| "image/jpeg".to_string());
+
+        // Store as new artwork
+        self.store_artwork(&data, &hash, &mime_type, "remote").await
     }
 
     /// Get cache statistics
@@ -554,6 +696,40 @@ impl ArtworkService {
         cache.clear();
         *cache_size = 0;
         info!("Cleared artwork cache");
+    }
+}
+
+/// Detects MIME type from image data by examining the magic bytes
+///
+/// # Arguments
+///
+/// * `data` - Image data
+///
+/// # Returns
+///
+/// - `Some(String)` - Detected MIME type
+/// - `None` - Unable to detect format
+#[cfg(feature = "artwork-remote")]
+fn detect_mime_type(data: &Bytes) -> Option<String> {
+    if data.len() < 12 {
+        return None;
+    }
+
+    // Check for common image format magic bytes
+    match &data[0..4] {
+        // JPEG: FF D8 FF
+        [0xFF, 0xD8, 0xFF, _] => Some("image/jpeg".to_string()),
+        // PNG: 89 50 4E 47
+        [0x89, 0x50, 0x4E, 0x47] => Some("image/png".to_string()),
+        // GIF: 47 49 46 38
+        [0x47, 0x49, 0x46, 0x38] => Some("image/gif".to_string()),
+        // WEBP: 52 49 46 46 ... 57 45 42 50
+        [0x52, 0x49, 0x46, 0x46] if data.len() >= 12 && &data[8..12] == b"WEBP" => {
+            Some("image/webp".to_string())
+        }
+        // BMP: 42 4D
+        [0x42, 0x4D, _, _] => Some("image/bmp".to_string()),
+        _ => None,
     }
 }
 

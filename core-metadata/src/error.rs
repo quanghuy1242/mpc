@@ -49,6 +49,30 @@ pub enum MetadataError {
 
     #[error("Library error: {0}")]
     Library(#[from] core_library::error::LibraryError),
+
+    #[error("Remote API error: {0}")]
+    RemoteApi(String),
+
+    #[error("Rate limited by {provider}: retry after {retry_after_seconds}s")]
+    RateLimited {
+        provider: String,
+        retry_after_seconds: u64,
+    },
+
+    #[error("HTTP error: status {status}, body: {body}")]
+    HttpError { status: u16, body: String },
+
+    #[error("JSON parsing failed: {0}")]
+    JsonParse(String),
+
+    #[error("Remote artwork not found for '{artist} - {album}'")]
+    ArtworkNotFoundRemote { artist: String, album: String },
+
+    #[error("API configuration missing: {0}")]
+    ApiConfigMissing(String),
+
+    #[error("Network error: {0}")]
+    NetworkError(String),
 }
 
 pub type Result<T> = std::result::Result<T, MetadataError>;

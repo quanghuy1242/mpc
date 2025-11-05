@@ -123,6 +123,9 @@ pub struct CoreConfig {
 
     /// Features flags
     pub features: FeatureFlags,
+
+    /// External metadata API configuration (MusicBrainz, Last.fm)
+    pub metadata_api_config: MetadataApiConfig,
 }
 
 impl std::fmt::Debug for CoreConfig {
@@ -190,6 +193,128 @@ pub struct FeatureFlags {
 
     /// Enable network-aware operations (requires NetworkMonitor)
     pub enable_network_awareness: bool,
+}
+
+/// Configuration for external metadata API services.
+///
+/// Provides API keys and optional configuration for remote metadata services like
+/// MusicBrainz Cover Art Archive and Last.fm. These services are used for:
+/// - Fetching album artwork when not embedded in audio files
+/// - Enriching metadata with additional information
+///
+/// # Security Note
+///
+/// API keys should never be hardcoded in the binary. They should be:
+/// - Loaded from environment variables
+/// - Stored in secure configuration files
+/// - Injected via the host platform's secure configuration system
+///
+/// # Example
+///
+/// ```no_run
+/// use core_runtime::config::MetadataApiConfig;
+///
+/// let config = MetadataApiConfig {
+///     musicbrainz_user_agent: Some("MyMusicApp/1.0 (contact@example.com)".to_string()),
+///     lastfm_api_key: Some("your_lastfm_api_key".to_string()),
+///     rate_limit_delay_ms: 1000, // 1 request per second
+/// };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MetadataApiConfig {
+    /// MusicBrainz user agent string (format: "AppName/Version (Contact)")
+    ///
+    /// MusicBrainz requires a user agent that identifies your application.
+    /// Format: "ApplicationName/Version (ContactEmail)"
+    /// Example: "MyMusicApp/1.0 (contact@example.com)"
+    ///
+    /// This is required for accessing the MusicBrainz API.
+    /// See: https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting
+    pub musicbrainz_user_agent: Option<String>,
+
+    /// Last.fm API key for album.getInfo and artwork fetching
+    ///
+    /// Obtain an API key from: https://www.last.fm/api/account/create
+    /// This is optional - if not provided, Last.fm fetching will be disabled.
+    pub lastfm_api_key: Option<String>,
+
+    /// Rate limit delay in milliseconds between API requests
+    ///
+    /// Default: 1000ms (1 request per second)
+    /// MusicBrainz recommends 1 request/second for anonymous clients.
+    /// Last.fm rate limits are higher but we apply the same for safety.
+    pub rate_limit_delay_ms: u64,
+}
+
+impl MetadataApiConfig {
+    /// Creates a new MetadataApiConfig with no API keys configured
+    pub fn new() -> Self {
+        Self {
+            musicbrainz_user_agent: None,
+            lastfm_api_key: None,
+            rate_limit_delay_ms: 1000,
+        }
+    }
+
+    /// Sets the MusicBrainz user agent
+    pub fn with_musicbrainz_user_agent(mut self, user_agent: impl Into<String>) -> Self {
+        self.musicbrainz_user_agent = Some(user_agent.into());
+        self
+    }
+
+    /// Sets the Last.fm API key
+    pub fn with_lastfm_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.lastfm_api_key = Some(api_key.into());
+        self
+    }
+
+    /// Sets the rate limit delay in milliseconds
+    pub fn with_rate_limit_delay_ms(mut self, delay_ms: u64) -> Self {
+        self.rate_limit_delay_ms = delay_ms;
+        self
+    }
+
+    /// Validates the configuration
+    pub fn validate(&self) -> Result<()> {
+        // Validate MusicBrainz user agent format if provided
+        if let Some(ref ua) = self.musicbrainz_user_agent {
+            if ua.is_empty() {
+                return Err(Error::Config(
+                    "MusicBrainz user agent cannot be empty".to_string(),
+                ));
+            }
+            if !ua.contains('/') || !ua.contains('(') || !ua.contains(')') {
+                return Err(Error::Config(
+                    "MusicBrainz user agent must follow format: 'AppName/Version (Contact)'".to_string(),
+                ));
+            }
+        }
+
+        // Validate rate limit
+        if self.rate_limit_delay_ms == 0 {
+            return Err(Error::Config(
+                "Rate limit delay must be greater than 0ms".to_string(),
+            ));
+        }
+
+        if self.rate_limit_delay_ms > 60000 {
+            return Err(Error::Config(
+                "Rate limit delay exceeds maximum of 60 seconds (60,000ms)".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Checks if MusicBrainz is configured
+    pub fn has_musicbrainz(&self) -> bool {
+        self.musicbrainz_user_agent.is_some()
+    }
+
+    /// Checks if Last.fm is configured
+    pub fn has_lastfm(&self) -> bool {
+        self.lastfm_api_key.is_some()
+    }
 }
 
 impl CoreConfig {
@@ -370,6 +495,7 @@ pub struct CoreConfigBuilder {
     background_executor: Option<Arc<dyn BackgroundExecutor>>,
     lifecycle_observer: Option<Arc<dyn LifecycleObserver>>,
     features: FeatureFlags,
+    metadata_api_config: Option<MetadataApiConfig>,
 }
 
 impl CoreConfigBuilder {
@@ -645,6 +771,31 @@ impl CoreConfigBuilder {
         self
     }
 
+    /// Sets the metadata API configuration for remote artwork and metadata fetching.
+    ///
+    /// This configuration includes API keys and settings for MusicBrainz and Last.fm.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Metadata API configuration
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use core_runtime::config::{CoreConfig, MetadataApiConfig};
+    ///
+    /// let api_config = MetadataApiConfig::new()
+    ///     .with_musicbrainz_user_agent("MyApp/1.0 (contact@example.com)")
+    ///     .with_lastfm_api_key("your_api_key");
+    ///
+    /// let builder = CoreConfig::builder()
+    ///     .metadata_api_config(api_config);
+    /// ```
+    pub fn metadata_api_config(mut self, config: MetadataApiConfig) -> Self {
+        self.metadata_api_config = Some(config);
+        self
+    }
+
     /// Builds the final `CoreConfig` instance.
     ///
     /// This validates all required dependencies are provided and returns
@@ -700,6 +851,7 @@ impl CoreConfigBuilder {
             background_executor: self.background_executor,
             lifecycle_observer: self.lifecycle_observer,
             features: self.features,
+            metadata_api_config: self.metadata_api_config.unwrap_or_default(),
         };
 
         // Validate the configuration

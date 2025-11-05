@@ -17,6 +17,7 @@ pub mod enrichment_job;
 pub mod error;
 pub mod extractor;
 pub mod lyrics;
+pub mod providers;
 
 pub use artwork::{ArtworkService, ArtworkSize, ProcessedArtwork};
 pub use enrichment_job::{EnrichmentConfig, EnrichmentJob, EnrichmentProgress, EnrichmentResult};
