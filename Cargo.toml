@@ -82,6 +82,15 @@ mockall = "0.13"
 # Bytes handling
 bytes = "1.7"
 
+[workspace.features]
+default = ["desktop-shims"]
+desktop-shims = ["core-service/desktop-shims"]
+ffi = ["core-service/ffi"]
+wasm = ["core-service/wasm"]
+lyrics = ["core-service/lyrics", "core-metadata/lyrics"]
+artwork-remote = ["core-service/artwork-remote", "core-metadata/artwork-remote"]
+offline-cache = ["core-service/offline-cache", "core-playback/offline-cache"]
+
 [profile.dev]
 opt-level = 0
 debug = true

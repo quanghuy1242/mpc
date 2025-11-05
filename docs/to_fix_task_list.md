@@ -2,9 +2,6 @@
 
 Verification against `docs/core_architecture.md` surfaced several gaps in tasks marked ✅ in `docs/ai_task_list.md`. Addressing these will keep the implementation aligned with the documented architecture.
 
-## TASK-001 – Initialize Rust Workspace Structure
-- `Cargo.toml:1` contains no `[features]` block despite the README advertising workspace feature flags (`README.md:39`). The task checklist calls out feature setup, so workspace-level toggles such as `desktop-shims`, `ffi`, `wasm`, etc., still need to be wired up (or the checklist adjusted).
-
 ## TASK-002 – Define Host Bridge Traits
 - The architecture requires audio routing traits (`PlaybackAdapter`, `AudioDecoder`) to keep playback pluggable (`docs/core_architecture.md:210-219`), but `bridge-traits/src/lib.rs:13` only exposes networking/storage/platform utilities. Add the missing playback traits (and related types) so downstream modules can compile against the documented contract.
 
@@ -19,4 +16,3 @@ Verification against `docs/core_architecture.md` surfaced several gaps in tasks 
 
 ## TASK-102 – Implement OAuth 2.0 Flow Manager
 - `OAuthFlowManager::exchange_code` constructs a `reqwest::Client` directly (`core-auth/src/oauth.rs:325-330`), bypassing the host-provided `HttpClient` abstraction mandated for portability (`docs/core_architecture.md:25-33`). Pass an injected `HttpClient` (or reuse one from `CoreConfig`) so mobile/Web hosts can supply their own stacks.
-
