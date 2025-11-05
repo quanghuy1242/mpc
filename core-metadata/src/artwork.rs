@@ -52,7 +52,7 @@ use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "artwork-remote")]
 use bridge_traits::http::HttpClient;
@@ -505,10 +505,10 @@ impl ArtworkService {
     #[cfg(feature = "artwork-remote")]
     async fn fetch_from_musicbrainz(
         &self,
-        artist: &str,
-        album: &str,
-        mbid: Option<&str>,
-        http_client: &Arc<dyn HttpClient>,
+        _artist: &str,
+        _album: &str,
+        _mbid: Option<&str>,
+        _http_client: &Arc<dyn HttpClient>,
     ) -> Result<Option<ProcessedArtwork>> {
         // TODO: Implement MusicBrainz API integration
         // 1. Search for release by artist + album or use MBID
@@ -523,9 +523,9 @@ impl ArtworkService {
     #[cfg(feature = "artwork-remote")]
     async fn fetch_from_lastfm(
         &self,
-        artist: &str,
-        album: &str,
-        http_client: &Arc<dyn HttpClient>,
+        _artist: &str,
+        _album: &str,
+        _http_client: &Arc<dyn HttpClient>,
     ) -> Result<Option<ProcessedArtwork>> {
         // TODO: Implement Last.fm API integration
         // 1. Call album.getInfo API with artist + album

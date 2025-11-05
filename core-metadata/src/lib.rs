@@ -14,7 +14,9 @@
 pub mod artwork;
 pub mod error;
 pub mod extractor;
+pub mod lyrics;
 
 pub use artwork::{ArtworkService, ArtworkSize, ProcessedArtwork};
 pub use error::{MetadataError, Result};
 pub use extractor::{ArtworkType, ExtractedArtwork, ExtractedMetadata, MetadataExtractor};
+pub use lyrics::{LyricsProvider, LyricsResult, LyricsSearchQuery, LyricsService, LyricsSource};

@@ -13,6 +13,7 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }
 sha2 = { workspace = true }
@@ -26,6 +27,9 @@ image = { workspace = true }
 # LRU cache for artwork
 lru = { workspace = true }
 
+# URL encoding for API requests
+urlencoding = "2.1"
+
 [features]
 lyrics = []
 artwork-remote = []
@@ -33,3 +37,4 @@ with-test-fixtures = []  # Enable integration tests with real audio files
 
 [dev-dependencies]
 mockall = { workspace = true }
+sqlx = { workspace = true }

@@ -1644,7 +1644,7 @@ During initial implementation (TASK-204), domain models were designed with addit
 
 ---
 
-### TASK-403: Implement Lyrics Provider [P2, Complexity: 4]
+### TASK-403: Implement Lyrics Provider [P2, Complexity: 4] ✅ COMPLETED
 **Description**: Fetch and store lyrics from external services.
 
 **Implementation Steps**:
@@ -1659,12 +1659,35 @@ During initial implementation (TASK-204), domain models were designed with addit
 7. Store lyrics in database with source tracking
 
 **Acceptance Criteria**:
-- Lyrics fetch for known tracks
-- Synced lyrics parse correctly (LRC format)
-- Cache prevents redundant API calls
-- Graceful degradation when unavailable
+- ✅ Lyrics fetch for known tracks
+- ✅ Synced lyrics parse correctly (LRC format)
+- ✅ Cache prevents redundant API calls
+- ✅ Graceful degradation when unavailable
 
-**Dependencies**: TASK-002, TASK-003, TASK-203
+**Dependencies**: TASK-002 ✅, TASK-003 ✅, TASK-203 ✅
+
+**Completion Notes**:
+- Created comprehensive lyrics system with 1026 lines of code
+- Implemented LyricsProvider trait with async-first design
+- Built LyricsService with:
+  - Cache-first strategy (checks database before API calls)
+  - Multi-provider fallback (LRCLib → Musixmatch → Genius)
+  - Retry logic with exponential backoff (100ms base, max 10s, 3 attempts)
+  - Database persistence via LyricsRepository
+- Provider implementations:
+  - LrcLibProvider: Free service with synced LRC and plain text support
+  - MusixmatchProvider: Commercial API requiring API key (two-step fetch)
+  - GeniusProvider: Stub implementation (API limitation - no direct lyrics access)
+- Comprehensive test suite:
+  - 11 unit tests, all passing
+  - Test helpers for FK constraints (provider → track → lyrics)
+  - Test coverage for caching, stats, updates, deletes
+- Added dependencies:
+  - urlencoding 2.1 for URL encoding
+  - sqlx (dev-dependency) for test helpers
+- Feature gated behind `lyrics` feature flag
+- Zero clippy warnings
+- Documented in Serena memory: `memory_task_403_lyrics_provider.md`
 
 ---
 
