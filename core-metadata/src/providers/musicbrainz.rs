@@ -101,7 +101,7 @@ impl RateLimiter {
 /// MusicBrainz release group search result
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[allow(dead_code)]  // Fields used for future features
+#[allow(dead_code)] // Fields used for future features
 struct ReleaseGroup {
     id: String,
     title: String,

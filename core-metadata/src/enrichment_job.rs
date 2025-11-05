@@ -119,6 +119,9 @@ pub struct EnrichmentConfig {
     /// Whether to fetch lyrics
     pub enable_lyrics: bool,
 
+    /// Whether to enrich artists with biography and country
+    pub enable_artist_enrichment: bool,
+
     /// Require WiFi connection (recommended for mobile)
     pub require_wifi: bool,
 
@@ -139,6 +142,7 @@ impl Default for EnrichmentConfig {
             max_concurrent: 5,
             enable_artwork: true,
             enable_lyrics: true,
+            enable_artist_enrichment: false, // Optional, requires provider setup
             require_wifi: false,
             max_retries: 3,
             base_retry_delay_ms: 100,
@@ -174,6 +178,12 @@ impl EnrichmentConfig {
     /// Enable/disable lyrics fetching
     pub fn with_lyrics(mut self, enabled: bool) -> Self {
         self.enable_lyrics = enabled;
+        self
+    }
+
+    /// Enable/disable artist enrichment (biography, country)
+    pub fn with_artist_enrichment(mut self, enabled: bool) -> Self {
+        self.enable_artist_enrichment = enabled;
         self
     }
 

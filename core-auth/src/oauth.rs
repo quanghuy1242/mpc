@@ -23,8 +23,11 @@
 //! ```no_run
 //! use core_auth::oauth::{OAuthFlowManager, OAuthConfig};
 //! use core_auth::ProviderKind;
+//! use std::sync::Arc;
 //!
 //! # async fn example() -> core_auth::Result<()> {
+//! # use bridge_traits::http::HttpClient;
+//! # let http_client: Arc<dyn HttpClient> = todo!();
 //! let config = OAuthConfig {
 //!     provider: ProviderKind::GoogleDrive,
 //!     client_id: "your-client-id".to_string(),
@@ -35,7 +38,7 @@
 //!     token_url: "https://oauth2.googleapis.com/token".to_string(),
 //! };
 //!
-//! let flow_manager = OAuthFlowManager::new(config);
+//! let flow_manager = OAuthFlowManager::new(config, http_client);
 //! let (auth_url, pkce_verifier) = flow_manager.build_auth_url()?;
 //! // Redirect user to auth_url...
 //! # Ok(())
@@ -162,13 +165,17 @@ impl OAuthFlowManager {
     /// # Arguments
     ///
     /// * `config` - OAuth provider configuration
+    /// * `http_client` - HTTP client for making token requests
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use core_auth::oauth::{OAuthFlowManager, OAuthConfig};
     /// use core_auth::ProviderKind;
+    /// use std::sync::Arc;
     ///
+    /// # use bridge_traits::http::HttpClient;
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
     /// let config = OAuthConfig {
     ///     provider: ProviderKind::GoogleDrive,
     ///     client_id: "client-id".to_string(),
@@ -179,7 +186,6 @@ impl OAuthFlowManager {
     ///     token_url: "https://oauth2.googleapis.com/token".to_string(),
     /// };
     ///
-    /// let http_client = Arc::new(MyHttpClient::new());
     /// let manager = OAuthFlowManager::new(config, http_client);
     /// ```
     pub fn new(config: OAuthConfig, http_client: Arc<dyn HttpClient>) -> Self {
@@ -205,9 +211,12 @@ impl OAuthFlowManager {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// # use core_auth::oauth::{OAuthFlowManager, OAuthConfig};
     /// # use core_auth::ProviderKind;
+    /// # use std::sync::Arc;
+    /// # use bridge_traits::http::HttpClient;
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
     /// # let config = OAuthConfig {
     /// #     provider: ProviderKind::GoogleDrive,
     /// #     client_id: "client-id".to_string(),
@@ -217,7 +226,7 @@ impl OAuthFlowManager {
     /// #     auth_url: "https://provider.com/auth".to_string(),
     /// #     token_url: "https://provider.com/token".to_string(),
     /// # };
-    /// # let manager = OAuthFlowManager::new(config);
+    /// # let manager = OAuthFlowManager::new(config, http_client);
     /// let (auth_url, verifier) = manager.build_auth_url().unwrap();
     /// println!("Visit: {}", auth_url);
     /// // Store verifier securely for later use
@@ -278,7 +287,10 @@ impl OAuthFlowManager {
     /// ```no_run
     /// # use core_auth::oauth::{OAuthFlowManager, OAuthConfig, PkceVerifier};
     /// # use core_auth::ProviderKind;
+    /// # use std::sync::Arc;
+    /// # use bridge_traits::http::HttpClient;
     /// # async fn example() -> core_auth::Result<()> {
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
     /// # let config = OAuthConfig {
     /// #     provider: ProviderKind::GoogleDrive,
     /// #     client_id: "client-id".to_string(),
@@ -288,7 +300,7 @@ impl OAuthFlowManager {
     /// #     auth_url: "https://provider.com/auth".to_string(),
     /// #     token_url: "https://provider.com/token".to_string(),
     /// # };
-    /// # let manager = OAuthFlowManager::new(config);
+    /// # let manager = OAuthFlowManager::new(config, http_client);
     /// # let (_, verifier) = manager.build_auth_url()?;
     /// # let callback_code = "code_from_callback";
     /// # let callback_state = verifier.state().to_string();
@@ -406,7 +418,10 @@ impl OAuthFlowManager {
     /// ```no_run
     /// # use core_auth::oauth::{OAuthFlowManager, OAuthConfig};
     /// # use core_auth::ProviderKind;
+    /// # use std::sync::Arc;
+    /// # use bridge_traits::http::HttpClient;
     /// # async fn example() -> core_auth::Result<()> {
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
     /// # let config = OAuthConfig {
     /// #     provider: ProviderKind::GoogleDrive,
     /// #     client_id: "client-id".to_string(),
@@ -416,7 +431,7 @@ impl OAuthFlowManager {
     /// #     auth_url: "https://provider.com/auth".to_string(),
     /// #     token_url: "https://provider.com/token".to_string(),
     /// # };
-    /// # let manager = OAuthFlowManager::new(config);
+    /// # let manager = OAuthFlowManager::new(config, http_client);
     /// # let old_refresh_token = "refresh_token";
     /// let new_tokens = manager.refresh_access_token(old_refresh_token).await?;
     /// # Ok(())

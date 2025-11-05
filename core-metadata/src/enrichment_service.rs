@@ -56,6 +56,7 @@
 use crate::artwork::ArtworkService;
 use crate::error::{MetadataError, Result};
 use crate::lyrics::{LyricsSearchQuery, LyricsService};
+use crate::providers::artist_enrichment::ArtistEnrichmentProvider;
 use core_library::models::Track;
 use core_library::repositories::album::AlbumRepository;
 use core_library::repositories::artist::ArtistRepository;
@@ -110,6 +111,7 @@ pub struct EnrichmentService {
     #[cfg_attr(not(feature = "artwork-remote"), allow(dead_code))]
     artwork_service: Arc<ArtworkService>,
     lyrics_service: Arc<LyricsService>,
+    artist_enrichment_provider: Option<Arc<ArtistEnrichmentProvider>>,
 }
 
 impl EnrichmentService {
@@ -134,7 +136,19 @@ impl EnrichmentService {
             track_repository,
             artwork_service,
             lyrics_service,
+            artist_enrichment_provider: None,
         }
+    }
+
+    /// Set the artist enrichment provider
+    ///
+    /// Enables artist biography and country fetching from MusicBrainz.
+    ///
+    /// # Arguments
+    /// * `provider` - Artist enrichment provider instance
+    pub fn with_artist_enrichment(mut self, provider: Arc<ArtistEnrichmentProvider>) -> Self {
+        self.artist_enrichment_provider = Some(provider);
+        self
     }
 
     /// Enrich a track with artwork and/or lyrics
@@ -373,6 +387,123 @@ impl EnrichmentService {
             }
             None => Ok("unavailable".to_string()),
         }
+    }
+
+    /// Enrich an artist with biography and country information
+    ///
+    /// This method fetches artist metadata from MusicBrainz and updates
+    /// the artist record in the database with biography and country fields.
+    ///
+    /// # Arguments
+    /// * `artist_id` - ID of the artist to enrich
+    ///
+    /// # Returns
+    /// Result indicating success or failure
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - Artist enrichment provider is not configured
+    /// - Artist not found in database
+    /// - Network errors occur during fetching
+    /// - Database update fails
+    #[instrument(skip(self), fields(artist_id = %artist_id))]
+    pub async fn enrich_artist(&self, artist_id: &str) -> Result<()> {
+        // Check if artist enrichment is enabled
+        let provider = self.artist_enrichment_provider.as_ref().ok_or_else(|| {
+            MetadataError::ValidationError("Artist enrichment provider not configured".to_string())
+        })?;
+
+        // Fetch artist from database
+        let mut artist = self
+            .artist_repository
+            .find_by_id(artist_id)
+            .await
+            .map_err(|e| MetadataError::Database(e.to_string()))?
+            .ok_or_else(|| MetadataError::RemoteApi(format!("Artist not found: {}", artist_id)))?;
+
+        // Skip if already enriched
+        if artist.bio.is_some() && artist.country.is_some() {
+            debug!("Artist already enriched, skipping");
+            return Ok(());
+        }
+
+        info!("Fetching artist metadata for: {}", artist.name);
+
+        // Fetch metadata from provider
+        let metadata = match provider.fetch_artist_metadata(&artist.name).await {
+            Ok(meta) => meta,
+            Err(e) => {
+                warn!(error = %e, "Failed to fetch artist metadata");
+                return Err(e);
+            }
+        };
+
+        // Update artist record
+        let mut updated = false;
+
+        if let Some(bio) = metadata.bio {
+            if artist.bio.is_none() {
+                artist.bio = Some(bio);
+                updated = true;
+                info!("Added artist biography");
+            }
+        }
+
+        if let Some(country) = metadata.country {
+            if artist.country.is_none() {
+                artist.country = Some(country);
+                updated = true;
+                info!("Added artist country");
+            }
+        }
+
+        if updated {
+            artist.updated_at = chrono::Utc::now().timestamp();
+
+            self.artist_repository
+                .update(&artist)
+                .await
+                .map_err(|e| MetadataError::Database(e.to_string()))?;
+
+            info!("Artist enrichment completed successfully");
+        } else {
+            debug!("No new metadata available for artist");
+        }
+
+        Ok(())
+    }
+
+    /// Enrich multiple artists in batch
+    ///
+    /// This is a convenience method that calls `enrich_artist()` for each artist
+    /// and continues even if some enrichments fail.
+    ///
+    /// # Arguments
+    /// * `artist_ids` - List of artist IDs to enrich
+    ///
+    /// # Returns
+    /// Tuple of (successful_count, failed_count)
+    pub async fn enrich_artists_batch(&self, artist_ids: &[String]) -> (usize, usize) {
+        let mut successful = 0;
+        let mut failed = 0;
+
+        for artist_id in artist_ids {
+            match self.enrich_artist(artist_id).await {
+                Ok(_) => successful += 1,
+                Err(e) => {
+                    warn!(artist_id = %artist_id, error = %e, "Artist enrichment failed");
+                    failed += 1;
+                }
+            }
+        }
+
+        info!(
+            successful = successful,
+            failed = failed,
+            "Batch artist enrichment completed"
+        );
+
+        (successful, failed)
     }
 }
 

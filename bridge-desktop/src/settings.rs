@@ -29,7 +29,9 @@ impl SqliteSettingsStore {
                 .map_err(BridgeError::Io)?;
         }
 
-        let db_url = format!("sqlite://{}", db_path.display());
+        // Convert path to string, replacing backslashes with forward slashes for SQLite URL
+        let path_str = db_path.to_string_lossy().replace('\\', "/");
+        let db_url = format!("sqlite://{}", path_str);
 
         let pool = SqlitePool::connect(&db_url)
             .await

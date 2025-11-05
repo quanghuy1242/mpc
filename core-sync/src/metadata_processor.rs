@@ -104,8 +104,11 @@ pub struct MetadataProcessor {
     metadata_extractor: Arc<MetadataExtractor>,
     file_system: Arc<dyn FileSystemAccess>,
     track_repository: Arc<dyn TrackRepository>,
+    #[allow(dead_code)]
     artist_repository: Arc<dyn ArtistRepository>,
+    #[allow(dead_code)]
     album_repository: Arc<dyn AlbumRepository>,
+    #[allow(dead_code)]
     artwork_repository: Arc<dyn ArtworkRepository>,
     artwork_service: Option<Arc<ArtworkService>>,
     db_pool: SqlitePool,
@@ -124,6 +127,7 @@ impl MetadataProcessor {
     /// * `artwork_repository` - Artwork data access layer
     /// * `artwork_service` - Optional artwork processing service
     /// * `db_pool` - Database connection pool for transactions
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: ProcessorConfig,
         file_system: Arc<dyn FileSystemAccess>,
@@ -198,12 +202,15 @@ impl MetadataProcessor {
             })?;
 
         // Step 2: Extract metadata
-        let metadata = self.extract_metadata(&temp_path).await.map_err(|e| {
-            // Clean up temp file on error
-            let _ = self.cleanup_temp_file(&temp_path);
-            error!("Failed to extract metadata from {}: {}", file_name, e);
-            e
-        })?;
+        let metadata = match self.extract_metadata(&temp_path).await {
+            Ok(meta) => meta,
+            Err(e) => {
+                // Clean up temp file on error
+                self.cleanup_temp_file(&temp_path).await;
+                error!("Failed to extract metadata from {}: {}", file_name, e);
+                return Err(e);
+            }
+        };
 
         // Step 3: Check if track already exists
         let existing_track = self

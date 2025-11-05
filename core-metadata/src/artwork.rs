@@ -52,7 +52,7 @@ use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 #[cfg(feature = "artwork-remote")]
 use bridge_traits::http::HttpClient;

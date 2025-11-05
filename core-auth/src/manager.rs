@@ -23,7 +23,7 @@
 //! use core_auth::{AuthManager, ProviderKind};
 //! use core_runtime::events::EventBus;
 //! use std::sync::Arc;
-//! # use bridge_traits::{SecureStore, error::Result as BridgeResult};
+//! # use bridge_traits::{SecureStore, http::HttpClient, error::Result as BridgeResult};
 //! # struct MockSecureStore;
 //! # #[async_trait::async_trait]
 //! # impl SecureStore for MockSecureStore {
@@ -36,10 +36,11 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # let http_client: Arc<dyn HttpClient> = todo!();
 //! let event_bus = EventBus::new(100);
 //! let secure_store = Arc::new(MockSecureStore);
 //!
-//! let manager = AuthManager::new(secure_store, event_bus.clone());
+//! let manager = AuthManager::new(secure_store, event_bus.clone(), http_client);
 //!
 //! // List available providers
 //! let providers = manager.list_providers();
@@ -143,7 +144,7 @@ impl AuthManager {
     /// use core_auth::AuthManager;
     /// use core_runtime::events::EventBus;
     /// use std::sync::Arc;
-    /// # use bridge_traits::{SecureStore, error::Result as BridgeResult};
+    /// # use bridge_traits::{SecureStore, http::HttpClient, error::Result as BridgeResult};
     /// # struct MockSecureStore;
     /// # #[async_trait::async_trait]
     /// # impl SecureStore for MockSecureStore {
@@ -153,10 +154,11 @@ impl AuthManager {
     /// #     async fn list_keys(&self) -> BridgeResult<Vec<String>> { Ok(vec![]) }
     /// #     async fn clear_all(&self) -> BridgeResult<()> { Ok(()) }
     /// # }
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
     ///
     /// let event_bus = EventBus::new(100);
     /// let secure_store = Arc::new(MockSecureStore);
-    /// let manager = AuthManager::new(secure_store, event_bus);
+    /// let manager = AuthManager::new(secure_store, event_bus, http_client);
     /// ```
     pub fn new(
         secure_store: Arc<dyn SecureStore>,
@@ -194,7 +196,7 @@ impl AuthManager {
     /// # use core_auth::AuthManager;
     /// # use core_runtime::events::EventBus;
     /// # use std::sync::Arc;
-    /// # use bridge_traits::{SecureStore, error::Result as BridgeResult};
+    /// # use bridge_traits::{SecureStore, http::HttpClient, error::Result as BridgeResult};
     /// # struct MockSecureStore;
     /// # #[async_trait::async_trait]
     /// # impl SecureStore for MockSecureStore {
@@ -204,9 +206,10 @@ impl AuthManager {
     /// #     async fn list_keys(&self) -> BridgeResult<Vec<String>> { Ok(vec![]) }
     /// #     async fn clear_all(&self) -> BridgeResult<()> { Ok(()) }
     /// # }
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
-    /// # let manager = AuthManager::new(secure_store, event_bus);
+    /// # let manager = AuthManager::new(secure_store, event_bus, http_client);
     /// let providers = manager.list_providers();
     /// for provider in providers {
     ///     println!("{}: {}", provider.display_name, provider.auth_url);
@@ -264,7 +267,7 @@ impl AuthManager {
     /// # use core_auth::{AuthManager, ProviderKind};
     /// # use core_runtime::events::EventBus;
     /// # use std::sync::Arc;
-    /// # use bridge_traits::{SecureStore, error::Result as BridgeResult};
+    /// # use bridge_traits::{SecureStore, http::HttpClient, error::Result as BridgeResult};
     /// # struct MockSecureStore;
     /// # #[async_trait::async_trait]
     /// # impl SecureStore for MockSecureStore {
@@ -276,9 +279,10 @@ impl AuthManager {
     /// # }
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
-    /// # let manager = AuthManager::new(secure_store, event_bus);
+    /// # let manager = AuthManager::new(secure_store, event_bus, http_client);
     /// let auth_url = manager.sign_in(ProviderKind::GoogleDrive).await?;
     /// println!("Please visit: {}", auth_url);
     /// // Host launches browser, captures callback, calls complete_sign_in
@@ -361,7 +365,7 @@ impl AuthManager {
     /// # use core_auth::{AuthManager, ProviderKind};
     /// # use core_runtime::events::EventBus;
     /// # use std::sync::Arc;
-    /// # use bridge_traits::{SecureStore, error::Result as BridgeResult};
+    /// # use bridge_traits::{SecureStore, HttpClient, error::Result as BridgeResult};
     /// # struct MockSecureStore;
     /// # #[async_trait::async_trait]
     /// # impl SecureStore for MockSecureStore {
@@ -375,7 +379,8 @@ impl AuthManager {
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
-    /// # let manager = AuthManager::new(secure_store, event_bus);
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
+    /// # let manager = AuthManager::new(secure_store, event_bus, http_client);
     /// // After user approves in browser and callback is received
     /// let code = "authorization_code_from_callback";
     /// let state = "state_from_callback";
@@ -509,7 +514,7 @@ impl AuthManager {
     /// # use core_auth::{AuthManager, ProfileId};
     /// # use core_runtime::events::EventBus;
     /// # use std::sync::Arc;
-    /// # use bridge_traits::{SecureStore, error::Result as BridgeResult};
+    /// # use bridge_traits::{SecureStore, HttpClient, error::Result as BridgeResult};
     /// # struct MockSecureStore;
     /// # #[async_trait::async_trait]
     /// # impl SecureStore for MockSecureStore {
@@ -523,7 +528,8 @@ impl AuthManager {
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
-    /// # let manager = AuthManager::new(secure_store, event_bus);
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
+    /// # let manager = AuthManager::new(secure_store, event_bus, http_client);
     /// let profile_id = ProfileId::new();
     /// manager.sign_out(profile_id).await?;
     /// # Ok(())
@@ -591,7 +597,7 @@ impl AuthManager {
     /// # use core_auth::{AuthManager, ProfileId};
     /// # use core_runtime::events::EventBus;
     /// # use std::sync::Arc;
-    /// # use bridge_traits::{SecureStore, error::Result as BridgeResult};
+    /// # use bridge_traits::{SecureStore, HttpClient, error::Result as BridgeResult};
     /// # struct MockSecureStore;
     /// # #[async_trait::async_trait]
     /// # impl SecureStore for MockSecureStore {
@@ -605,7 +611,8 @@ impl AuthManager {
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
-    /// # let manager = AuthManager::new(secure_store, event_bus);
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
+    /// # let manager = AuthManager::new(secure_store, event_bus, http_client);
     /// # let profile_id = ProfileId::new();
     /// // Get a valid token (automatically refreshes if needed)
     /// // let token = manager.get_valid_token(profile_id).await?;
@@ -738,7 +745,7 @@ impl AuthManager {
     /// # use core_auth::AuthManager;
     /// # use core_runtime::events::EventBus;
     /// # use std::sync::Arc;
-    /// # use bridge_traits::{SecureStore, error::Result as BridgeResult};
+    /// # use bridge_traits::{SecureStore, HttpClient, error::Result as BridgeResult};
     /// # struct MockSecureStore;
     /// # #[async_trait::async_trait]
     /// # impl SecureStore for MockSecureStore {
@@ -752,7 +759,8 @@ impl AuthManager {
     /// # async fn main() {
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
-    /// # let manager = AuthManager::new(secure_store, event_bus);
+    /// # let http_client: Arc<dyn HttpClient> = todo!();
+    /// # let manager = AuthManager::new(secure_store, event_bus, http_client);
     /// if let Some(session) = manager.current_session().await {
     ///     println!("Signed in as: {}", session.profile_id);
     /// }

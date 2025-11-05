@@ -179,6 +179,7 @@ impl Default for SyncConfig {
 #[derive(Clone)]
 struct ActiveSync {
     job_id: SyncJobId,
+    #[allow(dead_code)]
     profile_id: ProfileId,
     cancellation_token: tokio_util::sync::CancellationToken,
 }
@@ -741,9 +742,8 @@ impl SyncCoordinator {
                 items_deleted: 0,
                 items_failed: 0,
             };
-            let completed_job = job.complete(stats.clone())?;
+            let completed_job = job.complete(stats)?;
             self.job_repository.update(&completed_job).await?;
-
             self.event_bus
                 .emit(CoreEvent::Sync(SyncEvent::Completed {
                     job_id: job_id.to_string(),
@@ -866,7 +866,7 @@ impl SyncCoordinator {
                     self.job_repository.update(&job).await?;
 
                     // Emit progress event every 10 items or at completion
-                    if processed % 10 == 0 || processed == total_items {
+                    if processed.is_multiple_of(10) || processed == total_items {
                         self.event_bus
                             .emit(CoreEvent::Sync(SyncEvent::Progress {
                                 job_id: job_id.to_string(),
@@ -931,9 +931,8 @@ impl SyncCoordinator {
             items_failed: failed,
         };
 
-        let completed_job = job.complete(stats.clone())?;
+        let completed_job = job.complete(stats)?;
         self.job_repository.update(&completed_job).await?;
-
         let duration_secs = chrono::Utc::now().timestamp() - completed_job.started_at.unwrap_or(0);
 
         // Emit completion event

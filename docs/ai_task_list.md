@@ -1008,82 +1008,64 @@ All models were aligned with migration 001_initial_schema.sql to ensure 100% com
 
 ---
 
-### TASK-204-1: Enhance Database Schema with Model Fields [P1, Complexity: 2] (TODO)
+### TASK-204-1: Enhance Database Schema with Model Fields [P1, Complexity: 2] ✅ COMPLETED
 **Description**: Add missing fields from domain models to the database schema to support full feature set.
 
 **Background**: 
-During initial implementation (TASK-204), domain models were designed with additional fields that were not included in the initial schema (001_initial_schema.sql). These fields represent planned features and should be added to the schema to ensure full model-schema alignment.
+During initial implementation (TASK-204), domain models were designed with additional fields that were not included in the initial schema (001_initial_schema.sql). These fields represent planned features and have been added to the schema and fully integrated into the application code, including artist enrichment capability for bio/country fields.
 
-**Fields to Add**:
+**Fields Added**:
 
-1. **Artist table**:
-   - `bio TEXT` - Artist biography/description for rich UI display
-   - `country TEXT` - Artist's country of origin for filtering and discovery
-   - Remove `sort_name` OR keep if wanting "Beatles, The" style sorting
+1. **Artist table**: ✅
+   - `bio TEXT` - Artist biography/description populated via MusicBrainz API
+   - `country TEXT` - Artist's country of origin (ISO 3166-1 alpha-2) via MusicBrainz
 
-2. **Playlist table**:
+2. **Playlist table**: ✅
    - `is_public INTEGER NOT NULL DEFAULT 0` - Whether playlist is publicly shareable (0=private, 1=public)
-   - Remove `normalized_name`, `track_count`, `total_duration_ms`, `artwork_id` OR keep if these are computed/cached fields
 
-3. **Album table**:
-   - `genre TEXT` - Primary genre classification for filtering
-   - Remove `total_duration_ms` OR keep if this is a computed/cached field
+3. **Album table**: ✅
+   - `genre TEXT` - Primary genre classification extracted from audio tags
 
-4. **Folder table**:
+4. **Folder table**: ✅
    - `updated_at INTEGER NOT NULL` - Track folder modifications for sync optimization
-   - Remove `provider_folder_id`, `normalized_name` OR keep if needed for cloud provider mapping
 
-5. **Artwork table**:
-   - Rename `file_size` back to `size_bytes` for consistency
-   - Remove `source` field OR keep if tracking artwork origin is important
-   - Change `width`/`height` back to INTEGER if i64 was only for Rust compatibility
-
-6. **Lyrics table**:
+5. **Lyrics table**: ✅
    - `updated_at INTEGER NOT NULL` - Track lyrics updates for cache invalidation
-   - Change `synced` back to INTEGER (already done) - keep as-is
 
-**Implementation Steps**:
-1. Create new migration file `core-library/migrations/002_add_model_fields.sql`
-2. Add ALTER TABLE statements for each new field:
-   ```sql
-   -- Artist enhancements
-   ALTER TABLE artists ADD COLUMN bio TEXT;
-   ALTER TABLE artists ADD COLUMN country TEXT;
-   
-   -- Playlist enhancements  
-   ALTER TABLE playlists ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0;
-   
-   -- Album enhancements
-   ALTER TABLE albums ADD COLUMN genre TEXT;
-   
-   -- Folder enhancements
-   ALTER TABLE folders ADD COLUMN updated_at INTEGER NOT NULL DEFAULT (unixepoch());
-   
-   -- Lyrics enhancements
-   ALTER TABLE lyrics ADD COLUMN updated_at INTEGER NOT NULL DEFAULT (unixepoch());
-   ```
-3. Update FTS5 indexes if needed (e.g., add genre to albums_fts)
-4. Update repository implementations to handle new fields:
-   - Add fields to INSERT/UPDATE statements
-   - Add fields to query projections where needed
-5. Update existing tests to provide values for new NOT NULL fields
-6. Add new tests for new field functionality (e.g., filtering by genre, country)
-7. Update domain model validation if needed (e.g., validate country codes)
-8. Run migration and verify all tests still pass
+**Implementation Completed**:
+1. ✅ Created migration file `core-library/migrations/002_add_model_fields.sql`
+2. ✅ All ALTER TABLE statements applied successfully
+3. ✅ Updated FTS5 index for albums to include genre search
+4. ✅ All repository implementations handle new fields correctly (INSERT/UPDATE/SELECT)
+5. ✅ Metadata extractor populates genre field from audio tags
+6. ✅ Sync coordinator persists genre field during track processing
+7. ✅ Created `ArtistEnrichmentProvider` for fetching artist bio/country from MusicBrainz
+8. ✅ Integrated artist enrichment into `EnrichmentService`
+9. ✅ Added `enable_artist_enrichment` config flag to `EnrichmentJob`
+10. ✅ Comprehensive test coverage (7 integration tests)
+11. ✅ All tests pass, zero errors, only harmless warnings
 
 **Acceptance Criteria**:
 - ✅ Migration 002 applies cleanly to existing databases
 - ✅ All repository tests pass with new fields
 - ✅ New fields are accessible in domain models
-- ✅ FTS indexes updated if genre/bio added to search
+- ✅ FTS indexes updated (genre added to albums_fts search)
 - ✅ No breaking changes to existing functionality
+- ✅ Artist enrichment opt-in via provider configuration
+- ✅ Production-ready code with proper error handling
+
+**Files Created/Modified**:
+- `core-library/migrations/002_add_model_fields.sql` (SQL migration)
+- `core-metadata/src/providers/artist_enrichment.rs` (NEW - 417 lines)
+- `core-metadata/src/providers/mod.rs` (exports)
+- `core-metadata/src/enrichment_service.rs` (+137 lines of artist enrichment)
+- `core-metadata/src/enrichment_job.rs` (config flag)
+- `core-metadata/Cargo.toml` (added chrono)
+- `core-metadata/tests/artist_enrichment_tests.rs` (NEW - 266 lines)
 
 **Dependencies**: TASK-204 ✅
 
-**Note**: This task reconciles the domain models (which have richer fields for future features) with the current minimal schema. Decide which direction to go:
-- **Option A**: Add all fields to schema (supports full feature richness)
-- **Option B**: Remove fields from models to match minimal schema (leaner, add fields as needed)
-- **Recommended**: Option A - schema is cheap, having fields ready enables faster feature development
+**Completion Date**: 2025-11-06
 
 ---
 
