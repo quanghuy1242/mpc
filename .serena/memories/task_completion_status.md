@@ -100,7 +100,7 @@ Core tasks completed (TASK-101 through TASK-105)
 
 **Test Coverage**:
 - **53 repository tests passing** (100% success rate)
-- **79 total core-library tests passing** (includes models, db, repositories)
+- **83 total core-library tests passing** (includes models, db, repositories, query service)
 - All CRUD operations tested
 - All pagination tested
 - All FTS5 search tested
@@ -175,6 +175,16 @@ Core tasks completed (TASK-101 through TASK-105)
 - **Testing**: `cargo test -p core-library` confirms all 79 unit tests pass after migration
 - Ready for downstream consumers (e.g., TASK-205 Library Query API) to surface the new metadata
 
+#### TASK-205: Implement Library Query API ✅
+- Status: COMPLETED
+- Date: November 6, 2025
+- Added `core-library/src/query.rs` implementing the high-level `LibraryQueryService`
+- Delivered feature-complete filters (`TrackFilter`, `AlbumFilter`) with sorting, pagination, and streaming support
+- Implemented FTS-backed search returning tracks, albums, artists, and playlists with eager-loaded metadata
+- Added `TrackDetails`, `TrackListItem`, and `AlbumListItem` types to surface related entities without extra queries
+- Introduced four new async unit tests covering track queries, album aggregation, search integration, and detail hydration
+- **Testing**: `cargo test -p core-library` now reports 83 passing tests (including new query module coverage)
+
 ## In Progress Tasks
 
 None currently.
@@ -185,12 +195,6 @@ None currently.
 - TASK-106: Implement OneDrive Provider [P1, Complexity: 5]
   - **Ready to start - all dependencies complete**
   - Depends on TASK-002 (✅), TASK-003 (✅), TASK-104 (✅)
-
-### Phase 2: Library & Database Layer
-- TASK-205: Implement Library Query API [P0, Complexity: 3]
-  - **Ready to start - all dependencies complete**
-  - Depends on TASK-203 (✅), TASK-204 (✅)
-  - All 7 repositories ready for integration
 
 ### Phases 3-11: All pending
 
@@ -204,38 +208,30 @@ Critical path completed for Phase 2:
 5. ✅ TASK-203 (Repository Pattern - ALL 7 repositories) - COMPLETED
 6. ✅ TASK-204 (Domain Models) - COMPLETED
 7. ✅ TASK-204-1 (Schema Alignment Fields) - COMPLETED
-8. **TASK-205 (Library Query API) - Ready to start**
+8. ✅ TASK-205 (Library Query API) - COMPLETED
 9. **TASK-106 (OneDrive Provider) - Ready to start**
 
-## Phase Status
+## Phase Overview
+- **Phase 0**: ✅ Completed (TASK-001 through TASK-006)
+- **Phase 1**: ✅ Core tasks complete (TASK-101 through TASK-105); TASK-106 intentionally deferred
+- **Phase 2**: ✅ Completed all six tasks (TASK-201 through TASK-205)
 
-### Phase 0: Project Foundation & Infrastructure ✅
-All 6 tasks complete (TASK-001 through TASK-006)
+## Recent Updates
+- TASK-205 (Library Query API) finished with new `LibraryQueryService`, filters, streaming, and search integration.
+- Added four async tests covering queries, search, and detail hydration; total core-library tests now 83.
 
-### Phase 1: Authentication & Provider Foundation ✅
-Core tasks complete (TASK-101 through TASK-105)
-- TASK-106 (OneDrive Provider) ready to start
+## Next Focus
+- Shift attention to Phase 3 tasks.
+- Revisit TASK-106 (OneDrive Provider) later as scheduled.
 
-### Phase 2: Library & Database Layer
-- ✅ TASK-201: Database Schema - COMPLETED
-- ✅ TASK-202: Database Connection Pool - COMPLETED
-- ✅ TASK-203: Repository Pattern - **FULLY COMPLETED (7/7 repositories)**
-- ✅ TASK-204: Domain Models - COMPLETED
-- ✅ TASK-204-1: Schema Alignment Fields - COMPLETED
-- TASK-205: Library Query API (ready to start)
-
-**Phase 2 progress: 5 of 6 tasks complete (~83%)** - Only TASK-205 remaining
 
 ## Summary
 
-- **Completed**: 16 tasks (6 Phase 0 + 5 Phase 1 core + 5 Phase 2)
-- **Ready to start**: 2 tasks (TASK-205, TASK-106)
+- **Completed**: 17 tasks (6 Phase 0 + 5 Phase 1 core + 6 Phase 2)
+- **Ready to start**: 1 task (TASK-106)
 - **Pending**: All other tasks
-- **Total workspace tests**: 79 core-library tests passing
+- **Total workspace tests**: 83 core-library tests passing
 - **Repository tests**: 53 repository tests passing (100% success rate)
 - **Code quality**: Zero errors, zero warnings, clean builds
-- **Database**: Complete schema with connection pooling, domain models, and all repositories
+- **Database**: Complete schema with connection pooling, domain models, repositories, and query service
 - **Repositories**: All 7 repositories implemented with full CRUD, pagination, FTS5 search
-- **Next recommended**: 
-  1. Start TASK-205 (Library Query API) - all repositories ready
-  2. Start TASK-106 (OneDrive Provider) in parallel
