@@ -237,6 +237,8 @@ pub struct Album {
     pub artist_id: Option<String>,
     /// Release year
     pub year: Option<i32>,
+    /// Primary genre classification
+    pub genre: Option<String>,
     /// Artwork reference
     pub artwork_id: Option<String>,
     /// Cached track count
@@ -258,6 +260,7 @@ impl Album {
             normalized_name,
             artist_id,
             year: None,
+            genre: None,
             artwork_id: None,
             track_count: 0,
             total_duration_ms: 0,
@@ -302,6 +305,10 @@ pub struct Artist {
     pub normalized_name: String,
     /// Sort name for alphabetical sorting
     pub sort_name: Option<String>,
+    /// Artist biography/description
+    pub bio: Option<String>,
+    /// Country of origin (ISO 3166-1 alpha-2 code, e.g., 'US', 'GB', 'JP')
+    pub country: Option<String>,
     /// Timestamps
     pub created_at: i64,
     pub updated_at: i64,
@@ -316,6 +323,8 @@ impl Artist {
             name,
             normalized_name,
             sort_name: None,
+            bio: None,
+            country: None,
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         }
@@ -351,6 +360,8 @@ pub struct Playlist {
     pub owner_type: String,
     /// Sort order (manual, date_added, title, etc.)
     pub sort_order: String,
+    /// Whether playlist is publicly shareable (0=private, 1=public)
+    pub is_public: i64,
     /// Cached track count
     pub track_count: i64,
     /// Cached total duration in milliseconds
@@ -373,6 +384,7 @@ impl Playlist {
             description: None,
             owner_type: "user".to_string(),
             sort_order: "manual".to_string(),
+            is_public: 0, // Private by default
             track_count: 0,
             total_duration_ms: 0,
             artwork_id: None,
@@ -391,6 +403,7 @@ impl Playlist {
             description: None,
             owner_type: "system".to_string(),
             sort_order,
+            is_public: 0, // Private by default
             track_count: 0,
             total_duration_ms: 0,
             artwork_id: None,
@@ -445,12 +458,20 @@ pub struct Folder {
     pub path: String,
     /// Timestamps
     pub created_at: i64,
+    pub updated_at: i64,
 }
 
 impl Folder {
     /// Create a new folder
-    pub fn new(provider_id: String, provider_folder_id: String, name: String, parent_id: Option<String>, path: String) -> Self {
+    pub fn new(
+        provider_id: String,
+        provider_folder_id: String,
+        name: String,
+        parent_id: Option<String>,
+        path: String,
+    ) -> Self {
         let normalized_name = name.trim().to_lowercase();
+        let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4().to_string(),
             provider_id,
@@ -459,7 +480,8 @@ impl Folder {
             normalized_name,
             parent_id,
             path,
-            created_at: chrono::Utc::now().timestamp(),
+            created_at: now,
+            updated_at: now,
         }
     }
 
@@ -567,6 +589,7 @@ pub struct Lyrics {
     pub last_checked_at: i64,
     /// Timestamps
     pub created_at: i64,
+    pub updated_at: i64,
 }
 
 impl Lyrics {
@@ -581,6 +604,7 @@ impl Lyrics {
             language: None,
             last_checked_at: now,
             created_at: now,
+            updated_at: now,
         }
     }
 

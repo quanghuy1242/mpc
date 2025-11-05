@@ -159,6 +159,22 @@ Core tasks completed (TASK-101 through TASK-105)
 - **Test Coverage**: 18 comprehensive unit tests all passing
 - All acceptance criteria met
 
+#### TASK-204-1: Enhance Database Schema with Model Fields ✅
+- Status: COMPLETED
+- Date: November 5, 2025
+- Added migration `core-library/migrations/002_add_model_fields.sql` to align SQLite schema with enriched domain models
+- **Schema Updates**:
+  - Artists: new `bio`, `country` columns + index on `country`
+  - Playlists: new `is_public` column + supporting index
+  - Albums: new `genre` column, refreshed `albums_fts` (genre-aware) with rowid triggers and `genre` index
+  - Folders: `updated_at` column with `unixepoch()` default for sync tracking
+  - Lyrics: `updated_at` column with `unixepoch()` default for cache invalidation
+- **Repository Updates**:
+  - Artist, Playlist, Album, Folder, and Lyrics repositories now read/write the new columns
+  - Album search queries join on the rebuilt FTS table using `album_id`
+- **Testing**: `cargo test -p core-library` confirms all 79 unit tests pass after migration
+- Ready for downstream consumers (e.g., TASK-205 Library Query API) to surface the new metadata
+
 ## In Progress Tasks
 
 None currently.
@@ -187,8 +203,9 @@ Critical path completed for Phase 2:
 4. ✅ TASK-202 (Database Connection Pool) - COMPLETED
 5. ✅ TASK-203 (Repository Pattern - ALL 7 repositories) - COMPLETED
 6. ✅ TASK-204 (Domain Models) - COMPLETED
-7. **TASK-205 (Library Query API) - Ready to start**
-8. **TASK-106 (OneDrive Provider) - Ready to start**
+7. ✅ TASK-204-1 (Schema Alignment Fields) - COMPLETED
+8. **TASK-205 (Library Query API) - Ready to start**
+9. **TASK-106 (OneDrive Provider) - Ready to start**
 
 ## Phase Status
 
@@ -204,13 +221,14 @@ Core tasks complete (TASK-101 through TASK-105)
 - ✅ TASK-202: Database Connection Pool - COMPLETED
 - ✅ TASK-203: Repository Pattern - **FULLY COMPLETED (7/7 repositories)**
 - ✅ TASK-204: Domain Models - COMPLETED
+- ✅ TASK-204-1: Schema Alignment Fields - COMPLETED
 - TASK-205: Library Query API (ready to start)
 
-**Phase 2 progress: 4 of 5 tasks complete (80%)** - Only TASK-205 remaining
+**Phase 2 progress: 5 of 6 tasks complete (~83%)** - Only TASK-205 remaining
 
 ## Summary
 
-- **Completed**: 12 tasks (6 Phase 0 + 5 Phase 1 core + 4 Phase 2)
+- **Completed**: 16 tasks (6 Phase 0 + 5 Phase 1 core + 5 Phase 2)
 - **Ready to start**: 2 tasks (TASK-205, TASK-106)
 - **Pending**: All other tasks
 - **Total workspace tests**: 79 core-library tests passing

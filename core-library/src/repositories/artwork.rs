@@ -82,16 +82,16 @@ impl ArtworkRepository for SqliteArtworkRepository {
         let artwork = query_as::<_, Artwork>("SELECT * FROM artworks WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(artwork)
     }
 
     async fn insert(&self, artwork: &Artwork) -> Result<()> {
         // Validate before insertion
-        artwork.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Artwork".to_string(), message: e }
+        artwork.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Artwork".to_string(),
+            message: e,
         })?;
 
         query(
@@ -113,16 +113,16 @@ impl ArtworkRepository for SqliteArtworkRepository {
         .bind(artwork.file_size)
         .bind(artwork.created_at)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(())
     }
 
     async fn update(&self, artwork: &Artwork) -> Result<()> {
         // Validate before update
-        artwork.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Artwork".to_string(), message: e }
+        artwork.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Artwork".to_string(),
+            message: e,
         })?;
 
         let result = query(
@@ -142,11 +142,13 @@ impl ArtworkRepository for SqliteArtworkRepository {
         .bind(artwork.file_size)
         .bind(&artwork.id)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         if result.rows_affected() == 0 {
-            return Err(LibraryError::NotFound { entity_type: "Artwork".to_string(), id: artwork.id.clone() });
+            return Err(LibraryError::NotFound {
+                entity_type: "Artwork".to_string(),
+                id: artwork.id.clone(),
+            });
         }
 
         Ok(())
@@ -156,8 +158,7 @@ impl ArtworkRepository for SqliteArtworkRepository {
         let result = query("DELETE FROM artworks WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -171,20 +172,16 @@ impl ArtworkRepository for SqliteArtworkRepository {
         .bind(page_request.limit())
         .bind(page_request.offset())
         .fetch_all(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(Page::new(artworks, total as u64, page_request))
     }
 
     async fn find_by_hash(&self, hash: &str) -> Result<Option<Artwork>> {
-        let artwork = query_as::<_, Artwork>(
-            "SELECT * FROM artworks WHERE hash = ? LIMIT 1",
-        )
-        .bind(hash)
-        .fetch_optional(&self.pool)
-        .await
-        ?;
+        let artwork = query_as::<_, Artwork>("SELECT * FROM artworks WHERE hash = ? LIMIT 1")
+            .bind(hash)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(artwork)
     }
@@ -193,8 +190,7 @@ impl ArtworkRepository for SqliteArtworkRepository {
         let count: i64 = query_as("SELECT COUNT(*) as count FROM artworks")
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         Ok(count)
     }
@@ -203,8 +199,7 @@ impl ArtworkRepository for SqliteArtworkRepository {
         let size: Option<i64> = query_as("SELECT SUM(file_size) as total FROM artworks")
             .fetch_one(&self.pool)
             .await
-            .map(|row: (Option<i64>,)| row.0)
-            ?;
+            .map(|row: (Option<i64>,)| row.0)?;
 
         Ok(size.unwrap_or(0))
     }

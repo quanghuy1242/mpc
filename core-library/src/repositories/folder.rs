@@ -102,25 +102,25 @@ impl FolderRepository for SqliteFolderRepository {
         let folder = query_as::<_, Folder>("SELECT * FROM folders WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(folder)
     }
 
     async fn insert(&self, folder: &Folder) -> Result<()> {
         // Validate before insertion
-        folder.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Folder".to_string(), message: e }
+        folder.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Folder".to_string(),
+            message: e,
         })?;
 
         query(
             r#"
             INSERT INTO folders (
                 id, provider_id, provider_folder_id, name, normalized_name, parent_id, path,
-                created_at
+                created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&folder.id)
@@ -131,23 +131,24 @@ impl FolderRepository for SqliteFolderRepository {
         .bind(&folder.parent_id)
         .bind(&folder.path)
         .bind(folder.created_at)
+        .bind(folder.updated_at)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(())
     }
 
     async fn update(&self, folder: &Folder) -> Result<()> {
         // Validate before update
-        folder.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Folder".to_string(), message: e }
+        folder.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Folder".to_string(),
+            message: e,
         })?;
 
         let result = query(
             r#"
             UPDATE folders
-            SET name = ?, normalized_name = ?, parent_id = ?, path = ?
+            SET name = ?, normalized_name = ?, parent_id = ?, path = ?, updated_at = ?
             WHERE id = ?
             "#,
         )
@@ -155,13 +156,16 @@ impl FolderRepository for SqliteFolderRepository {
         .bind(&folder.normalized_name)
         .bind(&folder.parent_id)
         .bind(&folder.path)
+        .bind(folder.updated_at)
         .bind(&folder.id)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         if result.rows_affected() == 0 {
-            return Err(LibraryError::NotFound { entity_type: "Folder".to_string(), id: folder.id.clone() });
+            return Err(LibraryError::NotFound {
+                entity_type: "Folder".to_string(),
+                id: folder.id.clone(),
+            });
         }
 
         Ok(())
@@ -171,8 +175,7 @@ impl FolderRepository for SqliteFolderRepository {
         let result = query("DELETE FROM folders WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -180,14 +183,12 @@ impl FolderRepository for SqliteFolderRepository {
     async fn query(&self, page_request: PageRequest) -> Result<Page<Folder>> {
         let total = self.count().await?;
 
-        let folders = query_as::<_, Folder>(
-            "SELECT * FROM folders ORDER BY path ASC LIMIT ? OFFSET ?",
-        )
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await
-        ?;
+        let folders =
+            query_as::<_, Folder>("SELECT * FROM folders ORDER BY path ASC LIMIT ? OFFSET ?")
+                .bind(page_request.limit())
+                .bind(page_request.offset())
+                .fetch_all(&self.pool)
+                .await?;
 
         Ok(Page::new(folders, total as u64, page_request))
     }
@@ -201,8 +202,7 @@ impl FolderRepository for SqliteFolderRepository {
             .bind(provider_id)
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         let folders = query_as::<_, Folder>(
             "SELECT * FROM folders WHERE provider_id = ? ORDER BY path ASC LIMIT ? OFFSET ?",
@@ -211,8 +211,7 @@ impl FolderRepository for SqliteFolderRepository {
         .bind(page_request.limit())
         .bind(page_request.offset())
         .fetch_all(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(Page::new(folders, total as u64, page_request))
     }
@@ -224,12 +223,12 @@ impl FolderRepository for SqliteFolderRepository {
     ) -> Result<Page<Folder>> {
         let (total, folders) = match parent_id {
             Some(pid) => {
-                let total: i64 = query_as("SELECT COUNT(*) as count FROM folders WHERE parent_id = ?")
-                    .bind(pid)
-                    .fetch_one(&self.pool)
-                    .await
-                    .map(|row: (i64,)| row.0)
-                    ?;
+                let total: i64 =
+                    query_as("SELECT COUNT(*) as count FROM folders WHERE parent_id = ?")
+                        .bind(pid)
+                        .fetch_one(&self.pool)
+                        .await
+                        .map(|row: (i64,)| row.0)?;
 
                 let folders = query_as::<_, Folder>(
                     "SELECT * FROM folders WHERE parent_id = ? ORDER BY name ASC LIMIT ? OFFSET ?",
@@ -238,17 +237,16 @@ impl FolderRepository for SqliteFolderRepository {
                 .bind(page_request.limit())
                 .bind(page_request.offset())
                 .fetch_all(&self.pool)
-                .await
-                ?;
+                .await?;
 
                 (total, folders)
             }
             None => {
-                let total: i64 = query_as("SELECT COUNT(*) as count FROM folders WHERE parent_id IS NULL")
-                    .fetch_one(&self.pool)
-                    .await
-                    .map(|row: (i64,)| row.0)
-                    ?;
+                let total: i64 =
+                    query_as("SELECT COUNT(*) as count FROM folders WHERE parent_id IS NULL")
+                        .fetch_one(&self.pool)
+                        .await
+                        .map(|row: (i64,)| row.0)?;
 
                 let folders = query_as::<_, Folder>(
                     "SELECT * FROM folders WHERE parent_id IS NULL ORDER BY name ASC LIMIT ? OFFSET ?",
@@ -273,8 +271,7 @@ impl FolderRepository for SqliteFolderRepository {
         .bind(provider_id)
         .bind(path)
         .fetch_optional(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(folder)
     }
@@ -283,8 +280,7 @@ impl FolderRepository for SqliteFolderRepository {
         let count: i64 = query_as("SELECT COUNT(*) as count FROM folders")
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         Ok(count)
     }
@@ -326,6 +322,7 @@ mod tests {
             parent_id,
             path: format!("/{}", name),
             created_at: 1699200000,
+            updated_at: 1699200000,
         }
     }
 
@@ -344,7 +341,9 @@ mod tests {
         // Find folder
         let found = repo.find_by_id(&folder.id).await.unwrap();
         assert!(found.is_some());
-        assert_eq!(found.unwrap().name, "Music");
+        let found = found.unwrap();
+        assert_eq!(found.name, "Music");
+        assert_eq!(found.updated_at, 1699200000);
     }
 
     #[tokio::test]
@@ -401,7 +400,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(page.items.len(), 2);
-        assert!(page.items.iter().all(|f| f.parent_id == Some(parent.id.clone())));
+        assert!(page
+            .items
+            .iter()
+            .all(|f| f.parent_id == Some(parent.id.clone())));
     }
 
     #[tokio::test]
@@ -417,10 +419,7 @@ mod tests {
         repo.insert(&folder).await.unwrap();
 
         // Find by path
-        let found = repo
-            .find_by_path("provider1", "/Music")
-            .await
-            .unwrap();
+        let found = repo.find_by_path("provider1", "/Music").await.unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, folder.id);
     }

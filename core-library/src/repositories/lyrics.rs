@@ -93,25 +93,25 @@ impl LyricsRepository for SqliteLyricsRepository {
         let lyrics = query_as::<_, Lyrics>("SELECT * FROM lyrics WHERE track_id = ?")
             .bind(track_id)
             .fetch_optional(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(lyrics)
     }
 
     async fn insert(&self, lyrics: &Lyrics) -> Result<()> {
         // Validate before insertion
-        lyrics.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Lyrics".to_string(), message: e }
+        lyrics.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Lyrics".to_string(),
+            message: e,
         })?;
 
         query(
             r#"
             INSERT INTO lyrics (
                 track_id, source, synced, body, language,
-                last_checked_at, created_at
+                last_checked_at, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&lyrics.track_id)
@@ -121,24 +121,25 @@ impl LyricsRepository for SqliteLyricsRepository {
         .bind(&lyrics.language)
         .bind(lyrics.last_checked_at)
         .bind(lyrics.created_at)
+        .bind(lyrics.updated_at)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(())
     }
 
     async fn update(&self, lyrics: &Lyrics) -> Result<()> {
         // Validate before update
-        lyrics.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Lyrics".to_string(), message: e }
+        lyrics.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Lyrics".to_string(),
+            message: e,
         })?;
 
         let result = query(
             r#"
             UPDATE lyrics
             SET source = ?, synced = ?, body = ?, language = ?,
-                last_checked_at = ?
+                last_checked_at = ?, updated_at = ?
             WHERE track_id = ?
             "#,
         )
@@ -147,13 +148,16 @@ impl LyricsRepository for SqliteLyricsRepository {
         .bind(&lyrics.body)
         .bind(&lyrics.language)
         .bind(lyrics.last_checked_at)
+        .bind(lyrics.updated_at)
         .bind(&lyrics.track_id)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         if result.rows_affected() == 0 {
-            return Err(LibraryError::NotFound { entity_type: "Lyrics".to_string(), id: lyrics.track_id.clone() });
+            return Err(LibraryError::NotFound {
+                entity_type: "Lyrics".to_string(),
+                id: lyrics.track_id.clone(),
+            });
         }
 
         Ok(())
@@ -163,8 +167,7 @@ impl LyricsRepository for SqliteLyricsRepository {
         let result = query("DELETE FROM lyrics WHERE track_id = ?")
             .bind(track_id)
             .execute(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -172,14 +175,12 @@ impl LyricsRepository for SqliteLyricsRepository {
     async fn query(&self, page_request: PageRequest) -> Result<Page<Lyrics>> {
         let total = self.count().await?;
 
-        let lyrics = query_as::<_, Lyrics>(
-            "SELECT * FROM lyrics ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await
-        ?;
+        let lyrics =
+            query_as::<_, Lyrics>("SELECT * FROM lyrics ORDER BY created_at DESC LIMIT ? OFFSET ?")
+                .bind(page_request.limit())
+                .bind(page_request.offset())
+                .fetch_all(&self.pool)
+                .await?;
 
         Ok(Page::new(lyrics, total as u64, page_request))
     }
@@ -193,8 +194,7 @@ impl LyricsRepository for SqliteLyricsRepository {
         .bind(page_request.limit())
         .bind(page_request.offset())
         .fetch_all(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(Page::new(lyrics, total as u64, page_request))
     }
@@ -208,8 +208,7 @@ impl LyricsRepository for SqliteLyricsRepository {
             .bind(source)
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         let lyrics = query_as::<_, Lyrics>(
             "SELECT * FROM lyrics WHERE source = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
@@ -218,8 +217,7 @@ impl LyricsRepository for SqliteLyricsRepository {
         .bind(page_request.limit())
         .bind(page_request.offset())
         .fetch_all(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(Page::new(lyrics, total as u64, page_request))
     }
@@ -228,8 +226,7 @@ impl LyricsRepository for SqliteLyricsRepository {
         let count: i64 = query_as("SELECT COUNT(*) as count FROM lyrics")
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         Ok(count)
     }
@@ -238,8 +235,7 @@ impl LyricsRepository for SqliteLyricsRepository {
         let count: i64 = query_as("SELECT COUNT(*) as count FROM lyrics WHERE synced = 1")
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         Ok(count)
     }
@@ -251,7 +247,7 @@ mod tests {
     use crate::db::create_test_pool;
     use crate::models::{Artist, Track};
     use crate::repositories::artist::{ArtistRepository, SqliteArtistRepository};
-    use crate::repositories::track::{TrackRepository, SqliteTrackRepository};
+    use crate::repositories::track::{SqliteTrackRepository, TrackRepository};
 
     async fn setup_test_pool() -> SqlitePool {
         create_test_pool().await.unwrap()
@@ -287,6 +283,8 @@ mod tests {
             name: artist_name.clone(),
             normalized_name: artist_name.to_lowercase(),
             sort_name: None,
+            bio: None,
+            country: None,
             created_at: 1699200000,
             updated_at: 1699200000,
         };
@@ -347,6 +345,7 @@ mod tests {
         let found = found.unwrap();
         assert_eq!(found.track_id, track.id);
         assert_eq!(found.synced, 0); // 0 = false (plain text lyrics)
+        assert_eq!(found.updated_at, lyrics.updated_at);
     }
 
     #[tokio::test]
@@ -367,11 +366,13 @@ mod tests {
         // Update lyrics
         lyrics.body = "Updated lyrics".to_string();
         lyrics.last_checked_at = chrono::Utc::now().timestamp();
+        lyrics.updated_at = lyrics.last_checked_at;
         repo.update(&lyrics).await.unwrap();
 
         // Verify update
         let found = repo.find_by_track_id(&track.id).await.unwrap().unwrap();
         assert_eq!(found.body, "Updated lyrics");
+        assert_eq!(found.updated_at, lyrics.updated_at);
     }
 
     #[tokio::test]
@@ -483,12 +484,7 @@ mod tests {
             } else {
                 format!("Lyrics {}", i) // Plain text for unsynced
             };
-            let lyrics = Lyrics::new(
-                track.id.clone(),
-                "manual".to_string(),
-                is_synced,
-                body,
-            );
+            let lyrics = Lyrics::new(track.id.clone(), "manual".to_string(), is_synced, body);
             repo.insert(&lyrics).await.unwrap();
         }
 

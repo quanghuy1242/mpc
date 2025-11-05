@@ -88,50 +88,52 @@ impl ArtistRepository for SqliteArtistRepository {
         let artist = query_as::<_, Artist>("SELECT * FROM artists WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(artist)
     }
 
     async fn insert(&self, artist: &Artist) -> Result<()> {
         // Validate before insertion
-        artist.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Artist".to_string(), message: e }
+        artist.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Artist".to_string(),
+            message: e,
         })?;
 
         query(
             r#"
             INSERT INTO artists (
-                id, name, normalized_name, sort_name,
+                id, name, normalized_name, sort_name, bio, country,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&artist.id)
         .bind(&artist.name)
         .bind(&artist.normalized_name)
         .bind(&artist.sort_name)
+        .bind(&artist.bio)
+        .bind(&artist.country)
         .bind(artist.created_at)
         .bind(artist.updated_at)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(())
     }
 
     async fn update(&self, artist: &Artist) -> Result<()> {
         // Validate before update
-        artist.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Artist".to_string(), message: e }
+        artist.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Artist".to_string(),
+            message: e,
         })?;
 
         let result = query(
             r#"
             UPDATE artists
-            SET name = ?, normalized_name = ?, sort_name = ?,
+            SET name = ?, normalized_name = ?, sort_name = ?, bio = ?, country = ?,
                 updated_at = ?
             WHERE id = ?
             "#,
@@ -139,14 +141,18 @@ impl ArtistRepository for SqliteArtistRepository {
         .bind(&artist.name)
         .bind(&artist.normalized_name)
         .bind(&artist.sort_name)
+        .bind(&artist.bio)
+        .bind(&artist.country)
         .bind(artist.updated_at)
         .bind(&artist.id)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         if result.rows_affected() == 0 {
-            return Err(LibraryError::NotFound { entity_type: "Artist".to_string(), id: artist.id.clone() });
+            return Err(LibraryError::NotFound {
+                entity_type: "Artist".to_string(),
+                id: artist.id.clone(),
+            });
         }
 
         Ok(())
@@ -156,8 +162,7 @@ impl ArtistRepository for SqliteArtistRepository {
         let result = query("DELETE FROM artists WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -165,28 +170,24 @@ impl ArtistRepository for SqliteArtistRepository {
     async fn query(&self, page_request: PageRequest) -> Result<Page<Artist>> {
         let total = self.count().await?;
 
-        let artists = query_as::<_, Artist>(
-            "SELECT * FROM artists ORDER BY name ASC LIMIT ? OFFSET ?",
-        )
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await
-        ?;
+        let artists =
+            query_as::<_, Artist>("SELECT * FROM artists ORDER BY name ASC LIMIT ? OFFSET ?")
+                .bind(page_request.limit())
+                .bind(page_request.offset())
+                .fetch_all(&self.pool)
+                .await?;
 
         Ok(Page::new(artists, total as u64, page_request))
     }
 
     async fn search(&self, search_query: &str, page_request: PageRequest) -> Result<Page<Artist>> {
         // Count matching artists
-        let total: i64 = query_as(
-            "SELECT COUNT(*) as count FROM artists_fts WHERE artists_fts MATCH ?",
-        )
-        .bind(search_query)
-        .fetch_one(&self.pool)
-        .await
-        .map(|row: (i64,)| row.0)
-        ?;
+        let total: i64 =
+            query_as("SELECT COUNT(*) as count FROM artists_fts WHERE artists_fts MATCH ?")
+                .bind(search_query)
+                .fetch_one(&self.pool)
+                .await
+                .map(|row: (i64,)| row.0)?;
 
         // Perform FTS5 search
         let artists = query_as::<_, Artist>(
@@ -202,8 +203,7 @@ impl ArtistRepository for SqliteArtistRepository {
         .bind(page_request.limit())
         .bind(page_request.offset())
         .fetch_all(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(Page::new(artists, total as u64, page_request))
     }
@@ -212,21 +212,18 @@ impl ArtistRepository for SqliteArtistRepository {
         let count: i64 = query_as("SELECT COUNT(*) as count FROM artists")
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         Ok(count)
     }
 
     async fn find_by_name(&self, name: &str) -> Result<Option<Artist>> {
         let normalized = Artist::normalize(name);
-        let artist = query_as::<_, Artist>(
-            "SELECT * FROM artists WHERE normalized_name = ? LIMIT 1",
-        )
-        .bind(normalized)
-        .fetch_optional(&self.pool)
-        .await
-        ?;
+        let artist =
+            query_as::<_, Artist>("SELECT * FROM artists WHERE normalized_name = ? LIMIT 1")
+                .bind(normalized)
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(artist)
     }
@@ -247,13 +244,21 @@ mod tests {
         let repo = SqliteArtistRepository::new(pool);
 
         // Create and insert artist
-        let artist = Artist::new("Test Artist".to_string());
+        let mut artist = Artist::new("Test Artist".to_string());
+        artist.bio = Some("Legendary artist spanning multiple genres".to_string());
+        artist.country = Some("US".to_string());
         repo.insert(&artist).await.unwrap();
 
         // Find artist
         let found = repo.find_by_id(&artist.id).await.unwrap();
         assert!(found.is_some());
-        assert_eq!(found.unwrap().name, "Test Artist");
+        let found = found.unwrap();
+        assert_eq!(found.name, "Test Artist");
+        assert_eq!(
+            found.bio.as_deref(),
+            Some("Legendary artist spanning multiple genres")
+        );
+        assert_eq!(found.country.as_deref(), Some("US"));
     }
 
     #[tokio::test]
@@ -263,17 +268,23 @@ mod tests {
 
         // Create and insert artist
         let mut artist = Artist::new("Original Name".to_string());
+        artist.bio = Some("Initial bio".to_string());
+        artist.country = Some("US".to_string());
         repo.insert(&artist).await.unwrap();
 
         // Update artist
         artist.name = "Updated Name".to_string();
         artist.normalized_name = Artist::normalize(&artist.name);
+        artist.bio = Some("Updated bio".to_string());
+        artist.country = Some("GB".to_string());
         artist.updated_at = chrono::Utc::now().timestamp();
         repo.update(&artist).await.unwrap();
 
         // Verify update
         let found = repo.find_by_id(&artist.id).await.unwrap().unwrap();
         assert_eq!(found.name, "Updated Name");
+        assert_eq!(found.bio.as_deref(), Some("Updated bio"));
+        assert_eq!(found.country.as_deref(), Some("GB"));
     }
 
     #[tokio::test]

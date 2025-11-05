@@ -108,25 +108,27 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         let playlist = query_as::<_, Playlist>("SELECT * FROM playlists WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(playlist)
     }
 
     async fn insert(&self, playlist: &Playlist) -> Result<()> {
         // Validate before insertion
-        playlist.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Playlist".to_string(), message: e }
-        })?;
+        playlist
+            .validate()
+            .map_err(|e| LibraryError::InvalidInput {
+                field: "Playlist".to_string(),
+                message: e,
+            })?;
 
         query(
             r#"
             INSERT INTO playlists (
                 id, name, normalized_name, description, owner_type, sort_order,
-                track_count, total_duration_ms, artwork_id, created_at, updated_at
+                is_public, track_count, total_duration_ms, artwork_id, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&playlist.id)
@@ -135,29 +137,32 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         .bind(&playlist.description)
         .bind(&playlist.owner_type)
         .bind(&playlist.sort_order)
+        .bind(playlist.is_public)
         .bind(playlist.track_count)
         .bind(playlist.total_duration_ms)
         .bind(&playlist.artwork_id)
         .bind(playlist.created_at)
         .bind(playlist.updated_at)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(())
     }
 
     async fn update(&self, playlist: &Playlist) -> Result<()> {
         // Validate before update
-        playlist.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Playlist".to_string(), message: e }
-        })?;
+        playlist
+            .validate()
+            .map_err(|e| LibraryError::InvalidInput {
+                field: "Playlist".to_string(),
+                message: e,
+            })?;
 
         let result = query(
             r#"
             UPDATE playlists
             SET name = ?, normalized_name = ?, description = ?, sort_order = ?, 
-                track_count = ?, total_duration_ms = ?, artwork_id = ?, updated_at = ?
+                is_public = ?, track_count = ?, total_duration_ms = ?, artwork_id = ?, updated_at = ?
             WHERE id = ?
             "#,
         )
@@ -165,6 +170,7 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         .bind(&playlist.normalized_name)
         .bind(&playlist.description)
         .bind(&playlist.sort_order)
+        .bind(playlist.is_public)
         .bind(playlist.track_count)
         .bind(playlist.total_duration_ms)
         .bind(&playlist.artwork_id)
@@ -175,7 +181,10 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         ?;
 
         if result.rows_affected() == 0 {
-            return Err(LibraryError::NotFound { entity_type: "Playlist".to_string(), id: playlist.id.clone() });
+            return Err(LibraryError::NotFound {
+                entity_type: "Playlist".to_string(),
+                id: playlist.id.clone(),
+            });
         }
 
         Ok(())
@@ -186,15 +195,13 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         query("DELETE FROM playlist_tracks WHERE playlist_id = ?")
             .bind(id)
             .execute(&self.pool)
-            .await
-            ?;
+            .await?;
 
         // Then delete the playlist
         let result = query("DELETE FROM playlists WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -202,14 +209,12 @@ impl PlaylistRepository for SqlitePlaylistRepository {
     async fn query(&self, page_request: PageRequest) -> Result<Page<Playlist>> {
         let total = self.count().await?;
 
-        let playlists = query_as::<_, Playlist>(
-            "SELECT * FROM playlists ORDER BY name ASC LIMIT ? OFFSET ?",
-        )
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await
-        ?;
+        let playlists =
+            query_as::<_, Playlist>("SELECT * FROM playlists ORDER BY name ASC LIMIT ? OFFSET ?")
+                .bind(page_request.limit())
+                .bind(page_request.offset())
+                .fetch_all(&self.pool)
+                .await?;
 
         Ok(Page::new(playlists, total as u64, page_request))
     }
@@ -223,8 +228,7 @@ impl PlaylistRepository for SqlitePlaylistRepository {
             .bind(owner_type)
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         let playlists = query_as::<_, Playlist>(
             "SELECT * FROM playlists WHERE owner_type = ? ORDER BY name ASC LIMIT ? OFFSET ?",
@@ -233,8 +237,7 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         .bind(page_request.limit())
         .bind(page_request.offset())
         .fetch_all(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(Page::new(playlists, total as u64, page_request))
     }
@@ -251,21 +254,17 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         .bind(position)
         .bind(chrono::Utc::now().timestamp())
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(())
     }
 
     async fn remove_track(&self, playlist_id: &str, track_id: &str) -> Result<bool> {
-        let result = query(
-            "DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?",
-        )
-        .bind(playlist_id)
-        .bind(track_id)
-        .execute(&self.pool)
-        .await
-        ?;
+        let result = query("DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?")
+            .bind(playlist_id)
+            .bind(track_id)
+            .execute(&self.pool)
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -277,8 +276,7 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         .bind(playlist_id)
         .fetch_all(&self.pool)
         .await
-        .map(|rows| rows.into_iter().map(|(id,)| id).collect())
-        ?;
+        .map(|rows| rows.into_iter().map(|(id,)| id).collect())?;
 
         Ok(track_ids)
     }
@@ -287,8 +285,7 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         let count: i64 = query_as("SELECT COUNT(*) as count FROM playlists")
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         Ok(count)
     }
@@ -309,13 +306,18 @@ mod tests {
         let repo = SqlitePlaylistRepository::new(pool);
 
         // Create and insert playlist
-        let playlist = Playlist::new("My Playlist".to_string());
+        let mut playlist = Playlist::new("My Playlist".to_string());
+        playlist.is_public = 1;
+        playlist.description = Some("Workout mix".to_string());
         repo.insert(&playlist).await.unwrap();
 
         // Find playlist
         let found = repo.find_by_id(&playlist.id).await.unwrap();
         assert!(found.is_some());
-        assert_eq!(found.unwrap().name, "My Playlist");
+        let found = found.unwrap();
+        assert_eq!(found.name, "My Playlist");
+        assert_eq!(found.is_public, 1);
+        assert_eq!(found.description.as_deref(), Some("Workout mix"));
     }
 
     #[tokio::test]
@@ -325,16 +327,19 @@ mod tests {
 
         // Create and insert playlist
         let mut playlist = Playlist::new("Original Name".to_string());
+        playlist.is_public = 0;
         repo.insert(&playlist).await.unwrap();
 
         // Update playlist
         playlist.name = "Updated Name".to_string();
+        playlist.is_public = 1;
         playlist.updated_at = chrono::Utc::now().timestamp();
         repo.update(&playlist).await.unwrap();
 
         // Verify update
         let found = repo.find_by_id(&playlist.id).await.unwrap().unwrap();
         assert_eq!(found.name, "Updated Name");
+        assert_eq!(found.is_public, 1);
     }
 
     #[tokio::test]
@@ -362,7 +367,8 @@ mod tests {
 
         // Create user and system playlists
         let user_playlist = Playlist::new("User Playlist".to_string());
-        let system_playlist = Playlist::new_system("System Playlist".to_string(), "date_added".to_string());
+        let system_playlist =
+            Playlist::new_system("System Playlist".to_string(), "date_added".to_string());
 
         repo.insert(&user_playlist).await.unwrap();
         repo.insert(&system_playlist).await.unwrap();

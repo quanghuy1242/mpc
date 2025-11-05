@@ -100,25 +100,25 @@ impl AlbumRepository for SqliteAlbumRepository {
         let album = query_as::<_, Album>("SELECT * FROM albums WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(album)
     }
 
     async fn insert(&self, album: &Album) -> Result<()> {
         // Validate before insertion
-        album.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Album".to_string(), message: e }
+        album.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Album".to_string(),
+            message: e,
         })?;
 
         query(
             r#"
             INSERT INTO albums (
                 id, name, normalized_name, artist_id, year,
-                artwork_id, track_count, total_duration_ms, created_at, updated_at
+                genre, artwork_id, track_count, total_duration_ms, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&album.id)
@@ -126,29 +126,30 @@ impl AlbumRepository for SqliteAlbumRepository {
         .bind(&album.normalized_name)
         .bind(&album.artist_id)
         .bind(album.year)
+        .bind(&album.genre)
         .bind(&album.artwork_id)
         .bind(album.track_count)
         .bind(album.total_duration_ms)
         .bind(album.created_at)
         .bind(album.updated_at)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(())
     }
 
     async fn update(&self, album: &Album) -> Result<()> {
         // Validate before update
-        album.validate().map_err(|e| {
-            LibraryError::InvalidInput { field: "Album".to_string(), message: e }
+        album.validate().map_err(|e| LibraryError::InvalidInput {
+            field: "Album".to_string(),
+            message: e,
         })?;
 
         let result = query(
             r#"
             UPDATE albums
             SET name = ?, normalized_name = ?, artist_id = ?, year = ?,
-                artwork_id = ?, track_count = ?, total_duration_ms = ?, updated_at = ?
+                genre = ?, artwork_id = ?, track_count = ?, total_duration_ms = ?, updated_at = ?
             WHERE id = ?
             "#,
         )
@@ -156,14 +157,14 @@ impl AlbumRepository for SqliteAlbumRepository {
         .bind(&album.normalized_name)
         .bind(&album.artist_id)
         .bind(album.year)
+        .bind(&album.genre)
         .bind(&album.artwork_id)
         .bind(album.track_count)
         .bind(album.total_duration_ms)
         .bind(album.updated_at)
         .bind(&album.id)
         .execute(&self.pool)
-        .await
-        ?;
+        .await?;
 
         if result.rows_affected() == 0 {
             return Err(LibraryError::NotFound {
@@ -179,8 +180,7 @@ impl AlbumRepository for SqliteAlbumRepository {
         let result = query("DELETE FROM albums WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
-            .await
-            ?;
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -188,14 +188,12 @@ impl AlbumRepository for SqliteAlbumRepository {
     async fn query(&self, page_request: PageRequest) -> Result<Page<Album>> {
         let total = self.count().await?;
 
-        let albums = query_as::<_, Album>(
-            "SELECT * FROM albums ORDER BY name ASC LIMIT ? OFFSET ?",
-        )
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await
-        ?;
+        let albums =
+            query_as::<_, Album>("SELECT * FROM albums ORDER BY name ASC LIMIT ? OFFSET ?")
+                .bind(page_request.limit())
+                .bind(page_request.offset())
+                .fetch_all(&self.pool)
+                .await?;
 
         Ok(Page::new(albums, total as u64, page_request))
     }
@@ -209,8 +207,7 @@ impl AlbumRepository for SqliteAlbumRepository {
             .bind(artist_id)
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         let albums = query_as::<_, Album>(
             "SELECT * FROM albums WHERE artist_id = ? ORDER BY year DESC, name ASC LIMIT ? OFFSET ?",
@@ -227,20 +224,18 @@ impl AlbumRepository for SqliteAlbumRepository {
 
     async fn search(&self, search_query: &str, page_request: PageRequest) -> Result<Page<Album>> {
         // Count matching albums
-        let total: i64 = query_as(
-            "SELECT COUNT(*) as count FROM albums_fts WHERE albums_fts MATCH ?",
-        )
-        .bind(search_query)
-        .fetch_one(&self.pool)
-        .await
-        .map(|row: (i64,)| row.0)
-        ?;
+        let total: i64 =
+            query_as("SELECT COUNT(*) as count FROM albums_fts WHERE albums_fts MATCH ?")
+                .bind(search_query)
+                .fetch_one(&self.pool)
+                .await
+                .map(|row: (i64,)| row.0)?;
 
         // Perform FTS5 search
         let albums = query_as::<_, Album>(
             r#"
             SELECT a.* FROM albums a
-            INNER JOIN albums_fts fts ON a.id = fts.id
+            INNER JOIN albums_fts fts ON a.id = fts.album_id
             WHERE fts MATCH ?
             ORDER BY rank
             LIMIT ? OFFSET ?
@@ -250,8 +245,7 @@ impl AlbumRepository for SqliteAlbumRepository {
         .bind(page_request.limit())
         .bind(page_request.offset())
         .fetch_all(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(Page::new(albums, total as u64, page_request))
     }
@@ -260,8 +254,7 @@ impl AlbumRepository for SqliteAlbumRepository {
         let count: i64 = query_as("SELECT COUNT(*) as count FROM albums")
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         Ok(count)
     }
@@ -271,8 +264,7 @@ impl AlbumRepository for SqliteAlbumRepository {
             .bind(year)
             .fetch_one(&self.pool)
             .await
-            .map(|row: (i64,)| row.0)
-            ?;
+            .map(|row: (i64,)| row.0)?;
 
         let albums = query_as::<_, Album>(
             "SELECT * FROM albums WHERE year = ? ORDER BY name ASC LIMIT ? OFFSET ?",
@@ -281,8 +273,7 @@ impl AlbumRepository for SqliteAlbumRepository {
         .bind(page_request.limit())
         .bind(page_request.offset())
         .fetch_all(&self.pool)
-        .await
-        ?;
+        .await?;
 
         Ok(Page::new(albums, total as u64, page_request))
     }
@@ -310,13 +301,16 @@ mod tests {
         artist_repo.insert(&artist).await.unwrap();
 
         // Create and insert album
-        let album = Album::new("Test Album".to_string(), Some(artist.id.clone()));
+        let mut album = Album::new("Test Album".to_string(), Some(artist.id.clone()));
+        album.genre = Some("Rock".to_string());
         repo.insert(&album).await.unwrap();
 
         // Find album
         let found = repo.find_by_id(&album.id).await.unwrap();
         assert!(found.is_some());
-        assert_eq!(found.unwrap().name, "Test Album");
+        let found = found.unwrap();
+        assert_eq!(found.name, "Test Album");
+        assert_eq!(found.genre.as_deref(), Some("Rock"));
     }
 
     #[tokio::test]
@@ -331,17 +325,20 @@ mod tests {
 
         // Create and insert album
         let mut album = Album::new("Original Name".to_string(), Some(artist.id.clone()));
+        album.genre = Some("Rock".to_string());
         repo.insert(&album).await.unwrap();
 
         // Update album
         album.name = "Updated Name".to_string();
         album.normalized_name = Album::normalize(&album.name);
+        album.genre = Some("Indie".to_string());
         album.updated_at = chrono::Utc::now().timestamp();
         repo.update(&album).await.unwrap();
 
         // Verify update
         let found = repo.find_by_id(&album.id).await.unwrap().unwrap();
         assert_eq!(found.name, "Updated Name");
+        assert_eq!(found.genre.as_deref(), Some("Indie"));
     }
 
     #[tokio::test]
@@ -425,7 +422,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(page.items.len(), 2);
-        assert!(page.items.iter().all(|a| a.artist_id == Some(artist1.id.clone())));
+        assert!(page
+            .items
+            .iter()
+            .all(|a| a.artist_id == Some(artist1.id.clone())));
     }
 
     #[tokio::test]
