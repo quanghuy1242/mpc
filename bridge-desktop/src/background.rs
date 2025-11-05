@@ -7,33 +7,242 @@ use bridge_traits::{
         TaskConstraints, TaskId, TaskStatus,
     },
     error::{BridgeError, Result},
+    network::{NetworkInfo, NetworkMonitor, NetworkStatus, NetworkType},
 };
+use futures_util::{future::BoxFuture, FutureExt};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::RwLock;
+use std::time::{Duration, Instant};
+use tokio::{
+    sync::{oneshot, RwLock},
+    task::JoinHandle,
+    time::sleep,
+};
 use tracing::{debug, warn};
 
-/// Tokio-based background executor for desktop
-///
-/// Provides task scheduling using:
-/// - Tokio runtime for async execution
-/// - Simple in-memory task tracking
-/// - No platform constraints (desktop always has resources)
+type TaskHandler = Arc<dyn Fn() -> BoxFuture<'static, Result<()>> + Send + Sync>;
+
+/// Tokio-based background executor for desktop.
 pub struct TokioBackgroundExecutor {
     tasks: Arc<RwLock<HashMap<TaskId, TaskInfo>>>,
+    handlers: Arc<RwLock<HashMap<String, TaskHandler>>>,
+    network_monitor: Option<Arc<dyn NetworkMonitor>>,
 }
 
 struct TaskInfo {
     status: TaskStatus,
-    _handle: Option<tokio::task::JoinHandle<()>>,
+    handle: Option<JoinHandle<()>>,
+    cancel: Option<oneshot::Sender<()>>,
+    last_run: Option<Instant>,
+    next_run: Option<Instant>,
 }
 
 impl TokioBackgroundExecutor {
-    /// Create a new background executor
+    /// Create a new background executor with no network monitoring.
     pub fn new() -> Self {
+        Self::with_network_monitor(None)
+    }
+
+    /// Create a background executor with an optional network monitor.
+    pub fn with_network_monitor(monitor: Option<Arc<dyn NetworkMonitor>>) -> Self {
         Self {
             tasks: Arc::new(RwLock::new(HashMap::new())),
+            handlers: Arc::new(RwLock::new(HashMap::new())),
+            network_monitor: monitor,
+        }
+    }
+
+    /// Register a handler that will be invoked when the task executes.
+    pub async fn register_task_handler<F, Fut>(&self, task_id: &str, handler: F) -> Result<()>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    {
+        let mut handlers = self.handlers.write().await;
+        handlers.insert(task_id.to_string(), Arc::new(move || handler().boxed()));
+        Ok(())
+    }
+
+    async fn handler_for(&self, task_id: &str) -> Option<TaskHandler> {
+        let handlers = self.handlers.read().await;
+        handlers.get(task_id).cloned()
+    }
+
+    async fn insert_task(&self, id: TaskId, info: TaskInfo) {
+        let mut tasks = self.tasks.write().await;
+        tasks.insert(id, info);
+    }
+
+    async fn update_task<F>(&self, id: &TaskId, update: F)
+    where
+        F: FnOnce(&mut TaskInfo),
+    {
+        let mut tasks = self.tasks.write().await;
+        if let Some(info) = tasks.get_mut(id) {
+            update(info);
+        }
+    }
+
+    async fn remove_task(&self, id: &TaskId) -> Option<TaskInfo> {
+        let mut tasks = self.tasks.write().await;
+        tasks.remove(id)
+    }
+
+    async fn constraints_satisfied(
+        monitor: Option<Arc<dyn NetworkMonitor>>,
+        constraints: &TaskConstraints,
+    ) -> bool {
+        if !(constraints.requires_network || constraints.requires_wifi) {
+            return true;
+        }
+
+        if let Some(monitor) = monitor {
+            match monitor.get_network_info().await {
+                Ok(NetworkInfo {
+                    status: NetworkStatus::Connected,
+                    network_type,
+                    ..
+                }) => {
+                    if constraints.requires_wifi {
+                        matches!(network_type, Some(NetworkType::WiFi))
+                    } else {
+                        true
+                    }
+                }
+                Ok(_) => false,
+                Err(err) => {
+                    warn!("Network monitor error: {}", err);
+                    false
+                }
+            }
+        } else {
+            warn!(
+                "Network constraints requested but no monitor provided; assuming constraint satisfied"
+            );
+            true
+        }
+    }
+
+    async fn run_recurring_task(
+        tasks: Arc<RwLock<HashMap<TaskId, TaskInfo>>>,
+        id: TaskId,
+        handler: TaskHandler,
+        period: Duration,
+        constraints: TaskConstraints,
+        mut cancel_rx: oneshot::Receiver<()>,
+        monitor: Option<Arc<dyn NetworkMonitor>>,
+    ) {
+        let mut ticker = tokio::time::interval(period);
+        loop {
+            tokio::select! {
+                _ = &mut cancel_rx => {
+                    let mut tasks = tasks.write().await;
+                    if let Some(info) = tasks.get_mut(&id) {
+                        info.status = TaskStatus::Cancelled;
+                        info.next_run = None;
+                    }
+                    break;
+                }
+                _ = ticker.tick() => {
+                    if !Self::constraints_satisfied(monitor.clone(), &constraints).await {
+                        debug!(task_id = %id.0, "Constraints not satisfied; skipping run");
+                        let mut tasks = tasks.write().await;
+                        if let Some(info) = tasks.get_mut(&id) {
+                            info.next_run = Some(Instant::now() + period);
+                        }
+                        continue;
+                    }
+
+                    {
+                        let mut tasks = tasks.write().await;
+                        if let Some(info) = tasks.get_mut(&id) {
+                            info.status = TaskStatus::Running;
+                        }
+                    }
+
+                    let result = handler().await;
+
+                    let mut tasks = tasks.write().await;
+                    if let Some(info) = tasks.get_mut(&id) {
+                        let now = Instant::now();
+                        info.last_run = Some(now);
+                        info.next_run = Some(now + period);
+                        info.status = match result {
+                            Ok(()) => TaskStatus::Completed,
+                            Err(err) => {
+                                warn!(task_id = %id.0, error = %err, "Recurring task failed");
+                                TaskStatus::Failed
+                            }
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    async fn run_one_time_task(
+        tasks: Arc<RwLock<HashMap<TaskId, TaskInfo>>>,
+        id: TaskId,
+        handler: TaskHandler,
+        delay: Duration,
+        constraints: TaskConstraints,
+        mut cancel_rx: oneshot::Receiver<()>,
+        monitor: Option<Arc<dyn NetworkMonitor>>,
+    ) {
+        let delay_sleep = sleep(delay);
+        tokio::pin!(delay_sleep);
+        tokio::select! {
+            _ = &mut cancel_rx => {
+                let mut tasks = tasks.write().await;
+                if let Some(info) = tasks.get_mut(&id) {
+                    info.status = TaskStatus::Cancelled;
+                    info.next_run = None;
+                }
+                return;
+            }
+            _ = delay_sleep.as_mut() => {}
+        }
+
+        loop {
+            if Self::constraints_satisfied(monitor.clone(), &constraints).await {
+                break;
+            }
+
+            let retry_sleep = sleep(Duration::from_secs(5));
+            tokio::pin!(retry_sleep);
+            tokio::select! {
+                _ = &mut cancel_rx => {
+                    let mut tasks = tasks.write().await;
+                    if let Some(info) = tasks.get_mut(&id) {
+                        info.status = TaskStatus::Cancelled;
+                        info.next_run = None;
+                    }
+                    return;
+                }
+                _ = retry_sleep.as_mut() => {}
+            }
+        }
+
+        {
+            let mut tasks = tasks.write().await;
+            if let Some(info) = tasks.get_mut(&id) {
+                info.status = TaskStatus::Running;
+            }
+        }
+
+        let result = handler().await;
+
+        let mut tasks = tasks.write().await;
+        if let Some(info) = tasks.get_mut(&id) {
+            info.last_run = Some(Instant::now());
+            info.next_run = None;
+            info.status = match result {
+                Ok(()) => TaskStatus::Completed,
+                Err(err) => {
+                    warn!(task_id = %id.0, error = %err, "One-time task failed");
+                    TaskStatus::Failed
+                }
+            };
         }
     }
 }
@@ -60,27 +269,46 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
             "Scheduling recurring task"
         );
 
-        // Note: This is a simplified implementation
-        // A production version would:
-        // 1. Actually execute user-defined task functions
-        // 2. Persist task state across restarts
-        // 3. Respect constraints more thoroughly
+        let handler = self.handler_for(task_id).await.ok_or_else(|| {
+            BridgeError::OperationFailed(format!("No handler registered for task: {}", task_id))
+        })?;
+        let (cancel_tx, cancel_rx) = oneshot::channel();
 
-        if constraints.requires_network || constraints.requires_wifi {
-            warn!(
-                task_id = task_id,
-                "Network constraints not fully implemented for desktop"
-            );
-        }
-
-        let mut tasks = self.tasks.write().await;
-        tasks.insert(
+        self.insert_task(
             id.clone(),
             TaskInfo {
                 status: TaskStatus::Scheduled,
-                _handle: None,
+                handle: None,
+                cancel: Some(cancel_tx),
+                last_run: None,
+                next_run: Some(Instant::now()),
             },
-        );
+        )
+        .await;
+
+        let tasks = Arc::clone(&self.tasks);
+        let handler_clone = handler.clone();
+        let monitor = self.network_monitor.clone();
+        let task_id_clone = TaskId::new(task_id);
+        let constraints_clone = constraints.clone();
+
+        let handle = tokio::spawn(async move {
+            TokioBackgroundExecutor::run_recurring_task(
+                tasks,
+                task_id_clone,
+                handler_clone,
+                interval,
+                constraints_clone,
+                cancel_rx,
+                monitor,
+            )
+            .await;
+        });
+
+        self.update_task(&id, |info| {
+            info.handle = Some(handle);
+        })
+        .await;
 
         Ok(id)
     }
@@ -99,21 +327,46 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
             "Scheduling one-time task"
         );
 
-        if constraints.requires_network || constraints.requires_wifi {
-            warn!(
-                task_id = task_id,
-                "Network constraints not fully implemented for desktop"
-            );
-        }
+        let handler = self.handler_for(task_id).await.ok_or_else(|| {
+            BridgeError::OperationFailed(format!("No handler registered for task: {}", task_id))
+        })?;
+        let (cancel_tx, cancel_rx) = oneshot::channel();
 
-        let mut tasks = self.tasks.write().await;
-        tasks.insert(
+        self.insert_task(
             id.clone(),
             TaskInfo {
                 status: TaskStatus::Scheduled,
-                _handle: None,
+                handle: None,
+                cancel: Some(cancel_tx),
+                last_run: None,
+                next_run: Some(Instant::now() + delay),
             },
-        );
+        )
+        .await;
+
+        let tasks = Arc::clone(&self.tasks);
+        let handler_clone = handler.clone();
+        let monitor = self.network_monitor.clone();
+        let task_id_clone = TaskId::new(task_id);
+        let constraints_clone = constraints.clone();
+
+        let handle = tokio::spawn(async move {
+            TokioBackgroundExecutor::run_one_time_task(
+                tasks,
+                task_id_clone,
+                handler_clone,
+                delay,
+                constraints_clone,
+                cancel_rx,
+                monitor,
+            )
+            .await;
+        });
+
+        self.update_task(&id, |info| {
+            info.handle = Some(handle);
+        })
+        .await;
 
         Ok(id)
     }
@@ -121,28 +374,24 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
     async fn cancel_task(&self, task_id: &TaskId) -> Result<()> {
         debug!(task_id = ?task_id, "Cancelling task");
 
-        let mut tasks = self.tasks.write().await;
-
-        if let Some(mut task_info) = tasks.remove(task_id) {
-            task_info.status = TaskStatus::Cancelled;
-
-            // Abort the task if it has a handle
-            if let Some(handle) = task_info._handle {
+        if let Some(mut info) = self.remove_task(task_id).await {
+            if let Some(cancel) = info.cancel.take() {
+                let _ = cancel.send(());
+            }
+            if let Some(handle) = info.handle.take() {
                 handle.abort();
             }
-
-            Ok(())
-        } else {
-            Err(BridgeError::OperationFailed(format!(
-                "Task not found: {:?}",
-                task_id
-            )))
+            return Ok(());
         }
+
+        Err(BridgeError::OperationFailed(format!(
+            "Task not found: {:?}",
+            task_id
+        )))
     }
 
     async fn get_task_status(&self, task_id: &TaskId) -> Result<TaskStatus> {
         let tasks = self.tasks.read().await;
-
         tasks
             .get(task_id)
             .map(|info| info.status.clone())
@@ -155,17 +404,22 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
     }
 
     async fn is_available(&self) -> bool {
-        // Always available on desktop
         true
     }
 
     async fn next_execution_time(&self, task_id: &TaskId) -> Result<Option<Duration>> {
         let tasks = self.tasks.read().await;
-
-        if tasks.contains_key(task_id) {
-            // For desktop, tasks typically execute immediately or on schedule
-            // Return None to indicate immediate execution
-            Ok(None)
+        if let Some(info) = tasks.get(task_id) {
+            if let Some(next) = info.next_run {
+                let now = Instant::now();
+                if next <= now {
+                    Ok(Some(Duration::from_secs(0)))
+                } else {
+                    Ok(Some(next.duration_since(now)))
+                }
+            } else {
+                Ok(None)
+            }
         } else {
             Err(BridgeError::OperationFailed(format!(
                 "Task not found: {:?}",
@@ -175,14 +429,11 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
     }
 }
 
-/// Desktop lifecycle observer (no-op implementation)
-///
-/// Desktop applications don't have the same lifecycle constraints as mobile apps.
-/// They're essentially always in the foreground state from the core's perspective.
+/// Desktop lifecycle observer (no-op implementation).
 pub struct DesktopLifecycleObserver;
 
 impl DesktopLifecycleObserver {
-    /// Create a new lifecycle observer
+    /// Create a new lifecycle observer.
     pub fn new() -> Self {
         Self
     }
@@ -197,25 +448,20 @@ impl Default for DesktopLifecycleObserver {
 #[async_trait]
 impl LifecycleObserver for DesktopLifecycleObserver {
     async fn get_state(&self) -> Result<LifecycleState> {
-        // Desktop apps are always in foreground from core's perspective
         Ok(LifecycleState::Foreground)
     }
 
     async fn subscribe_changes(&self) -> Result<Box<dyn LifecycleChangeStream>> {
-        // Return a stream that never emits changes
         Ok(Box::new(DesktopLifecycleChangeStream))
     }
 }
 
-/// Desktop lifecycle change stream (never emits)
+/// Desktop lifecycle change stream (never emits).
 struct DesktopLifecycleChangeStream;
 
 #[async_trait]
 impl LifecycleChangeStream for DesktopLifecycleChangeStream {
     async fn next(&mut self) -> Option<LifecycleState> {
-        // Desktop apps don't typically transition between states
-        // This would block indefinitely, which is correct behavior
-        // In practice, you'd use tokio::select! with other operations
         std::future::pending::<()>().await;
         None
     }
@@ -224,6 +470,9 @@ impl LifecycleChangeStream for DesktopLifecycleChangeStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bridge_traits::error::BridgeError;
+    use bridge_traits::network::NetworkChangeStream;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     #[tokio::test]
     async fn test_background_executor_creation() {
@@ -232,45 +481,178 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_schedule_task() {
+    async fn test_schedule_task_runs_handler() {
         let executor = TokioBackgroundExecutor::new();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = Arc::clone(&counter);
+
+        executor
+            .register_task_handler("test", move || {
+                let counter = Arc::clone(&counter_clone);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap();
 
         let task_id = executor
             .schedule_task(
-                "test-task",
-                Duration::from_secs(60),
+                "test",
+                Duration::from_millis(30),
                 TaskConstraints::default(),
             )
             .await
             .unwrap();
 
-        let status = executor.get_task_status(&task_id).await.unwrap();
-        assert_eq!(status, TaskStatus::Scheduled);
+        sleep(Duration::from_millis(120)).await;
+
+        assert!(executor.get_task_status(&task_id).await.unwrap() != TaskStatus::Cancelled);
+        assert!(counter.load(Ordering::SeqCst) >= 2);
+
+        executor.cancel_task(&task_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_schedule_once_executes() {
+        let executor = TokioBackgroundExecutor::new();
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag_clone = Arc::clone(&flag);
+
+        executor
+            .register_task_handler("once", move || {
+                let flag = Arc::clone(&flag_clone);
+                async move {
+                    flag.store(true, Ordering::SeqCst);
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap();
+
+        let task_id = executor
+            .schedule_once(
+                "once",
+                Duration::from_millis(25),
+                TaskConstraints::default(),
+            )
+            .await
+            .unwrap();
+
+        sleep(Duration::from_millis(100)).await;
+
+        assert_eq!(
+            executor.get_task_status(&task_id).await.unwrap(),
+            TaskStatus::Completed
+        );
+        assert!(flag.load(Ordering::SeqCst));
     }
 
     #[tokio::test]
     async fn test_cancel_task() {
         let executor = TokioBackgroundExecutor::new();
+        executor
+            .register_task_handler("cancel", || async { Ok(()) })
+            .await
+            .unwrap();
 
         let task_id = executor
-            .schedule_task(
-                "test-task",
-                Duration::from_secs(60),
-                TaskConstraints::default(),
-            )
+            .schedule_task("cancel", Duration::from_secs(1), TaskConstraints::default())
             .await
             .unwrap();
 
         executor.cancel_task(&task_id).await.unwrap();
-
-        // Task should be removed
         assert!(executor.get_task_status(&task_id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_network_constraints() {
+        let connected = Arc::new(AtomicBool::new(false));
+        let monitor =
+            Arc::new(TestNetworkMonitor::new(Arc::clone(&connected))) as Arc<dyn NetworkMonitor>;
+        let executor = TokioBackgroundExecutor::with_network_monitor(Some(monitor));
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = Arc::clone(&counter);
+
+        executor
+            .register_task_handler("network", move || {
+                let counter = Arc::clone(&counter_clone);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            })
+            .await
+            .unwrap();
+
+        let task_id = executor
+            .schedule_task(
+                "network",
+                Duration::from_millis(40),
+                TaskConstraints {
+                    requires_wifi: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        sleep(Duration::from_millis(150)).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+        connected.store(true, Ordering::SeqCst);
+        sleep(Duration::from_millis(150)).await;
+        assert!(counter.load(Ordering::SeqCst) >= 1);
+
+        executor.cancel_task(&task_id).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_lifecycle_observer() {
         let observer = DesktopLifecycleObserver::new();
-        let state = observer.get_state().await.unwrap();
-        assert_eq!(state, LifecycleState::Foreground);
+        assert_eq!(
+            observer.get_state().await.unwrap(),
+            LifecycleState::Foreground
+        );
+    }
+
+    #[derive(Clone)]
+    struct TestNetworkMonitor {
+        connected: Arc<AtomicBool>,
+    }
+
+    impl TestNetworkMonitor {
+        fn new(connected: Arc<AtomicBool>) -> Self {
+            Self { connected }
+        }
+    }
+
+    #[async_trait]
+    impl NetworkMonitor for TestNetworkMonitor {
+        async fn get_network_info(&self) -> Result<NetworkInfo> {
+            if self.connected.load(Ordering::SeqCst) {
+                Ok(NetworkInfo {
+                    status: NetworkStatus::Connected,
+                    network_type: Some(NetworkType::WiFi),
+                    is_metered: false,
+                    is_expensive: false,
+                })
+            } else {
+                Ok(NetworkInfo {
+                    status: NetworkStatus::Disconnected,
+                    network_type: None,
+                    is_metered: false,
+                    is_expensive: false,
+                })
+            }
+        }
+
+        async fn subscribe_changes(&self) -> Result<Box<dyn NetworkChangeStream>> {
+            Err(BridgeError::NotAvailable(
+                "Change stream not supported in test monitor".into(),
+            ))
+        }
     }
 }

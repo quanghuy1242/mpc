@@ -76,8 +76,7 @@ pub struct PlaylistSearchItem {
 }
 
 /// Aggregated search results for the library.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SearchResults {
     /// Track matches ordered by relevance.
     pub tracks: Vec<TrackListItem>,
@@ -88,7 +87,6 @@ pub struct SearchResults {
     /// Playlist matches ordered by a simple heuristic.
     pub playlists: Vec<PlaylistSearchItem>,
 }
-
 
 /// Detailed track information with eagerly loaded relations.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -144,8 +142,7 @@ impl Default for TrackFilter {
 }
 
 /// Sorting options for track queries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TrackSort {
     #[default]
     TitleAsc,
@@ -155,7 +152,6 @@ pub enum TrackSort {
     DurationDesc,
     DurationAsc,
 }
-
 
 /// Filter options for querying albums.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,8 +178,7 @@ impl Default for AlbumFilter {
 }
 
 /// Sorting options for album queries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AlbumSort {
     #[default]
     NameAsc,
@@ -193,7 +188,6 @@ pub enum AlbumSort {
     UpdatedAtDesc,
     TrackCountDesc,
 }
-
 
 /// High-level service composing complex library queries.
 #[derive(Clone)]

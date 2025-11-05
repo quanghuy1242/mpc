@@ -1,3 +1,49 @@
+[package]
+name = "mpc-workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+core-service = { path = "core-service", optional = true }
+core-metadata = { path = "core-metadata", optional = true }
+core-playback = { path = "core-playback", optional = true }
+
+[features]
+default = ["desktop-shims"]
+desktop-shims = [
+    "dep:core-service",
+    "core-service/desktop-shims"
+]
+ffi = [
+    "dep:core-service",
+    "core-service/ffi"
+]
+wasm = [
+    "dep:core-service",
+    "core-service/wasm"
+]
+lyrics = [
+    "dep:core-service",
+    "core-service/lyrics",
+    "dep:core-metadata",
+    "core-metadata/lyrics"
+]
+artwork-remote = [
+    "dep:core-service",
+    "core-service/artwork-remote",
+    "dep:core-metadata",
+    "core-metadata/artwork-remote"
+]
+offline-cache = [
+    "dep:core-service",
+    "core-service/offline-cache",
+    "dep:core-playback",
+    "core-playback/offline-cache"
+]
+
 [workspace]
 resolver = "2"
 members = [
@@ -81,16 +127,6 @@ mockall = "0.13"
 
 # Bytes handling
 bytes = "1.7"
-
-[workspace.features]
-default = ["desktop-shims"]
-desktop-shims = ["core-service/desktop-shims"]
-ffi = ["core-service/ffi"]
-wasm = ["core-service/wasm"]
-lyrics = ["core-service/lyrics", "core-metadata/lyrics"]
-artwork-remote = ["core-service/artwork-remote", "core-metadata/artwork-remote"]
-offline-cache = ["core-service/offline-cache", "core-playback/offline-cache"]
-
 [profile.dev]
 opt-level = 0
 debug = true

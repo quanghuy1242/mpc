@@ -23,6 +23,10 @@
 //! - [`BackgroundExecutor`](background::BackgroundExecutor) - Task scheduling respecting platform constraints
 //! - [`LifecycleObserver`](background::LifecycleObserver) - App foreground/background transitions
 //!
+//! ### Media & Playback
+//! - [`PlaybackAdapter`](playback::PlaybackAdapter) - Host audio engine integration (play, pause, seek, volume)
+//! - [`AudioDecoder`](playback::AudioDecoder) - Pluggable decoding backends used by the playback module
+//!
 //! ### Utilities
 //! - [`Clock`](time::Clock) - Time source for deterministic testing
 //! - [`LoggerSink`](time::LoggerSink) - Forward structured logs to host logging
@@ -102,6 +106,7 @@ pub mod background;
 pub mod error;
 pub mod http;
 pub mod network;
+pub mod playback;
 pub mod storage;
 pub mod time;
 
@@ -111,5 +116,10 @@ pub use error::BridgeError;
 pub use background::{BackgroundExecutor, LifecycleObserver, LifecycleState, TaskConstraints};
 pub use http::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 pub use network::{NetworkInfo, NetworkMonitor, NetworkStatus, NetworkType};
+pub use playback::{
+    AudioCodec, AudioDecoder, AudioFormat, AudioFrameChunk, AudioSource, PlaybackAdapter,
+    PlaybackMetadata, PlaybackOptions, PlaybackRequest, PlaybackResult, PlaybackSessionId,
+    PlaybackState, ProbeResult,
+};
 pub use storage::{FileSystemAccess, RemoteFile, SecureStore, SettingsStore, StorageProvider};
 pub use time::{Clock, LogEntry, LogLevel, LoggerSink, SystemClock};

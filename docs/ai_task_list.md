@@ -1340,6 +1340,9 @@ During initial implementation (TASK-204), domain models were designed with addit
 4. Define `AudioFormat` struct (sample_rate, channels, codec)
 5. Add error types for playback failures
 
+**Notes**:
+- Host bridge equivalents (`bridge-traits/src/playback.rs`) already expose these shapes for platform adapters. Reuse those definitions or ensure the core-facing traits stay aligned.
+
 **Acceptance Criteria**:
 - Traits support all playback operations
 - Types are platform-agnostic
