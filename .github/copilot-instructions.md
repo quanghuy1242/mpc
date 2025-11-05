@@ -6,9 +6,11 @@ Always use context7 when I need code generation, setup or configuration steps, o
 library/API documentation. This means you should automatically use the Context7 MCP
 tools to resolve library id and get library docs without me having to explicitly ask.
 
-## Update Task List status
+## Update Task List status and high level architecture
 
 Always update the task list status in the markdown file when you complete a task.
+Always follow the high level architecture and design principles outlined in docs/core_architecture.md
+when generating code or implementing features.
 
 ## Project Overview
 This is a cross-platform music playback core library written in Rust, designed to power desktop, mobile (iOS/Android), and web applications. The core provides unified music library management, cloud storage integration (Google Drive, OneDrive), metadata extraction, playback streaming, and lyrics support.
