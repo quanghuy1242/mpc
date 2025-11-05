@@ -16,7 +16,7 @@ tools to resolve library id and get library docs without me having to explicitly
 
 ## Update Task List status and high level architecture
 
-Always update the task list status in the markdown file when you complete a task.
+Always update the task list status in the markdown file docs\ai_task_list.md when you complete a task.
 Always follow the high level architecture and design principles outlined in docs/core_architecture.md
 when generating code or implementing features.
 

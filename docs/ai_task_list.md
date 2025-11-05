@@ -1213,28 +1213,85 @@ During initial implementation (TASK-204), domain models were designed with addit
 
 ---
 
-### TASK-302: Build Scan Queue System [P0, Complexity: 3]
+### TASK-302: Build Scan Queue System [P0, Complexity: 3] ✅ COMPLETED
 **Description**: Create work queue for processing discovered files.
 
 **Implementation Steps**:
-1. Create `core-sync/src/scan_queue.rs`
-2. Implement `ScanQueue`:
-   - `enqueue(work_item)` - add file to processing queue
-   - `dequeue()` - get next item
-   - `mark_complete(item_id)` - remove from queue
-   - `mark_failed(item_id, retry_count)` - handle failures
-3. Persist queue to database for resumability
-4. Add prioritization (new files before updates)
-5. Implement bounded concurrency (process N files simultaneously)
-6. Add retry logic with exponential backoff
+1. Create `core-sync/src/scan_queue.rs` ✅
+2. Implement `ScanQueue`: ✅
+   - `enqueue(work_item)` - add file to processing queue ✅
+   - `dequeue()` - get next item ✅
+   - `mark_complete(item_id)` - remove from queue ✅
+   - `mark_failed(item_id, retry_count)` - handle failures ✅
+3. Persist queue to database for resumability ✅
+4. Add prioritization (new files before updates) ✅
+5. Implement bounded concurrency (process N files simultaneously) ✅
+6. Add retry logic with exponential backoff ✅
 
 **Acceptance Criteria**:
-- Queue handles thousands of items efficiently
-- Failed items retry with backoff
-- Queue state persists across restarts
-- Concurrent processing works safely
+- ✅ Queue handles thousands of items efficiently
+- ✅ Failed items retry with backoff
+- ✅ Queue state persists across restarts
+- ✅ Concurrent processing works safely
 
-**Dependencies**: TASK-202, TASK-301
+**Dependencies**: TASK-202 ✅, TASK-301 ✅
+
+**Completion Notes**:
+- Date: November 5, 2025
+- Created comprehensive scan queue system (973 lines in scan_queue.rs)
+- **Core Types Implemented**:
+  - `WorkItemId`: UUID-based type-safe identifier with Display/FromStr
+  - `WorkItemStatus`: Pending, Processing, Completed, Failed with FromStr trait
+  - `Priority`: Low, Normal (default), High with ordering for queue prioritization
+  - `WorkItem`: Complete work item model with metadata (file_id, path, size, mime_type, provider_modified_at)
+  - `QueueStats`: Statistics tracking (pending, processing, completed, failed counts)
+- **Queue Manager Features**:
+  - `ScanQueue`: Main queue manager with bounded concurrency via tokio::sync::Semaphore
+  - Configurable `max_concurrent` limit to prevent resource exhaustion
+  - Database-backed persistence for crash recovery and resumability
+  - Priority-based ordering: High → Normal → Low, then by creation timestamp
+  - Exponential backoff retry logic (100ms * 2^retry_count, max 3 attempts)
+  - Automatic retry tracking with `retry_count` and `last_error` fields
+- **Repository Layer**:
+  - `ScanQueueRepository` trait: 7 async methods for database operations
+  - `SqliteScanQueueRepository`: Complete SQLite implementation
+  - Automatic table creation with compound index on (status, priority, created_at)
+  - Priority-based query optimization for efficient dequeuing
+- **API Surface**:
+  - `enqueue(item)`: Add work item to queue (returns WorkItemId)
+  - `dequeue()`: Get next highest priority pending item (respects concurrency limit)
+  - `mark_complete(id)`: Mark item as successfully completed
+  - `mark_failed(id, error)`: Mark item as failed, auto-retry if attempts < max
+  - `get_status(id)`: Query current work item status
+  - `stats()`: Get real-time queue statistics
+  - `cleanup_completed()`: Remove successfully completed items
+  - `get_failed_items()`: Retrieve all permanently failed items (retry_count >= 3)
+- **Test Coverage**: 18 comprehensive unit tests, all passing
+  - WorkItemId generation, parsing, display
+  - Priority ordering and comparison (High > Normal > Low)
+  - Exponential backoff calculation verification
+  - State transitions (pending → processing → completed/failed)
+  - Repository CRUD operations (create, read, update, delete)
+  - Queue workflow (enqueue → dequeue → mark_complete)
+  - Retry logic with exponential backoff
+  - Concurrent dequeue respecting semaphore limits
+  - Statistics calculation accuracy
+  - Cleanup operations
+  - Priority-based ordering verification
+- **Code Quality**:
+  - Zero clippy warnings (fixed FromStr trait, derived Default)
+  - All code formatted with cargo fmt
+  - 47 total core-sync tests passing (29 job + 18 queue)
+  - Comprehensive documentation with usage examples
+- **Files Created/Modified**:
+  - Created: `core-sync/src/scan_queue.rs` (973 lines)
+  - Modified: `core-sync/src/lib.rs` (exported scan_queue module with 8 public types)
+  - Modified: `core-sync/Cargo.toml` (added chrono dependency for timestamps)
+- **Integration Ready**:
+  - Ready for use in TASK-304 (Sync Coordinator)
+  - Will process discovered files from StorageProvider with priority ordering
+  - Supports resumable sync across application restarts
+  - Automatic retry for transient failures
 
 ---
 

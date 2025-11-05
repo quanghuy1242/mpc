@@ -10,13 +10,24 @@
 //! - Extracting metadata from downloaded files
 //! - Resolving conflicts (renames, duplicates, deletions)
 //! - Persisting library entries to the database
+//!
+//! ## Components
+//!
+//! - **Sync Job State Machine** (`job`): Manages sync job lifecycle with validated state transitions
+//! - **Scan Queue** (`scan_queue`): Work queue for processing discovered files with retry logic
+//! - **Repository** (`repository`): Database persistence for sync jobs and queue items
 
 pub mod error;
 pub mod job;
 pub mod repository;
+pub mod scan_queue;
 
 pub use error::{Result, SyncError};
 pub use job::{
     SyncJob, SyncJobId, SyncJobStats, SyncProgress, SyncStatus, SyncType,
 };
 pub use repository::{SyncJobRepository, SqliteSyncJobRepository};
+pub use scan_queue::{
+    Priority, QueueStats, ScanQueue, ScanQueueRepository, SqliteScanQueueRepository,
+    WorkItem, WorkItemId, WorkItemStatus,
+};
