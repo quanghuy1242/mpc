@@ -17,11 +17,13 @@
 //! - Auth state event emission
 
 pub mod error;
+pub mod manager;
 pub mod oauth;
 pub mod token_store;
 pub mod types;
 
 pub use error::{AuthError, Result};
+pub use manager::{AuthManager, ProviderInfo, Session};
 pub use oauth::{OAuthConfig, OAuthFlowManager, PkceVerifier};
 pub use token_store::TokenStore;
 pub use types::{AuthState, OAuthTokens, ProfileId, ProviderKind};

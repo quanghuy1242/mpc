@@ -147,6 +147,58 @@ pub enum AuthError {
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
+    /// Sign-in is already in progress for this provider.
+    ///
+    /// This occurs when attempting to initiate a new sign-in while one
+    /// is already in progress. Wait for the current sign-in to complete
+    /// or cancel it before starting a new one.
+    #[error("Sign-in already in progress for provider: {provider}")]
+    SignInInProgress {
+        /// The provider that has a sign-in in progress
+        provider: String,
+    },
+
+    /// No sign-in is in progress for the specified provider.
+    ///
+    /// This occurs when attempting to complete a sign-in that was never
+    /// initiated or was already completed/cancelled.
+    #[error("No sign-in in progress for provider: {provider}")]
+    NoSignInInProgress {
+        /// The provider that has no active sign-in
+        provider: String,
+    },
+
+    /// OAuth state parameter is invalid (CSRF protection).
+    ///
+    /// This is a security error indicating potential CSRF attack or
+    /// corrupted authentication flow. The state parameter from the callback
+    /// doesn't match the one generated during sign-in initiation.
+    #[error("Invalid OAuth state parameter")]
+    InvalidState,
+
+    /// No refresh token is available for the profile.
+    ///
+    /// This occurs when attempting to refresh tokens but no refresh token
+    /// was stored. User must re-authenticate.
+    #[error("No refresh token available for profile: {profile_id}")]
+    NoRefreshToken {
+        /// The profile that has no refresh token
+        profile_id: String,
+    },
+
+    /// Operation timed out.
+    ///
+    /// This occurs when an authentication operation takes too long.
+    /// Common causes:
+    /// - Network latency
+    /// - Provider API slowness
+    /// - User not responding to browser prompt
+    #[error("Operation timed out: {operation}")]
+    OperationTimeout {
+        /// The operation that timed out
+        operation: String,
+    },
+
     /// Generic error for unexpected failures.
     #[error("Authentication error: {0}")]
     Other(String),
