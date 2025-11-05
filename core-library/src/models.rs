@@ -237,12 +237,12 @@ pub struct Album {
     pub artist_id: Option<String>,
     /// Release year
     pub year: Option<i32>,
-    /// Genre
-    pub genre: Option<String>,
     /// Artwork reference
     pub artwork_id: Option<String>,
     /// Cached track count
-    pub track_count: i32,
+    pub track_count: i64,
+    /// Cached total duration in milliseconds
+    pub total_duration_ms: i64,
     /// Timestamps
     pub created_at: i64,
     pub updated_at: i64,
@@ -258,9 +258,9 @@ impl Album {
             normalized_name,
             artist_id,
             year: None,
-            genre: None,
             artwork_id: None,
             track_count: 0,
+            total_duration_ms: 0,
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         }
@@ -300,10 +300,8 @@ pub struct Artist {
     pub name: String,
     /// Normalized name for searching
     pub normalized_name: String,
-    /// Biography
-    pub bio: Option<String>,
-    /// Country
-    pub country: Option<String>,
+    /// Sort name for alphabetical sorting
+    pub sort_name: Option<String>,
     /// Timestamps
     pub created_at: i64,
     pub updated_at: i64,
@@ -317,8 +315,7 @@ impl Artist {
             id: Uuid::new_v4().to_string(),
             name,
             normalized_name,
-            bio: None,
-            country: None,
+            sort_name: None,
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         }
@@ -346,14 +343,20 @@ pub struct Playlist {
     pub id: String,
     /// Playlist name
     pub name: String,
+    /// Normalized name for searching
+    pub normalized_name: String,
     /// Description
     pub description: Option<String>,
     /// Owner type (user or system)
     pub owner_type: String,
     /// Sort order (manual, date_added, title, etc.)
     pub sort_order: String,
-    /// Whether playlist is public
-    pub is_public: bool,
+    /// Cached track count
+    pub track_count: i64,
+    /// Cached total duration in milliseconds
+    pub total_duration_ms: i64,
+    /// Optional playlist cover art
+    pub artwork_id: Option<String>,
     /// Timestamps
     pub created_at: i64,
     pub updated_at: i64,
@@ -362,13 +365,17 @@ pub struct Playlist {
 impl Playlist {
     /// Create a new user playlist
     pub fn new(name: String) -> Self {
+        let normalized_name = name.trim().to_lowercase();
         Self {
             id: Uuid::new_v4().to_string(),
             name,
+            normalized_name,
             description: None,
             owner_type: "user".to_string(),
             sort_order: "manual".to_string(),
-            is_public: false,
+            track_count: 0,
+            total_duration_ms: 0,
+            artwork_id: None,
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         }
@@ -376,13 +383,17 @@ impl Playlist {
 
     /// Create a system playlist
     pub fn new_system(name: String, sort_order: String) -> Self {
+        let normalized_name = name.trim().to_lowercase();
         Self {
             id: Uuid::new_v4().to_string(),
             name,
+            normalized_name,
             description: None,
             owner_type: "system".to_string(),
             sort_order,
-            is_public: false,
+            track_count: 0,
+            total_duration_ms: 0,
+            artwork_id: None,
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         }
@@ -422,28 +433,33 @@ pub struct Folder {
     pub id: String,
     /// Provider this folder belongs to
     pub provider_id: String,
+    /// Provider's folder identifier
+    pub provider_folder_id: String,
     /// Folder name
     pub name: String,
+    /// Normalized name for searching
+    pub normalized_name: String,
     /// Parent folder ID (None for root)
     pub parent_id: Option<String>,
     /// Full path from root
     pub path: String,
     /// Timestamps
     pub created_at: i64,
-    pub updated_at: i64,
 }
 
 impl Folder {
     /// Create a new folder
-    pub fn new(provider_id: String, name: String, parent_id: Option<String>, path: String) -> Self {
+    pub fn new(provider_id: String, provider_folder_id: String, name: String, parent_id: Option<String>, path: String) -> Self {
+        let normalized_name = name.trim().to_lowercase();
         Self {
             id: Uuid::new_v4().to_string(),
             provider_id,
+            provider_folder_id,
             name,
+            normalized_name,
             parent_id,
             path,
             created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
         }
     }
 
@@ -471,16 +487,18 @@ pub struct Artwork {
     /// Binary image data
     #[serde(skip_serializing)]
     pub binary_blob: Vec<u8>,
-    /// Image width in pixels
-    pub width: i32,
-    /// Image height in pixels
-    pub height: i32,
-    /// Dominant color as hex (e.g., "#FF5733")
-    pub dominant_color: Option<String>,
     /// MIME type (image/jpeg, image/png, etc.)
     pub mime_type: String,
+    /// Image width in pixels
+    pub width: i64,
+    /// Image height in pixels
+    pub height: i64,
     /// File size in bytes
-    pub size_bytes: i64,
+    pub file_size: i64,
+    /// Dominant color as hex (e.g., "#FF5733")
+    pub dominant_color: Option<String>,
+    /// Source of the artwork (embedded, remote, user_uploaded)
+    pub source: String,
     /// Timestamps
     pub created_at: i64,
 }
@@ -490,19 +508,20 @@ impl Artwork {
     pub fn new(
         hash: String,
         binary_blob: Vec<u8>,
-        width: i32,
-        height: i32,
+        width: i64,
+        height: i64,
         mime_type: String,
     ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             hash,
-            size_bytes: binary_blob.len() as i64,
+            file_size: binary_blob.len() as i64,
             binary_blob,
+            mime_type,
             width,
             height,
             dominant_color: None,
-            mime_type,
+            source: "embedded".to_string(),
             created_at: chrono::Utc::now().timestamp(),
         }
     }
@@ -523,7 +542,7 @@ impl Artwork {
             return Err(format!("Unsupported artwork MIME type: {}", self.mime_type));
         }
 
-        if self.size_bytes != self.binary_blob.len() as i64 {
+        if self.file_size != self.binary_blob.len() as i64 {
             return Err("Artwork size mismatch".to_string());
         }
 
@@ -538,8 +557,8 @@ pub struct Lyrics {
     pub track_id: String,
     /// Source of lyrics (lrclib, manual, etc.)
     pub source: String,
-    /// Whether lyrics are synced (LRC format)
-    pub synced: bool,
+    /// Whether lyrics are synced (LRC format) - SQLite stores as 0 or 1
+    pub synced: i64,
     /// Lyrics body (plain text or LRC format)
     pub body: String,
     /// Language code (ISO 639-1)
@@ -548,7 +567,6 @@ pub struct Lyrics {
     pub last_checked_at: i64,
     /// Timestamps
     pub created_at: i64,
-    pub updated_at: i64,
 }
 
 impl Lyrics {
@@ -558,12 +576,11 @@ impl Lyrics {
         Self {
             track_id,
             source,
-            synced,
+            synced: if synced { 1 } else { 0 },
             body,
             language: None,
             last_checked_at: now,
             created_at: now,
-            updated_at: now,
         }
     }
 
@@ -573,7 +590,7 @@ impl Lyrics {
             return Err("Lyrics body cannot be empty".to_string());
         }
 
-        if self.synced && !self.body.contains('[') {
+        if self.synced != 0 && !self.body.contains('[') {
             return Err("Synced lyrics must be in LRC format".to_string());
         }
 
@@ -639,7 +656,7 @@ mod tests {
         let artist = Artist::new("Test Artist".to_string());
         assert_eq!(artist.name, "Test Artist");
         assert_eq!(artist.normalized_name, "test artist");
-        assert!(artist.bio.is_none());
+        assert!(artist.sort_name.is_none());
         assert!(artist.created_at > 0);
     }
 
@@ -660,9 +677,10 @@ mod tests {
     fn test_playlist_new() {
         let playlist = Playlist::new("My Playlist".to_string());
         assert_eq!(playlist.name, "My Playlist");
+        assert_eq!(playlist.normalized_name, "my playlist");
         assert_eq!(playlist.owner_type, "user");
         assert_eq!(playlist.sort_order, "manual");
-        assert!(!playlist.is_public);
+        assert_eq!(playlist.track_count, 0);
     }
 
     #[test]
@@ -697,12 +715,14 @@ mod tests {
     fn test_folder_new() {
         let folder = Folder::new(
             "provider-1".to_string(),
+            "folder-music".to_string(),
             "Music".to_string(),
             None,
             "/Music".to_string(),
         );
         assert_eq!(folder.name, "Music");
         assert_eq!(folder.provider_id, "provider-1");
+        assert_eq!(folder.provider_folder_id, "folder-music");
         assert_eq!(folder.path, "/Music");
         assert!(folder.parent_id.is_none());
     }
@@ -711,6 +731,7 @@ mod tests {
     fn test_folder_validation() {
         let mut folder = Folder::new(
             "provider-1".to_string(),
+            "folder-valid".to_string(),
             "Valid".to_string(),
             None,
             "/Valid".to_string(),
@@ -741,7 +762,7 @@ mod tests {
         assert_eq!(artwork.width, 800);
         assert_eq!(artwork.height, 600);
         assert_eq!(artwork.mime_type, "image/jpeg");
-        assert_eq!(artwork.size_bytes, data.len() as i64);
+        assert_eq!(artwork.file_size, data.len() as i64);
     }
 
     #[test]
@@ -758,12 +779,12 @@ mod tests {
 
         // Empty data
         artwork.binary_blob = vec![];
-        artwork.size_bytes = 0;
+        artwork.file_size = 0;
         assert!(artwork.validate().is_err());
 
         // Invalid dimensions
         artwork.binary_blob = data.clone();
-        artwork.size_bytes = data.len() as i64;
+        artwork.file_size = data.len() as i64;
         artwork.width = 0;
         assert!(artwork.validate().is_err());
 
@@ -778,7 +799,7 @@ mod tests {
 
         // Size mismatch
         artwork.mime_type = "image/jpeg".to_string();
-        artwork.size_bytes = 999;
+        artwork.file_size = 999;
         assert!(artwork.validate().is_err());
     }
 
@@ -792,7 +813,7 @@ mod tests {
         );
         assert_eq!(lyrics.track_id, "track-123");
         assert_eq!(lyrics.source, "lrclib");
-        assert!(!lyrics.synced);
+        assert_eq!(lyrics.synced, 0); // false = 0 in SQLite
         assert_eq!(lyrics.body, "These are the lyrics");
     }
 
@@ -812,7 +833,7 @@ mod tests {
 
         // Synced but not LRC format
         lyrics.body = "Not LRC format".to_string();
-        lyrics.synced = true;
+        lyrics.synced = 1;
         assert!(lyrics.validate().is_err());
 
         // Valid LRC format

@@ -10,9 +10,31 @@
 //! - SQLite implementations use sqlx for async database access
 //! - All operations return `Result<T>` for error handling
 //! - Pagination is supported via the `Page<T>` wrapper
+//!
+//! ## Available Repositories
+//!
+//! - `TrackRepository` - Music tracks with metadata and audio properties
+//! - `AlbumRepository` - Albums with artist relationships
+//! - `ArtistRepository` - Music artists with biographical info
+//! - `PlaylistRepository` - User and system playlists with track management
+//! - `FolderRepository` - Cloud storage folder hierarchy
+//! - `ArtworkRepository` - Album artwork with deduplication support
+//! - `LyricsRepository` - Track lyrics (plain text and synced LRC format)
 
+pub mod album;
+pub mod artist;
+pub mod artwork;
+pub mod folder;
+pub mod lyrics;
 mod pagination;
-mod track;
+pub mod playlist;
+pub mod track;
 
+pub use album::{AlbumRepository, SqliteAlbumRepository};
+pub use artist::{ArtistRepository, SqliteArtistRepository};
+pub use artwork::{ArtworkRepository, SqliteArtworkRepository};
+pub use folder::{FolderRepository, SqliteFolderRepository};
+pub use lyrics::{LyricsRepository, SqliteLyricsRepository};
 pub use pagination::{Page, PageRequest};
+pub use playlist::{PlaylistRepository, SqlitePlaylistRepository};
 pub use track::{SqliteTrackRepository, TrackRepository};
