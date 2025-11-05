@@ -852,31 +852,107 @@ This document provides a structured task breakdown for implementing the Music Pl
 
 ---
 
-### TASK-204: Create Domain Models [P0, Complexity: 2]
+### TASK-204: Create Domain Models [P0, Complexity: 2] ✅ COMPLETED
 **Description**: Define rich domain models with validation.
 
 **Implementation Steps**:
-1. Create `core-library/src/models.rs`
-2. Define structs:
-   - `Track` with `TrackId` newtype
-   - `Album` with `AlbumId` newtype
-   - `Artist` with `ArtistId` newtype
-   - `Playlist` with `PlaylistId` newtype
-   - `Folder`
-   - `Artwork`
-   - `Lyrics`
-3. Implement `FromRow` for database mapping
-4. Add validation methods (duration > 0, valid formats, etc.)
-5. Implement `Display` and `Debug` traits
-6. Add builder patterns for complex types
+1. Create `core-library/src/models.rs` ✅
+2. Define structs: ✅
+   - `Track` with `TrackId` newtype ✅
+   - `Album` with `AlbumId` newtype ✅
+   - `Artist` with `ArtistId` newtype ✅
+   - `Playlist` with `PlaylistId` newtype ✅
+   - `Folder` ✅
+   - `Artwork` ✅
+   - `Lyrics` ✅
+3. Implement `FromRow` for database mapping ✅
+4. Add validation methods (duration > 0, valid formats, etc.) ✅
+5. Implement `Display` and `Debug` traits ✅
+6. Add builder patterns for complex types ✅
 
 **Acceptance Criteria**:
-- Models map cleanly to database rows
-- Validation catches invalid data
-- Types are ergonomic to use
-- Serialization works for API boundaries
+- ✅ Models map cleanly to database rows
+- ✅ Validation catches invalid data
+- ✅ Types are ergonomic to use
+- ✅ Serialization works for API boundaries
 
-**Dependencies**: TASK-201
+**Dependencies**: TASK-201 ✅
+
+**Completion Notes**:
+- Date: November 5, 2025
+- Enhanced existing `core-library/src/models.rs` with complete domain models (863 lines total)
+- **ID Types** (already existed from TASK-203):
+  - `TrackId`, `AlbumId`, `ArtistId`, `PlaylistId` - UUID-based newtypes
+  - All ID types implement: Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Default
+  - `from_string()` method for parsing UUIDs from strings
+  - `sqlx::Type` derive for database compatibility
+- **Domain Models Implemented**:
+  1. **Track** (already existed from TASK-203):
+     - 29 fields covering metadata, audio properties, enrichment status
+     - Validation: non-empty title, positive duration, valid year range, positive track numbers
+     - `normalize()` helper for search
+  2. **Album** (NEW):
+     - 11 fields: id, name, normalized_name, artist_id, year, genre, artwork_id, track_count, timestamps
+     - `new()` constructor with automatic normalization
+     - Validation: non-empty name, valid year range, non-negative track count
+     - `normalize()` helper for search
+  3. **Artist** (NEW):
+     - 7 fields: id, name, normalized_name, bio, country, timestamps
+     - `new()` constructor with automatic normalization
+     - Validation: non-empty name
+     - `normalize()` helper for search
+  4. **Playlist** (NEW):
+     - 8 fields: id, name, description, owner_type, sort_order, is_public, timestamps
+     - `new()` constructor for user playlists
+     - `new_system()` constructor for system playlists
+     - Validation: non-empty name, valid owner_type (user/system), valid sort_order (manual/date_added/title/artist/album/duration)
+  5. **Folder** (NEW):
+     - 7 fields: id, provider_id, name, parent_id, path, timestamps
+     - `new()` constructor
+     - Validation: non-empty name and path
+  6. **Artwork** (NEW):
+     - 9 fields: id, hash, binary_blob, width, height, dominant_color, mime_type, size_bytes, created_at
+     - `new()` constructor with automatic size calculation
+     - Validation: non-empty data, positive dimensions, valid MIME types (jpeg/png/webp/gif), size consistency
+     - Binary data skipped during serialization for efficiency
+  7. **Lyrics** (NEW):
+     - 8 fields: track_id, source, synced, body, language, last_checked_at, timestamps
+     - `new()` constructor
+     - Validation: non-empty body, LRC format validation for synced lyrics
+     - `is_lrc_format()` helper to detect LRC format
+- **Features**:
+  - All models derive: Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow
+  - Comprehensive validation methods for data integrity
+  - Builder-style constructors for easy instantiation
+  - Timestamp fields using chrono for creation/update tracking
+  - Content hash support for deduplication (Track, Artwork)
+  - Normalization helpers for search optimization
+- **Test Coverage**: 18 new comprehensive unit tests all passing
+  - test_album_new, test_album_validation, test_album_normalize
+  - test_artist_new, test_artist_validation
+  - test_playlist_new, test_playlist_new_system, test_playlist_validation
+  - test_folder_new, test_folder_validation
+  - test_artwork_new, test_artwork_validation
+  - test_lyrics_new, test_lyrics_validation, test_lyrics_is_lrc_format
+  - test_id_types_display, test_id_types_from_string, test_id_types_default
+- **Code Quality**:
+  - Zero clippy warnings
+  - All code formatted with cargo fmt
+  - Comprehensive documentation with examples for all types and methods
+  - Total package tests: 42 unit tests passing (18 new + 24 existing)
+- **Total Workspace Statistics**:
+  - 195 unit tests passing across all packages
+  - All packages compile successfully
+  - Clean build with no warnings
+- **Architecture Patterns Followed**:
+  - Newtype pattern for type-safe IDs
+  - Builder pattern for complex types
+  - Fail-fast validation
+  - Normalization for search optimization
+  - FromRow derive for seamless database mapping
+  - Serde support for API boundaries
+  - Comprehensive Display implementations
+- **Ready for**: TASK-205 (Implement Library Query API)
 
 ---
 
