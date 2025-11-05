@@ -17,8 +17,10 @@
 //! - **Scan Queue** (`scan_queue`): Work queue for processing discovered files with retry logic
 //! - **Conflict Resolver** (`conflict_resolver`): Handles renames, duplicates, and deletions
 //! - **Repository** (`repository`): Database persistence for sync jobs and queue items
+//! - **Sync Coordinator** (`coordinator`): Orchestrates full and incremental synchronization
 
 pub mod conflict_resolver;
+pub mod coordinator;
 pub mod error;
 pub mod job;
 pub mod repository;
@@ -36,3 +38,4 @@ pub use scan_queue::{
 pub use conflict_resolver::{
     ConflictPolicy, ConflictResolver, DuplicateSet, MetadataConflict, ResolutionResult,
 };
+pub use coordinator::{SyncConfig, SyncCoordinator};
