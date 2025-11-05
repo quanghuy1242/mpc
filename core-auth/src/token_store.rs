@@ -207,18 +207,14 @@ impl TokenStore {
         let key = self.storage_key(profile_id);
 
         // Retrieve from secure storage
-        let data = self
-            .secure_store
-            .get_secret(&key)
-            .await
-            .map_err(|e| {
-                warn!(
-                    profile_id = %profile_id,
-                    error = %e,
-                    "Failed to retrieve tokens from secure storage"
-                );
-                AuthError::SecureStorageUnavailable(e.to_string())
-            })?;
+        let data = self.secure_store.get_secret(&key).await.map_err(|e| {
+            warn!(
+                profile_id = %profile_id,
+                error = %e,
+                "Failed to retrieve tokens from secure storage"
+            );
+            AuthError::SecureStorageUnavailable(e.to_string())
+        })?;
 
         // Handle case where no tokens exist
         let Some(data) = data else {
@@ -253,11 +249,8 @@ impl TokenStore {
         };
 
         // Convert to OAuthTokens
-        let tokens = OAuthTokens::from_parts(
-            stored.access_token,
-            stored.refresh_token,
-            stored.expires_at,
-        );
+        let tokens =
+            OAuthTokens::from_parts(stored.access_token, stored.refresh_token, stored.expires_at);
 
         info!(
             profile_id = %profile_id,
@@ -294,17 +287,14 @@ impl TokenStore {
     pub async fn delete_tokens(&self, profile_id: ProfileId) -> Result<()> {
         let key = self.storage_key(profile_id);
 
-        self.secure_store
-            .delete_secret(&key)
-            .await
-            .map_err(|e| {
-                warn!(
-                    profile_id = %profile_id,
-                    error = %e,
-                    "Failed to delete tokens from secure storage"
-                );
-                AuthError::SecureStorageUnavailable(e.to_string())
-            })?;
+        self.secure_store.delete_secret(&key).await.map_err(|e| {
+            warn!(
+                profile_id = %profile_id,
+                error = %e,
+                "Failed to delete tokens from secure storage"
+            );
+            AuthError::SecureStorageUnavailable(e.to_string())
+        })?;
 
         info!(profile_id = %profile_id, "Tokens deleted securely");
 
@@ -338,17 +328,14 @@ impl TokenStore {
     pub async fn has_tokens(&self, profile_id: ProfileId) -> Result<bool> {
         let key = self.storage_key(profile_id);
 
-        self.secure_store
-            .has_secret(&key)
-            .await
-            .map_err(|e| {
-                warn!(
-                    profile_id = %profile_id,
-                    error = %e,
-                    "Failed to check token existence in secure storage"
-                );
-                AuthError::SecureStorageUnavailable(e.to_string())
-            })
+        self.secure_store.has_secret(&key).await.map_err(|e| {
+            warn!(
+                profile_id = %profile_id,
+                error = %e,
+                "Failed to check token existence in secure storage"
+            );
+            AuthError::SecureStorageUnavailable(e.to_string())
+        })
     }
 
     /// List all profile IDs that have stored tokens
@@ -371,14 +358,10 @@ impl TokenStore {
     /// # }
     /// ```
     pub async fn list_profiles(&self) -> Result<Vec<ProfileId>> {
-        let keys = self
-            .secure_store
-            .list_keys()
-            .await
-            .map_err(|e| {
-                warn!(error = %e, "Failed to list keys from secure storage");
-                AuthError::SecureStorageUnavailable(e.to_string())
-            })?;
+        let keys = self.secure_store.list_keys().await.map_err(|e| {
+            warn!(error = %e, "Failed to list keys from secure storage");
+            AuthError::SecureStorageUnavailable(e.to_string())
+        })?;
 
         let profiles: Vec<ProfileId> = keys
             .iter()

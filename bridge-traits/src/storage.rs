@@ -368,13 +368,14 @@ pub trait StorageProvider: Send + Sync {
     /// ```ignore
     /// let (files, next_cursor) = provider.list_media(None).await?;
     /// println!("Found {} files", files.len());
-    /// 
+    ///
     /// if let Some(cursor) = next_cursor {
     ///     let (more_files, _) = provider.list_media(Some(cursor)).await?;
     ///     println!("Found {} more files", more_files.len());
     /// }
     /// ```
-    async fn list_media(&self, cursor: Option<String>) -> Result<(Vec<RemoteFile>, Option<String>)>;
+    async fn list_media(&self, cursor: Option<String>)
+        -> Result<(Vec<RemoteFile>, Option<String>)>;
 
     /// Get detailed metadata for a specific file
     ///
@@ -430,7 +431,7 @@ pub trait StorageProvider: Send + Sync {
     /// // Full download
     /// let data = provider.download("abc123", None).await?;
     /// println!("Downloaded {} bytes", data.len());
-    /// 
+    ///
     /// // Range request for first 1KB
     /// let partial = provider.download("abc123", Some("bytes=0-1023")).await?;
     /// ```
@@ -471,7 +472,7 @@ pub trait StorageProvider: Send + Sync {
     /// // Initial sync
     /// let (files, cursor) = provider.list_media(None).await?;
     /// store_cursor(&cursor);
-    /// 
+    ///
     /// // Later: incremental sync
     /// let stored_cursor = load_cursor();
     /// match provider.get_changes(stored_cursor).await {
@@ -487,7 +488,10 @@ pub trait StorageProvider: Send + Sync {
     ///     Err(e) => return Err(e),
     /// }
     /// ```
-    async fn get_changes(&self, cursor: Option<String>) -> Result<(Vec<RemoteFile>, Option<String>)>;
+    async fn get_changes(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<(Vec<RemoteFile>, Option<String>)>;
 }
 
 #[cfg(test)]

@@ -101,17 +101,17 @@ impl PkceVerifier {
     /// Both values use URL-safe base64 encoding without padding.
     pub fn new() -> Self {
         let mut rng = rand::thread_rng();
-        
+
         // Generate code verifier (43-128 characters per RFC 7636)
         let mut verifier_bytes = [0u8; 32];
         rng.fill(&mut verifier_bytes);
         let verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
-        
+
         // Generate state for CSRF protection
         let mut state_bytes = [0u8; 16];
         rng.fill(&mut state_bytes);
         let state = URL_SAFE_NO_PAD.encode(state_bytes);
-        
+
         Self { verifier, state }
     }
 
@@ -336,12 +336,12 @@ impl OAuthFlowManager {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unable to read error response".to_string());
-            
+
             warn!(
                 "Token exchange failed with status {}: {}",
                 status, error_body
             );
-            
+
             return Err(AuthError::InvalidAuthCode(format!(
                 "Token endpoint returned {}: {}",
                 status, error_body
@@ -428,7 +428,7 @@ impl OAuthFlowManager {
 
         loop {
             attempts += 1;
-            
+
             let response = client
                 .post(&self.config.token_url)
                 .form(&params)
@@ -438,10 +438,9 @@ impl OAuthFlowManager {
 
             if response.status().is_success() {
                 // Parse token response
-                let token_response: TokenResponse = response
-                    .json()
-                    .await
-                    .map_err(|e| AuthError::Other(format!("Failed to parse token response: {}", e)))?;
+                let token_response: TokenResponse = response.json().await.map_err(|e| {
+                    AuthError::Other(format!("Failed to parse token response: {}", e))
+                })?;
 
                 tracing::info!(
                     "Successfully refreshed token (expires in {}s)",
@@ -450,25 +449,27 @@ impl OAuthFlowManager {
 
                 return Ok(OAuthTokens::new(
                     token_response.access_token,
-                    token_response.refresh_token.or_else(|| Some(refresh_token.to_string())),
+                    token_response
+                        .refresh_token
+                        .or_else(|| Some(refresh_token.to_string())),
                     token_response.expires_in,
                 ));
             }
 
             let status = response.status();
-            
+
             // If it's a client error (4xx), don't retry
             if status.is_client_error() {
                 let error_body = response
                     .text()
                     .await
                     .unwrap_or_else(|_| "Unable to read error response".to_string());
-                
+
                 warn!(
                     "Token refresh failed with status {}: {}",
                     status, error_body
                 );
-                
+
                 return Err(AuthError::TokenRefreshFailed(format!(
                     "Token endpoint returned {}: {}",
                     status, error_body
@@ -481,7 +482,7 @@ impl OAuthFlowManager {
                     .text()
                     .await
                     .unwrap_or_else(|_| "Unable to read error response".to_string());
-                
+
                 return Err(AuthError::TokenRefreshFailed(format!(
                     "Token refresh failed after {} attempts. Last error: {} - {}",
                     attempts, status, error_body
@@ -528,16 +529,16 @@ mod tests {
     #[test]
     fn test_pkce_verifier_generation() {
         let verifier = PkceVerifier::new();
-        
+
         // Verifier should be non-empty
         assert!(!verifier.verifier().is_empty());
         assert!(!verifier.state().is_empty());
-        
+
         // Challenge should be deterministic for same verifier
         let challenge1 = verifier.challenge();
         let challenge2 = verifier.challenge();
         assert_eq!(challenge1, challenge2);
-        
+
         // Different verifiers should produce different values
         let verifier2 = PkceVerifier::new();
         assert_ne!(verifier.verifier(), verifier2.verifier());
@@ -552,14 +553,14 @@ mod tests {
             verifier: "test_verifier".to_string(),
             state: "test_state".to_string(),
         };
-        
+
         let challenge = verifier.challenge();
-        
+
         // Verify challenge is base64-url-encoded
         assert!(!challenge.contains('+'));
         assert!(!challenge.contains('/'));
         assert!(!challenge.contains('='));
-        
+
         // Verify it's reproducible
         assert_eq!(challenge, verifier.challenge());
     }
@@ -594,10 +595,10 @@ mod tests {
 
         let manager = OAuthFlowManager::new(config);
         let result = manager.build_auth_url();
-        
+
         assert!(result.is_ok());
         let (url, verifier) = result.unwrap();
-        
+
         // Verify URL contains required parameters
         assert!(url.contains("client_id=test-client"));
         assert!(url.contains("redirect_uri=http"));
@@ -624,7 +625,7 @@ mod tests {
 
         let manager = OAuthFlowManager::new(config);
         let result = manager.build_auth_url();
-        
+
         assert!(result.is_err());
     }
 
@@ -634,7 +635,7 @@ mod tests {
         // Here we just verify the state is included in the verifier
         let verifier = PkceVerifier::new();
         let state = verifier.state();
-        
+
         assert!(!state.is_empty());
         assert_eq!(state, verifier.state());
     }

@@ -11,22 +11,15 @@ pub enum GoogleDriveError {
 
     /// API request returned an error
     #[error("Google Drive API error (status {status_code}): {message}")]
-    ApiError {
-        status_code: u16,
-        message: String,
-    },
+    ApiError { status_code: u16, message: String },
 
     /// Rate limit exceeded
     #[error("Rate limit exceeded, retry after {retry_after_seconds} seconds")]
-    RateLimitExceeded {
-        retry_after_seconds: u64,
-    },
+    RateLimitExceeded { retry_after_seconds: u64 },
 
     /// File not found
     #[error("File not found: {file_id}")]
-    FileNotFound {
-        file_id: String,
-    },
+    FileNotFound { file_id: String },
 
     /// Failed to parse API response
     #[error("Failed to parse API response: {0}")]
@@ -52,28 +45,38 @@ impl From<GoogleDriveError> for bridge_traits::error::BridgeError {
     fn from(error: GoogleDriveError) -> Self {
         match error {
             GoogleDriveError::AuthenticationFailed(msg) => {
-                bridge_traits::error::BridgeError::OperationFailed(format!("Authentication failed: {}", msg))
-            }
-            GoogleDriveError::ApiError { status_code, message } => {
                 bridge_traits::error::BridgeError::OperationFailed(format!(
-                    "API error (status {}): {}",
-                    status_code, message
+                    "Authentication failed: {}",
+                    msg
                 ))
             }
-            GoogleDriveError::RateLimitExceeded { retry_after_seconds } => {
-                bridge_traits::error::BridgeError::OperationFailed(format!(
-                    "Rate limit exceeded, retry after {} seconds",
-                    retry_after_seconds
-                ))
-            }
+            GoogleDriveError::ApiError {
+                status_code,
+                message,
+            } => bridge_traits::error::BridgeError::OperationFailed(format!(
+                "API error (status {}): {}",
+                status_code, message
+            )),
+            GoogleDriveError::RateLimitExceeded {
+                retry_after_seconds,
+            } => bridge_traits::error::BridgeError::OperationFailed(format!(
+                "Rate limit exceeded, retry after {} seconds",
+                retry_after_seconds
+            )),
             GoogleDriveError::FileNotFound { file_id } => {
-                bridge_traits::error::BridgeError::OperationFailed(format!("File not found: {}", file_id))
+                bridge_traits::error::BridgeError::OperationFailed(format!(
+                    "File not found: {}",
+                    file_id
+                ))
             }
             GoogleDriveError::ParseError(msg) => {
                 bridge_traits::error::BridgeError::OperationFailed(format!("Parse error: {}", msg))
             }
             GoogleDriveError::NetworkError(msg) => {
-                bridge_traits::error::BridgeError::OperationFailed(format!("Network error: {}", msg))
+                bridge_traits::error::BridgeError::OperationFailed(format!(
+                    "Network error: {}",
+                    msg
+                ))
             }
             GoogleDriveError::InvalidChangeToken(msg) => {
                 bridge_traits::error::BridgeError::OperationFailed(format!(

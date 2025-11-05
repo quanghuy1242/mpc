@@ -53,9 +53,9 @@
 use crate::error::{AuthError, Result};
 use crate::oauth::{OAuthConfig, OAuthFlowManager, PkceVerifier};
 use crate::token_store::TokenStore;
-use crate::types::{AuthState, ProfileId, ProviderKind};
 #[cfg(test)]
 use crate::types::OAuthTokens;
+use crate::types::{AuthState, ProfileId, ProviderKind};
 use bridge_traits::SecureStore;
 use core_runtime::events::{AuthEvent, CoreEvent, EventBus};
 use std::collections::HashMap;
@@ -221,8 +221,7 @@ impl AuthManager {
                 display_name: "Microsoft OneDrive".to_string(),
                 auth_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
                     .to_string(),
-                token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-                    .to_string(),
+                token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token".to_string(),
                 scopes: vec!["Files.Read".to_string(), "offline_access".to_string()],
             },
         ]
@@ -793,8 +792,7 @@ impl AuthManager {
             client_id: std::env::var("ONEDRIVE_CLIENT_ID")
                 .unwrap_or_else(|_| "placeholder_client_id".to_string()),
             client_secret: std::env::var("ONEDRIVE_CLIENT_SECRET").ok(),
-            auth_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
-                .to_string(),
+            auth_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize".to_string(),
             token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token".to_string(),
             redirect_uri: "http://localhost:8080/callback".to_string(),
             scopes: vec!["Files.Read".to_string(), "offline_access".to_string()],
@@ -805,8 +803,8 @@ impl AuthManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bridge_traits::SecureStore;
     use bridge_traits::error::Result as BridgeResult;
+    use bridge_traits::SecureStore;
     use std::collections::HashMap as StdHashMap;
     use tokio::sync::Mutex as TokioMutex;
 
@@ -863,7 +861,9 @@ mod tests {
         // Verify providers are initialized
         let providers = manager.list_providers();
         assert_eq!(providers.len(), 2);
-        assert!(providers.iter().any(|p| p.kind == ProviderKind::GoogleDrive));
+        assert!(providers
+            .iter()
+            .any(|p| p.kind == ProviderKind::GoogleDrive));
         assert!(providers.iter().any(|p| p.kind == ProviderKind::OneDrive));
     }
 
@@ -932,7 +932,10 @@ mod tests {
         // Second concurrent sign-in should fail
         let result2 = manager.sign_in(ProviderKind::GoogleDrive).await;
         assert!(result2.is_err());
-        assert!(matches!(result2.unwrap_err(), AuthError::SignInInProgress { .. }));
+        assert!(matches!(
+            result2.unwrap_err(),
+            AuthError::SignInInProgress { .. }
+        ));
     }
 
     #[tokio::test]
@@ -986,7 +989,11 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify tokens were deleted
-        let retrieved = manager.token_store.retrieve_tokens(profile_id).await.unwrap();
+        let retrieved = manager
+            .token_store
+            .retrieve_tokens(profile_id)
+            .await
+            .unwrap();
         assert!(retrieved.is_none());
 
         // Verify SignedOut event was emitted
@@ -1019,7 +1026,10 @@ mod tests {
         let result = manager.get_valid_token(profile_id).await;
 
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AuthError::ProfileNotFound { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            AuthError::ProfileNotFound { .. }
+        ));
     }
 
     #[tokio::test]

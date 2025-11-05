@@ -471,19 +471,15 @@ LEFT JOIN tracks t ON t.album_id = alb.id
 GROUP BY alb.id;
 
 -- =============================================================================
--- PRAGMA SETTINGS FOR OPTIMIZATION
+-- NOTE: PRAGMA SETTINGS
 -- =============================================================================
-
--- Enable Write-Ahead Logging for better concurrency
-PRAGMA journal_mode = WAL;
-
--- Enable foreign key constraints
-PRAGMA foreign_keys = ON;
-
--- Optimize for performance
-PRAGMA synchronous = NORMAL;
-PRAGMA cache_size = -64000;  -- 64MB cache
-PRAGMA temp_store = MEMORY;
-
--- Auto-vacuum to prevent fragmentation
-PRAGMA auto_vacuum = INCREMENTAL;
+-- 
+-- PRAGMA settings (WAL mode, foreign keys, cache size, etc.) are configured
+-- at connection time in the db.rs module, not in migrations.
+-- 
+-- This ensures:
+-- - Settings work correctly with SQLx's transaction-based migrations
+-- - Consistent configuration across all connections
+-- - Proper handling of in-memory databases for testing
+--
+-- See core-library/src/db.rs for the connection configuration.

@@ -242,7 +242,11 @@ impl OAuthTokens {
     ///     expires_at,
     /// );
     /// ```
-    pub fn from_parts(access_token: String, refresh_token: Option<String>, expires_at: i64) -> Self {
+    pub fn from_parts(
+        access_token: String,
+        refresh_token: Option<String>,
+        expires_at: i64,
+    ) -> Self {
         use chrono::TimeZone;
         Self {
             access_token,

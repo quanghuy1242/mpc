@@ -22,7 +22,8 @@ const DRIVE_API_BASE: &str = "https://www.googleapis.com/drive/v3";
 const MAX_PAGE_SIZE: u32 = 1000;
 
 /// Fields to request for file resources
-const FILE_FIELDS: &str = "id,name,mimeType,size,createdTime,modifiedTime,md5Checksum,parents,trashed";
+const FILE_FIELDS: &str =
+    "id,name,mimeType,size,createdTime,modifiedTime,md5Checksum,parents,trashed";
 
 /// Google Drive API connector
 ///
@@ -113,7 +114,7 @@ impl GoogleDriveConnector {
             let mut headers = HashMap::new();
             headers.insert("Authorization".to_string(), self.auth_header());
             headers.insert("Accept".to_string(), "application/json".to_string());
-            
+
             let request = bridge_traits::http::HttpRequest {
                 method: bridge_traits::http::HttpMethod::Get,
                 url: url.clone(),
@@ -182,7 +183,10 @@ impl GoogleDriveConnector {
 #[async_trait]
 impl StorageProvider for GoogleDriveConnector {
     #[instrument(skip(self))]
-    async fn list_media(&self, cursor: Option<String>) -> Result<(Vec<RemoteFile>, Option<String>)> {
+    async fn list_media(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<(Vec<RemoteFile>, Option<String>)> {
         info!("Listing files from Google Drive");
 
         // Build query: not trashed
@@ -205,9 +209,10 @@ impl StorageProvider for GoogleDriveConnector {
         let response = self.execute_with_retry(url, 3).await?;
 
         // Parse response body directly (it's already Bytes)
-        let list_response: FilesListResponse = serde_json::from_slice(&response.body).map_err(|e| {
-            GoogleDriveError::ParseError(format!("Failed to parse files list response: {}", e))
-        })?;
+        let list_response: FilesListResponse =
+            serde_json::from_slice(&response.body).map_err(|e| {
+                GoogleDriveError::ParseError(format!("Failed to parse files list response: {}", e))
+            })?;
 
         // Convert files
         let files: Vec<RemoteFile> = list_response
@@ -276,7 +281,10 @@ impl StorageProvider for GoogleDriveConnector {
     }
 
     #[instrument(skip(self))]
-    async fn get_changes(&self, cursor: Option<String>) -> Result<(Vec<RemoteFile>, Option<String>)> {
+    async fn get_changes(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<(Vec<RemoteFile>, Option<String>)> {
         info!("Getting changes from Google Drive");
 
         // If no cursor provided, get start page token
@@ -287,8 +295,8 @@ impl StorageProvider for GoogleDriveConnector {
             let response = self.execute_with_retry(url, 3).await?;
 
             // Parse start page token directly
-            let start_token: StartPageTokenResponse =
-                serde_json::from_slice(&response.body).map_err(|e| {
+            let start_token: StartPageTokenResponse = serde_json::from_slice(&response.body)
+                .map_err(|e| {
                     GoogleDriveError::ParseError(format!("Failed to parse start page token: {}", e))
                 })?;
 
@@ -306,9 +314,10 @@ impl StorageProvider for GoogleDriveConnector {
         let response = self.execute_with_retry(url, 3).await?;
 
         // Parse changes list directly
-        let changes_list: ChangesListResponse = serde_json::from_slice(&response.body).map_err(|e| {
-            GoogleDriveError::ParseError(format!("Failed to parse changes list: {}", e))
-        })?;
+        let changes_list: ChangesListResponse =
+            serde_json::from_slice(&response.body).map_err(|e| {
+                GoogleDriveError::ParseError(format!("Failed to parse changes list: {}", e))
+            })?;
 
         // Convert changes to files
         let files: Vec<RemoteFile> = changes_list
@@ -418,11 +427,9 @@ mod tests {
     #[tokio::test]
     async fn test_list_media_success() {
         let mut mock_http = MockHttpClient::new();
-        
-        mock_http.expect_execute()
-            .times(1)
-            .returning(|_| {
-                let response_body = r#"{
+
+        mock_http.expect_execute().times(1).returning(|_| {
+            let response_body = r#"{
                     "files": [
                         {
                             "id": "file1",
@@ -438,13 +445,13 @@ mod tests {
                     ],
                     "nextPageToken": "next_page"
                 }"#;
-                
-                Ok(bridge_traits::http::HttpResponse {
-                    status: 200,
-                    headers: HashMap::new(),
-                    body: Bytes::from(response_body.as_bytes()),
-                })
-            });
+
+            Ok(bridge_traits::http::HttpResponse {
+                status: 200,
+                headers: HashMap::new(),
+                body: Bytes::from(response_body.as_bytes()),
+            })
+        });
 
         let connector = GoogleDriveConnector::new(Arc::new(mock_http), "test_token".to_string());
         let (files, cursor) = connector.list_media(None).await.unwrap();
@@ -458,11 +465,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_metadata_success() {
         let mut mock_http = MockHttpClient::new();
-        
-        mock_http.expect_execute()
-            .times(1)
-            .returning(|_| {
-                let response_body = r#"{
+
+        mock_http.expect_execute().times(1).returning(|_| {
+            let response_body = r#"{
                     "id": "file1",
                     "name": "song.mp3",
                     "mimeType": "audio/mpeg",
@@ -473,13 +478,13 @@ mod tests {
                     "md5Checksum": "abc123",
                     "trashed": false
                 }"#;
-                
-                Ok(bridge_traits::http::HttpResponse {
-                    status: 200,
-                    headers: HashMap::new(),
-                    body: Bytes::from(response_body.as_bytes()),
-                })
-            });
+
+            Ok(bridge_traits::http::HttpResponse {
+                status: 200,
+                headers: HashMap::new(),
+                body: Bytes::from(response_body.as_bytes()),
+            })
+        });
 
         let connector = GoogleDriveConnector::new(Arc::new(mock_http), "test_token".to_string());
         let file = connector.get_metadata("file1").await.unwrap();
@@ -492,20 +497,18 @@ mod tests {
     #[tokio::test]
     async fn test_download_success() {
         let mut mock_http = MockHttpClient::new();
-        
-        mock_http.expect_execute()
-            .times(1)
-            .returning(|req| {
-                // Verify authorization header
-                assert!(req.headers.contains_key("Authorization"));
-                assert!(req.url.contains("alt=media"));
-                
-                Ok(bridge_traits::http::HttpResponse {
-                    status: 200,
-                    headers: HashMap::new(),
-                    body: Bytes::from(vec![1, 2, 3, 4, 5]),
-                })
-            });
+
+        mock_http.expect_execute().times(1).returning(|req| {
+            // Verify authorization header
+            assert!(req.headers.contains_key("Authorization"));
+            assert!(req.url.contains("alt=media"));
+
+            Ok(bridge_traits::http::HttpResponse {
+                status: 200,
+                headers: HashMap::new(),
+                body: Bytes::from(vec![1, 2, 3, 4, 5]),
+            })
+        });
 
         let connector = GoogleDriveConnector::new(Arc::new(mock_http), "test_token".to_string());
         let data = connector.download("file1", None).await.unwrap();
@@ -517,22 +520,23 @@ mod tests {
     #[tokio::test]
     async fn test_download_with_range() {
         let mut mock_http = MockHttpClient::new();
-        
-        mock_http.expect_execute()
-            .times(1)
-            .returning(|req| {
-                // Verify Range header exists
-                assert!(req.headers.contains_key("Range"));
-                
-                Ok(bridge_traits::http::HttpResponse {
-                    status: 206,  // Partial Content
-                    headers: HashMap::new(),
-                    body: Bytes::from(vec![1, 2, 3]),
-                })
-            });
+
+        mock_http.expect_execute().times(1).returning(|req| {
+            // Verify Range header exists
+            assert!(req.headers.contains_key("Range"));
+
+            Ok(bridge_traits::http::HttpResponse {
+                status: 206, // Partial Content
+                headers: HashMap::new(),
+                body: Bytes::from(vec![1, 2, 3]),
+            })
+        });
 
         let connector = GoogleDriveConnector::new(Arc::new(mock_http), "test_token".to_string());
-        let data = connector.download("file1", Some("bytes=0-2")).await.unwrap();
+        let data = connector
+            .download("file1", Some("bytes=0-2"))
+            .await
+            .unwrap();
 
         assert_eq!(data.len(), 3);
     }
@@ -540,11 +544,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_changes_with_token() {
         let mut mock_http = MockHttpClient::new();
-        
-        mock_http.expect_execute()
-            .times(1)
-            .returning(|_| {
-                let response_body = r#"{
+
+        mock_http.expect_execute().times(1).returning(|_| {
+            let response_body = r#"{
                     "changes": [
                         {
                             "type": "file",
@@ -565,16 +567,19 @@ mod tests {
                     ],
                     "newStartPageToken": "token456"
                 }"#;
-                
-                Ok(bridge_traits::http::HttpResponse {
-                    status: 200,
-                    headers: HashMap::new(),
-                    body: Bytes::from(response_body.as_bytes()),
-                })
-            });
+
+            Ok(bridge_traits::http::HttpResponse {
+                status: 200,
+                headers: HashMap::new(),
+                body: Bytes::from(response_body.as_bytes()),
+            })
+        });
 
         let connector = GoogleDriveConnector::new(Arc::new(mock_http), "test_token".to_string());
-        let (files, cursor) = connector.get_changes(Some("token123".to_string())).await.unwrap();
+        let (files, cursor) = connector
+            .get_changes(Some("token123".to_string()))
+            .await
+            .unwrap();
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].id, "file1");
@@ -584,11 +589,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_changes_removed_file() {
         let mut mock_http = MockHttpClient::new();
-        
-        mock_http.expect_execute()
-            .times(1)
-            .returning(|_| {
-                let response_body = r#"{
+
+        mock_http.expect_execute().times(1).returning(|_| {
+            let response_body = r#"{
                     "changes": [
                         {
                             "type": "file",
@@ -599,16 +602,19 @@ mod tests {
                     ],
                     "newStartPageToken": "token456"
                 }"#;
-                
-                Ok(bridge_traits::http::HttpResponse {
-                    status: 200,
-                    headers: HashMap::new(),
-                    body: Bytes::from(response_body.as_bytes()),
-                })
-            });
+
+            Ok(bridge_traits::http::HttpResponse {
+                status: 200,
+                headers: HashMap::new(),
+                body: Bytes::from(response_body.as_bytes()),
+            })
+        });
 
         let connector = GoogleDriveConnector::new(Arc::new(mock_http), "test_token".to_string());
-        let (files, _) = connector.get_changes(Some("token123".to_string())).await.unwrap();
+        let (files, _) = connector
+            .get_changes(Some("token123".to_string()))
+            .await
+            .unwrap();
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].id, "file1");
@@ -618,16 +624,14 @@ mod tests {
     #[tokio::test]
     async fn test_api_error_handling() {
         let mut mock_http = MockHttpClient::new();
-        
-        mock_http.expect_execute()
-            .times(1)
-            .returning(|_| {
-                Ok(bridge_traits::http::HttpResponse {
-                    status: 404,
-                    headers: HashMap::new(),
-                    body: Bytes::from(b"File not found".to_vec()),
-                })
-            });
+
+        mock_http.expect_execute().times(1).returning(|_| {
+            Ok(bridge_traits::http::HttpResponse {
+                status: 404,
+                headers: HashMap::new(),
+                body: Bytes::from(b"File not found".to_vec()),
+            })
+        });
 
         let connector = GoogleDriveConnector::new(Arc::new(mock_http), "test_token".to_string());
         let result = connector.get_metadata("nonexistent").await;

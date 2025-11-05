@@ -11,7 +11,9 @@
 //! - Query APIs with filtering, sorting, and pagination
 //! - Full-text search using FTS5
 
+pub mod db;
 pub mod error;
 pub mod models;
 
+pub use db::{create_pool, create_test_pool, DatabaseConfig};
 pub use error::{LibraryError, Result};
