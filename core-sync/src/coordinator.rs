@@ -59,6 +59,7 @@
 //! ```
 
 use crate::{
+    conflict_resolution_orchestrator::{ConflictResolutionOrchestrator, ConflictResolutionStats},
     conflict_resolver::{ConflictPolicy, ConflictResolver},
     job::{SyncJob, SyncJobId, SyncJobStats, SyncType},
     metadata_processor::{MetadataProcessor, ProcessorConfig},
@@ -214,6 +215,9 @@ pub struct SyncCoordinator {
     /// Conflict resolver
     conflict_resolver: Arc<ConflictResolver>,
 
+    /// Conflict resolution orchestrator
+    conflict_resolution_orchestrator: Arc<ConflictResolutionOrchestrator>,
+
     /// Sync job repository
     job_repository: Arc<SqliteSyncJobRepository>,
 
@@ -308,6 +312,15 @@ impl SyncCoordinator {
             db_pool.clone(),
         ));
 
+        // Initialize conflict resolution orchestrator
+        let conflict_resolution_orchestrator = Arc::new(ConflictResolutionOrchestrator::new(
+            conflict_resolver.clone(),
+            db_pool.clone(),
+            event_bus.as_ref().clone(),
+            ConflictPolicy::KeepNewest,
+            false, // Soft delete by default (can be made configurable in future)
+        ));
+
         Ok(Self {
             config,
             auth_manager,
@@ -319,6 +332,7 @@ impl SyncCoordinator {
             active_syncs: Arc::new(Mutex::new(HashMap::new())),
             scan_queue,
             conflict_resolver,
+            conflict_resolution_orchestrator,
             job_repository,
             metadata_processor,
         })
@@ -567,6 +581,7 @@ impl SyncCoordinator {
             active_syncs: Arc::clone(&self.active_syncs),
             scan_queue: Arc::clone(&self.scan_queue),
             conflict_resolver: Arc::clone(&self.conflict_resolver),
+            conflict_resolution_orchestrator: Arc::clone(&self.conflict_resolution_orchestrator),
             job_repository: Arc::clone(&self.job_repository),
             metadata_processor: Arc::clone(&self.metadata_processor),
         }
@@ -879,19 +894,40 @@ impl SyncCoordinator {
 
         // Phase 5: Detect and resolve conflicts
         info!("Phase 5: Resolving conflicts");
-        // TODO(Enhancement): Integrate ConflictResolver workflow
-        // ConflictResolver is fully implemented (TASK-303), needs integration:
-        // 1. Detect duplicates: conflict_resolver.detect_duplicates(&db_pool).await?
-        // 2. Resolve renames: conflict_resolver.resolve_rename(track_id, new_file_id, ...).await?
-        // 3. Handle deletions: conflict_resolver.handle_deletion(track_id, soft=true, ...).await?
-        // See: memory_task_304_sync_coordinator.md for detailed implementation plan
+        
+        // Build a set of provider file IDs from the audio files discovered
+        let provider_file_ids: std::collections::HashSet<String> = audio_files
+            .iter()
+            .map(|f| f.id.clone())
+            .collect();
+        
+        // Execute conflict resolution workflow
+        let conflict_stats = self.conflict_resolution_orchestrator
+            .resolve_conflicts(&job_id, &session.provider.to_string(), &provider_file_ids)
+            .await
+            .unwrap_or_else(|e| {
+                error!("Conflict resolution failed: {}", e);
+                // Don't fail the entire sync if conflict resolution fails
+                // Return empty stats and continue
+                ConflictResolutionStats::default()
+            });
+        
+        info!(
+            "Conflict resolution complete: {} duplicates resolved, {} renames, {} deletions ({} soft, {} hard), {} bytes reclaimed",
+            conflict_stats.duplicates_resolved,
+            conflict_stats.renames_resolved,
+            conflict_stats.total_deleted(),
+            conflict_stats.deletions_soft,
+            conflict_stats.deletions_hard,
+            conflict_stats.space_reclaimed
+        );
 
         // Phase 6: Complete sync job
         info!("Phase 6: Completing sync job");
         let stats = SyncJobStats {
             items_added: added,
             items_updated: updated,
-            items_deleted: 0, // TODO(Enhancement): Track deletions during conflict resolution
+            items_deleted: conflict_stats.total_deleted(),
             items_failed: failed,
         };
 
@@ -907,14 +943,14 @@ impl SyncCoordinator {
                 items_processed: processed,
                 items_added: added,
                 items_updated: updated,
-                items_deleted: 0, // TODO(Enhancement): Track from conflict resolution phase
+                items_deleted: conflict_stats.total_deleted(),
                 duration_secs: duration_secs.max(0) as u64,
             }))
             .ok();
 
         info!(
-            "Sync job {} completed: {} added, {} updated, {} failed",
-            job_id, stats.items_added, stats.items_updated, stats.items_failed
+            "Sync job {} completed: {} added, {} updated, {} deleted, {} failed",
+            job_id, stats.items_added, stats.items_updated, stats.items_deleted, stats.items_failed
         );
 
         Ok(())

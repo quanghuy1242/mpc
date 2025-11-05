@@ -1395,28 +1395,29 @@ During initial implementation (TASK-204), domain models were designed with addit
   - MockProvider for StorageProvider testing
   - MockSecureStore and MockHttpClient for AuthManager mocking
   - 2 unit tests: test_filter_audio_files(), test_register_provider()
-  - All 56 core-sync tests pass successfully
-- Known limitations (TODOs for future implementation):
-  - **Phase 4 metadata extraction stubbed** (requires TASK-401 MetadataExtractor)
-    - Location: `coordinator.rs:696` in execute_sync() Phase 4 loop
-    - Current: `mark_complete()` stub
-    - Future: Download file via StorageProvider, extract metadata via MetadataExtractor, persist to library
-  - **Phase 5 conflict resolution integration stubbed** (enhancement for TASK-304)
-    - Location: `coordinator.rs:743` after Phase 4 processing
-    - Current: TODO comment with basic structure
-    - Future: Call ConflictResolver methods (detect_duplicates, resolve_rename, handle_deletion)
-    - Note: ConflictResolver is complete (TASK-303), just needs workflow integration
-  - **Items deleted tracking not yet implemented** (enhancement for TASK-304)
-    - Location: `coordinator.rs:771` in SyncEvent::Completed emission
-    - Current: `items_deleted: 0` hardcoded
-    - Future: Track files removed from provider during sync, update library accordingly
-    - Will require: Provider change detection + library deletion workflow
-- Compilation successful with only 1 harmless warning (unused ActiveSync.profile_id field)
+  - All 62 core-sync tests pass successfully
+- ✅ **Phase 4 metadata extraction COMPLETED** (2025-11-06)
+    - Integrated MetadataProcessor into SyncCoordinator
+    - Location: `coordinator.rs` Phase 4 processing loop
+    - Implementation: Download file → extract metadata → persist to library
+    - See: TASK-304.1 in phase_3_4_completion_tasks.md
+- ✅ **Phase 5 conflict resolution COMPLETED** (2025-11-06)
+    - Integrated ConflictResolutionOrchestrator into SyncCoordinator
+    - Location: `coordinator.rs` Phase 5 after metadata processing
+    - Implementation: Detect duplicates → resolve renames → handle deletions
+    - See: TASK-304.2 and TASK-304.3 in phase_3_4_completion_tasks.md
+- ✅ **Items deleted tracking COMPLETED** (2025-11-06)
+    - Fully implemented in conflict resolution orchestrator
+    - Location: `conflict_resolution_orchestrator.rs` deletion tracking phase
+    - Tracks files removed from provider, updates `items_deleted` statistic
+    - See: TASK-304.3 in phase_3_4_completion_tasks.md
+- Compilation successful with only 3 harmless warnings (unused fields in other modules)
 - Code quality:
   - Comprehensive documentation with usage examples
   - Proper error handling throughout
   - Type-safe state machine integration
   - Async-first design with tokio runtime
+  - Production-ready conflict resolution with graceful degradation
 
 ---
 

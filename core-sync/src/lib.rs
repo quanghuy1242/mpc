@@ -19,6 +19,7 @@
 //! - **Repository** (`repository`): Database persistence for sync jobs and queue items
 //! - **Sync Coordinator** (`coordinator`): Orchestrates full and incremental synchronization
 
+pub mod conflict_resolution_orchestrator;
 pub mod conflict_resolver;
 pub mod coordinator;
 pub mod error;
@@ -35,6 +36,9 @@ pub use repository::{SyncJobRepository, SqliteSyncJobRepository};
 pub use scan_queue::{
     Priority, QueueStats, ScanQueue, ScanQueueRepository, SqliteScanQueueRepository,
     WorkItem, WorkItemId, WorkItemStatus,
+};
+pub use conflict_resolution_orchestrator::{
+    ConflictResolutionOrchestrator, ConflictResolutionStats,
 };
 pub use conflict_resolver::{
     ConflictPolicy, ConflictResolver, DuplicateSet, MetadataConflict, ResolutionResult,
