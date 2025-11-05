@@ -26,6 +26,7 @@ image = { workspace = true }
 [features]
 lyrics = []
 artwork-remote = []
+with-test-fixtures = []  # Enable integration tests with real audio files
 
 [dev-dependencies]
 mockall = { workspace = true }

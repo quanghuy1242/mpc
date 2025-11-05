@@ -12,5 +12,9 @@
 //! - Content hashing for deduplication
 
 pub mod error;
+pub mod extractor;
 
 pub use error::{MetadataError, Result};
+pub use extractor::{
+    ArtworkType, ExtractedArtwork, ExtractedMetadata, MetadataExtractor,
+};
