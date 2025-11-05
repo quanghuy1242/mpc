@@ -31,7 +31,7 @@ wasm-bindgen = { workspace = true, optional = true }
 
 [features]
 default = ["desktop-shims"]
-desktop-shims = ["bridge-desktop"]
+desktop-shims = ["bridge-desktop", "core-runtime/desktop-shims"]
 ffi = ["uniffi"]
 wasm = ["wasm-bindgen"]
 lyrics = ["core-metadata/lyrics"]

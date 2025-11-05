@@ -1,5 +1,11 @@
 # GitHub Copilot Instructions for Music Platform Core (Rust)
 
+If you are struggling to implement a feature or complete a task, don't ever simplify the solution or code.
+Say explicitly that you are unable to help if you cannot find a solution that meets all the requirements.
+Or at least put TODO comments in the code where you are unsure.
+Or even terminate the implementation if you cannot find a solution that meets all the requirements.
+Don't workaround or simplify the requirements.
+
 ## Context7 Usage
 
 Always use context7 when I need code generation, setup or configuration steps, or

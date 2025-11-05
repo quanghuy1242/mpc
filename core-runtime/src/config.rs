@@ -22,20 +22,19 @@
 //! - `BackgroundExecutor` - Task scheduling (optional)
 //! - `LifecycleObserver` - App lifecycle (optional)
 //!
+//! When the `desktop-shims` feature is enabled, desktop-ready defaults for
+//! `SecureStore` and `SettingsStore` are injected automatically if not provided.
+//!
 //! ## Usage
 //!
 //! ### Basic Configuration with Desktop Defaults
 //!
 //! ```ignore
 //! use core_runtime::config::CoreConfig;
-//! use std::sync::Arc;
 //!
-//! // Note: Requires implementing SecureStore and SettingsStore traits  
 //! let config = CoreConfig::builder()
 //!     .database_path("/path/to/music.db")
 //!     .cache_dir("/path/to/cache")
-//!     .secure_store(Arc::new(MySecureStore))
-//!     .settings_store(Arc::new(MySettingsStore))
 //!     .build()
 //!     .expect("Failed to build config");
 //! ```
@@ -83,7 +82,7 @@ use bridge_traits::{
     BackgroundExecutor, FileSystemAccess, HttpClient, LifecycleObserver, NetworkMonitor,
     SecureStore, SettingsStore,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Core configuration for the Music Platform Core.
@@ -257,6 +256,99 @@ impl CoreConfig {
 
         Ok(())
     }
+}
+
+#[cfg(not(feature = "desktop-shims"))]
+fn secure_store_missing_error() -> Error {
+    Error::CapabilityMissing {
+        capability: "SecureStore".to_string(),
+        message: "SecureStore implementation is required for credential persistence. \
+                 Desktop: ensure the 'desktop-shims' feature is enabled to use the default KeyringSecureStore. \
+                 Mobile: inject platform-native secure storage (Keychain/Keystore). \
+                 Web: inject WebCrypto-based secure storage."
+            .to_string(),
+    }
+}
+
+#[cfg(not(feature = "desktop-shims"))]
+fn settings_store_missing_error() -> Error {
+    Error::CapabilityMissing {
+        capability: "SettingsStore".to_string(),
+        message: "SettingsStore implementation is required for user preferences. \
+                 Desktop: ensure the 'desktop-shims' feature is enabled to use the default SqliteSettingsStore. \
+                 Mobile: inject platform-native settings (UserDefaults/DataStore). \
+                 Web: inject localStorage-based settings store."
+            .to_string(),
+    }
+}
+
+#[cfg(feature = "desktop-shims")]
+fn provide_default_secure_store() -> Result<Arc<dyn SecureStore>> {
+    use bridge_desktop::KeyringSecureStore;
+
+    let store: Arc<dyn SecureStore> = Arc::new(KeyringSecureStore::new());
+    Ok(store)
+}
+
+#[cfg(not(feature = "desktop-shims"))]
+fn provide_default_secure_store() -> Result<Arc<dyn SecureStore>> {
+    Err(secure_store_missing_error())
+}
+
+#[cfg(feature = "desktop-shims")]
+fn provide_default_settings_store(
+    database_path: &Path,
+    cache_dir: &Path,
+) -> Result<Arc<dyn SettingsStore>> {
+    use bridge_desktop::SqliteSettingsStore;
+    use std::thread;
+    use tokio::runtime::{Handle, Runtime};
+
+    let candidate = database_path
+        .parent()
+        .map(|parent| parent.join("settings.db"))
+        .unwrap_or_else(|| cache_dir.join("settings.db"));
+
+    let init_store = |path: PathBuf| -> Result<_> {
+        let runtime = Runtime::new().map_err(|e| {
+            Error::Internal(format!(
+                "Failed to create Tokio runtime for default settings store: {}",
+                e
+            ))
+        })?;
+
+        runtime
+            .block_on(SqliteSettingsStore::new(path))
+            .map_err(|e| {
+                Error::Internal(format!("Failed to initialize default SettingsStore: {}", e))
+            })
+    };
+
+    let store = match Handle::try_current() {
+        Ok(_) => {
+            let path = candidate.clone();
+            thread::spawn(move || init_store(path))
+                .join()
+                .map_err(|_| {
+                    Error::Internal(
+                        "Tokio worker thread panicked while creating default SettingsStore"
+                            .to_string(),
+                    )
+                })??
+        }
+        Err(_) => init_store(candidate.clone())?,
+    };
+
+    let store: Arc<dyn SettingsStore> = Arc::new(store);
+    Ok(store)
+}
+
+#[cfg(not(feature = "desktop-shims"))]
+fn provide_default_settings_store(
+    _database_path: &Path,
+    _cache_dir: &Path,
+) -> Result<Arc<dyn SettingsStore>> {
+    Err(settings_store_missing_error())
 }
 
 /// Builder for constructing [`CoreConfig`] instances.
@@ -569,13 +661,9 @@ impl CoreConfigBuilder {
     ///
     /// ```ignore
     /// use core_runtime::config::CoreConfig;
-    /// use std::sync::Arc;
-    ///
     /// let config = CoreConfig::builder()
     ///     .database_path("/path/to/music.db")
     ///     .cache_dir("/path/to/cache")
-    ///     .secure_store(Arc::new(MySecureStore))
-    ///     .settings_store(Arc::new(MySettingsStore))
     ///     .build()?;
     /// # Ok::<(), core_runtime::Error>(())
     /// ```
@@ -589,27 +677,15 @@ impl CoreConfigBuilder {
             Error::Config("Cache directory is required. Use .cache_dir() to set it.".to_string())
         })?;
 
-        let secure_store = self.secure_store.ok_or_else(|| {
-            Error::CapabilityMissing {
-                capability: "SecureStore".to_string(),
-                message: "SecureStore implementation is required for credential persistence. \
-                         Desktop: ensure 'desktop-shims' feature is enabled and inject KeyringSecureStore. \
-                         Mobile: inject platform-native secure storage (Keychain/Keystore). \
-                         Web: inject WebCrypto-based secure storage."
-                    .to_string(),
-            }
-        })?;
+        let secure_store = match self.secure_store {
+            Some(store) => store,
+            None => provide_default_secure_store()?,
+        };
 
-        let settings_store = self.settings_store.ok_or_else(|| {
-            Error::CapabilityMissing {
-                capability: "SettingsStore".to_string(),
-                message: "SettingsStore implementation is required for user preferences. \
-                         Desktop: ensure 'desktop-shims' feature is enabled and inject SqliteSettingsStore. \
-                         Mobile: inject platform-native settings (UserDefaults/DataStore). \
-                         Web: inject localStorage-based settings store."
-                    .to_string(),
-            }
-        })?;
+        let settings_store = match self.settings_store {
+            Some(store) => store,
+            None => provide_default_settings_store(&database_path, &cache_dir)?,
+        };
 
         // Create config with defaults
         let config = CoreConfig {
@@ -639,6 +715,12 @@ mod tests {
     use async_trait::async_trait;
     use bridge_traits::storage::SettingsTransaction;
     use bridge_traits::{BridgeError, SecureStore, SettingsStore};
+    use std::sync::Arc;
+
+    #[cfg(feature = "desktop-shims")]
+    use tokio::runtime::Runtime;
+    #[cfg(feature = "desktop-shims")]
+    use uuid::Uuid;
 
     // Mock implementations for testing
     struct MockSecureStore;
@@ -755,6 +837,67 @@ mod tests {
         async fn rollback(self: Box<Self>) -> std::result::Result<(), BridgeError> {
             Ok(())
         }
+    }
+
+    #[cfg(feature = "desktop-shims")]
+    fn desktop_test_paths() -> (PathBuf, PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("core-runtime-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let db_path = base.join("music.db");
+        let cache_dir = base.join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        (base, db_path, cache_dir)
+    }
+
+    #[cfg(feature = "desktop-shims")]
+    #[test]
+    fn test_build_with_desktop_defaults() {
+        let (base_dir, db_path, cache_dir) = desktop_test_paths();
+
+        let config = CoreConfig::builder()
+            .database_path(&db_path)
+            .cache_dir(&cache_dir)
+            .build()
+            .expect("desktop defaults should succeed");
+
+        let settings = config.settings_store.clone();
+        let rt = Runtime::new().expect("runtime");
+        rt.block_on(async {
+            settings.set_string("theme", "dark").await.unwrap();
+            let value = settings.get_string("theme").await.unwrap();
+            assert_eq!(value.as_deref(), Some("dark"));
+        });
+
+        drop(config);
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
+
+    #[cfg(feature = "desktop-shims")]
+    #[tokio::test]
+    async fn test_build_with_desktop_defaults_inside_runtime() {
+        let (base_dir, db_path, cache_dir) = desktop_test_paths();
+
+        let config = CoreConfig::builder()
+            .database_path(&db_path)
+            .cache_dir(&cache_dir)
+            .build()
+            .expect("desktop defaults should succeed inside runtime");
+
+        {
+            let settings = config.settings_store.clone();
+            settings
+                .set_string("in-runtime", "ok")
+                .await
+                .expect("settings write inside runtime");
+            let value = settings
+                .get_string("in-runtime")
+                .await
+                .expect("settings read inside runtime");
+            assert_eq!(value.as_deref(), Some("ok"));
+        }
+
+        drop(config);
+        let _ = tokio::fs::remove_dir_all(&base_dir).await;
     }
 
     #[test]
