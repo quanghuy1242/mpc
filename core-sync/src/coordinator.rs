@@ -61,15 +61,21 @@
 use crate::{
     conflict_resolver::{ConflictPolicy, ConflictResolver},
     job::{SyncJob, SyncJobId, SyncJobStats, SyncType},
+    metadata_processor::{MetadataProcessor, ProcessorConfig},
     repository::{SqliteSyncJobRepository, SyncJobRepository},
     scan_queue::{ScanQueue, WorkItem},
     Result, SyncError,
 };
 use bridge_traits::{
     network::{NetworkMonitor, NetworkStatus, NetworkType},
-    storage::{RemoteFile, StorageProvider},
+    storage::{FileSystemAccess, RemoteFile, StorageProvider},
 };
 use core_auth::{AuthManager, ProfileId, ProviderKind};
+use core_library::repositories::{
+    AlbumRepository, ArtistRepository, ArtworkRepository, SqliteAlbumRepository,
+    SqliteArtistRepository, SqliteArtworkRepository, SqliteTrackRepository, TrackRepository,
+};
+use core_metadata::artwork::ArtworkService;
 use core_runtime::events::{CoreEvent, EventBus, SyncEvent};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -102,6 +108,19 @@ pub struct SyncConfig {
 
     /// Audio file extensions to include
     pub audio_extensions: Vec<String>,
+
+    /// Whether to download only file headers for metadata extraction (true)
+    /// or full files (false). Header-only mode is faster and more efficient.
+    pub header_only_download: bool,
+
+    /// Size of header to download in header-only mode (bytes)
+    pub header_size_bytes: u64,
+
+    /// Whether to extract and store embedded artwork
+    pub extract_artwork: bool,
+
+    /// Number of retry attempts for failed downloads
+    pub retry_attempts: u32,
 }
 
 impl Default for SyncConfig {
@@ -112,6 +131,10 @@ impl Default for SyncConfig {
             download_timeout_secs: 60,
             wifi_only: false,
             max_file_size_bytes: 500 * 1024 * 1024, // 500 MB
+            header_only_download: true, // More efficient for metadata extraction
+            header_size_bytes: 256 * 1024, // 256KB should contain all metadata
+            extract_artwork: true,
+            retry_attempts: 3,
             audio_mime_types: vec![
                 "audio/mpeg".to_string(),
                 "audio/mp3".to_string(),
@@ -173,6 +196,9 @@ pub struct SyncCoordinator {
     /// Network monitor for connectivity checks
     network_monitor: Option<Arc<dyn NetworkMonitor>>,
 
+    /// File system access bridge
+    file_system: Arc<dyn FileSystemAccess>,
+
     /// Storage providers by kind
     providers: Arc<RwLock<HashMap<ProviderKind, Arc<dyn StorageProvider>>>>,
 
@@ -190,6 +216,9 @@ pub struct SyncCoordinator {
 
     /// Sync job repository
     job_repository: Arc<SqliteSyncJobRepository>,
+
+    /// Metadata processor for extracting and persisting track metadata
+    metadata_processor: Arc<MetadataProcessor>,
 }
 
 impl SyncCoordinator {
@@ -201,6 +230,7 @@ impl SyncCoordinator {
     /// * `auth_manager` - Authentication manager for token acquisition
     /// * `event_bus` - Event bus for emitting sync progress events
     /// * `network_monitor` - Optional network monitor for connectivity checks
+    /// * `file_system` - File system access bridge for temporary file storage
     /// * `db_pool` - Database connection pool
     ///
     /// # Example
@@ -214,6 +244,7 @@ impl SyncCoordinator {
     ///     auth_manager,
     ///     event_bus,
     ///     Some(network_monitor),
+    ///     file_system,
     ///     db_pool,
     /// ).await?;
     /// ```
@@ -222,6 +253,7 @@ impl SyncCoordinator {
         auth_manager: Arc<AuthManager>,
         event_bus: Arc<EventBus>,
         network_monitor: Option<Arc<dyn NetworkMonitor>>,
+        file_system: Arc<dyn FileSystemAccess>,
         db_pool: SqlitePool,
     ) -> Result<Self> {
         let scan_queue = Arc::new(
@@ -235,17 +267,60 @@ impl SyncCoordinator {
 
         let job_repository = Arc::new(SqliteSyncJobRepository::new(db_pool.clone()));
 
+        // Initialize repositories for metadata processor
+        let track_repository = Arc::new(SqliteTrackRepository::new(db_pool.clone()))
+            as Arc<dyn TrackRepository>;
+        let artist_repository = Arc::new(SqliteArtistRepository::new(db_pool.clone()))
+            as Arc<dyn ArtistRepository>;
+        let album_repository = Arc::new(SqliteAlbumRepository::new(db_pool.clone()))
+            as Arc<dyn AlbumRepository>;
+        let artwork_repository = Arc::new(SqliteArtworkRepository::new(db_pool.clone()))
+            as Arc<dyn ArtworkRepository>;
+
+        // Initialize artwork service (if artwork extraction is enabled)
+        let artwork_service = if config.extract_artwork {
+            Some(Arc::new(ArtworkService::new(
+                artwork_repository.clone(),
+                200 * 1024 * 1024, // 200MB cache size
+            )))
+        } else {
+            None
+        };
+
+        // Initialize metadata processor
+        let processor_config = ProcessorConfig {
+            header_only: config.header_only_download,
+            header_size_bytes: config.header_size_bytes,
+            extract_artwork: config.extract_artwork,
+            update_existing: false, // Don't update existing tracks by default
+            max_download_retries: config.retry_attempts,
+            download_timeout_secs: config.download_timeout_secs,
+        };
+
+        let metadata_processor = Arc::new(MetadataProcessor::new(
+            processor_config,
+            file_system.clone(),
+            track_repository,
+            artist_repository,
+            album_repository,
+            artwork_repository,
+            artwork_service,
+            db_pool.clone(),
+        ));
+
         Ok(Self {
             config,
             auth_manager,
-            event_bus,
+            event_bus: Arc::new(event_bus.as_ref().clone()),
             network_monitor,
+            file_system,
             providers: Arc::new(RwLock::new(HashMap::new())),
             db_pool,
             active_syncs: Arc::new(Mutex::new(HashMap::new())),
             scan_queue,
             conflict_resolver,
             job_repository,
+            metadata_processor,
         })
     }
 
@@ -486,12 +561,14 @@ impl SyncCoordinator {
             auth_manager: Arc::clone(&self.auth_manager),
             event_bus: Arc::clone(&self.event_bus),
             network_monitor: self.network_monitor.clone(),
+            file_system: Arc::clone(&self.file_system),
             providers: Arc::clone(&self.providers),
             db_pool: self.db_pool.clone(),
             active_syncs: Arc::clone(&self.active_syncs),
             scan_queue: Arc::clone(&self.scan_queue),
             conflict_resolver: Arc::clone(&self.conflict_resolver),
             job_repository: Arc::clone(&self.job_repository),
+            metadata_processor: Arc::clone(&self.metadata_processor),
         }
     }
 
@@ -668,6 +745,8 @@ impl SyncCoordinator {
 
         // Phase 3: Enqueue work items
         info!("Phase 3: Enqueueing {} work items", audio_files.len());
+        let mut file_name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        
         for file in audio_files.iter() {
             if cancellation_token.is_cancelled() {
                 return Err(SyncError::Cancelled);
@@ -680,19 +759,20 @@ impl SyncCoordinator {
             .with_file_size(file.size.unwrap_or(0) as i64);
 
             self.scan_queue.enqueue(work_item).await?;
+            
+            // Map remote_file_id -> file_name for metadata processing
+            file_name_map.insert(file.id.clone(), file.name.clone());
         }
 
-        // Phase 4: Process queue (stub - actual implementation would extract metadata)
-        info!("Phase 4: Processing queue");
+        // Phase 4: Process queue with metadata extraction
+        info!("Phase 4: Processing queue with metadata extraction");
         let total_items = audio_files.len() as u64;
         let mut processed = 0u64;
         let mut added = 0u64;
-        let updated = 0u64;
+        let mut updated = 0u64;
         let mut failed = 0u64;
+        let mut total_bytes_downloaded = 0u64;
 
-        // For now, just mark items as complete
-        // TODO(TASK-401): Implement actual metadata extraction and persistence
-        // See: docs/ai_task_list.md TASK-401 for implementation plan
         loop {
             if cancellation_token.is_cancelled() {
                 return Err(SyncError::Cancelled);
@@ -701,23 +781,53 @@ impl SyncCoordinator {
             match self.scan_queue.dequeue().await {
                 Ok(Some(item)) => {
                     processed += 1;
-                    debug!("Processing work item: {} ({}/{})", item.remote_file_id, processed, total_items);
+                    debug!(
+                        "Processing work item: {} ({}/{})",
+                        item.remote_file_id, processed, total_items
+                    );
 
-                    // TODO(TASK-401): Download file, extract metadata, persist to database
-                    // Future implementation:
-                    // 1. Download: provider.download(&item.remote_file_id).await?
-                    // 2. Extract: MetadataExtractor::extract_from_file(&temp_path).await?
-                    // 3. Persist: track_repository.insert(track).await?
-                    // 4. Hash: calculate content hash for deduplication
-                    // For now, just mark as complete
-                    // For now, just mark as complete
-                    match self.scan_queue.mark_complete(item.id).await {
-                        Ok(_) => {
-                            added += 1;
+                    // Process the work item with metadata extraction
+                    let provider_id = session.provider.to_string();
+                    let file_name = file_name_map
+                        .get(&item.remote_file_id)
+                        .map(|s| s.as_str())
+                        .unwrap_or("unknown");
+                    
+                    match self.metadata_processor
+                        .process_work_item(&item, &provider, &provider_id, file_name)
+                        .await
+                    {
+                        Ok(result) => {
+                            // Update statistics based on result
+                            if result.is_new {
+                                added += 1;
+                            } else {
+                                updated += 1;
+                            }
+                            total_bytes_downloaded += result.bytes_downloaded;
+
+                            // Mark as complete in scan queue
+                            if let Err(e) = self.scan_queue.mark_complete(item.id).await {
+                                warn!("Failed to mark item complete: {}", e);
+                            }
+
+                            debug!(
+                                "Successfully processed {} in {}ms (new: {}, artwork: {}, {} bytes)",
+                                file_name,
+                                result.processing_time_ms,
+                                result.is_new,
+                                result.artwork_processed,
+                                result.bytes_downloaded
+                            );
                         }
                         Err(e) => {
-                            warn!("Failed to mark item complete: {}", e);
+                            error!(
+                                "Failed to process work item {}: {}",
+                                item.remote_file_id, e
+                            );
                             failed += 1;
+
+                            // Mark as failed in scan queue
                             let _ = self
                                 .scan_queue
                                 .mark_failed(item.id, Some(e.to_string()))
@@ -730,23 +840,34 @@ impl SyncCoordinator {
                     job.update_progress(
                         processed,
                         total_items,
-                        &format!("Processed {}/{} files", processed, total_items),
+                        &format!(
+                            "Processed {}/{} files ({} MB downloaded)",
+                            processed,
+                            total_items,
+                            total_bytes_downloaded / (1024 * 1024)
+                        ),
                     )?;
                     self.job_repository.update(&job).await?;
 
-                    // Emit progress event
-                    self.event_bus
-                        .emit(CoreEvent::Sync(SyncEvent::Progress {
-                            job_id: job_id.to_string(),
-                            items_processed: processed,
-                            total_items: Some(total_items),
-                            percent,
-                            phase: "processing".to_string(),
-                        }))
-                        .ok();
+                    // Emit progress event every 10 items or at completion
+                    if processed % 10 == 0 || processed == total_items {
+                        self.event_bus
+                            .emit(CoreEvent::Sync(SyncEvent::Progress {
+                                job_id: job_id.to_string(),
+                                items_processed: processed,
+                                total_items: Some(total_items),
+                                percent,
+                                phase: "metadata_extraction".to_string(),
+                            }))
+                            .ok();
+                    }
                 }
                 Ok(None) => {
                     // No more items in queue
+                    info!(
+                        "Queue processing complete: {} added, {} updated, {} failed",
+                        added, updated, failed
+                    );
                     break;
                 }
                 Err(e) => {
@@ -1069,6 +1190,71 @@ mod tests {
             }
         }
 
+        struct MockFileSystemAccess {
+            cache_dir: std::path::PathBuf,
+        }
+
+        #[async_trait::async_trait]
+        impl FileSystemAccess for MockFileSystemAccess {
+            async fn get_cache_directory(&self) -> bridge_traits::error::Result<std::path::PathBuf> {
+                Ok(self.cache_dir.clone())
+            }
+
+            async fn get_data_directory(&self) -> bridge_traits::error::Result<std::path::PathBuf> {
+                Ok(self.cache_dir.clone())
+            }
+
+            async fn exists(&self, _path: &std::path::Path) -> bridge_traits::error::Result<bool> {
+                Ok(false)
+            }
+
+            async fn metadata(&self, _path: &std::path::Path) -> bridge_traits::error::Result<bridge_traits::storage::FileMetadata> {
+                Err(BridgeError::NotAvailable("metadata".to_string()))
+            }
+
+            async fn create_dir_all(&self, _path: &std::path::Path) -> bridge_traits::error::Result<()> {
+                Ok(())
+            }
+
+            async fn read_file(&self, _path: &std::path::Path) -> bridge_traits::error::Result<bytes::Bytes> {
+                Ok(bytes::Bytes::new())
+            }
+
+            async fn write_file(&self, _path: &std::path::Path, _data: bytes::Bytes) -> bridge_traits::error::Result<()> {
+                Ok(())
+            }
+
+            async fn append_file(&self, _path: &std::path::Path, _data: bytes::Bytes) -> bridge_traits::error::Result<()> {
+                Ok(())
+            }
+
+            async fn delete_file(&self, _path: &std::path::Path) -> bridge_traits::error::Result<()> {
+                Ok(())
+            }
+
+            async fn delete_dir_all(&self, _path: &std::path::Path) -> bridge_traits::error::Result<()> {
+                Ok(())
+            }
+
+            async fn list_directory(&self, _path: &std::path::Path) -> bridge_traits::error::Result<Vec<std::path::PathBuf>> {
+                Ok(Vec::new())
+            }
+
+            async fn open_read_stream(
+                &self,
+                _path: &std::path::Path,
+            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+                Err(BridgeError::NotAvailable("open_read_stream".to_string()))
+            }
+
+            async fn open_write_stream(
+                &self,
+                _path: &std::path::Path,
+            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
+                Err(BridgeError::NotAvailable("open_write_stream".to_string()))
+            }
+        }
+
         struct MockSettingsStore;
 
         #[async_trait::async_trait]
@@ -1132,6 +1318,11 @@ mod tests {
             data: Arc::new(TokioMutex::new(HashMap::new())),
         });
         let http_client = Arc::new(MockHttpClient);
+        
+        let temp_dir = std::env::temp_dir().join("mpc_test");
+        let file_system = Arc::new(MockFileSystemAccess {
+            cache_dir: temp_dir,
+        }) as Arc<dyn FileSystemAccess>;
 
         let auth_manager = Arc::new(
             AuthManager::new(
@@ -1146,6 +1337,7 @@ mod tests {
             auth_manager.clone(),
             event_bus,
             None,
+            file_system,
             db_pool.clone(),
         )
         .await

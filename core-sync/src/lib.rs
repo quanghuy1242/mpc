@@ -23,6 +23,7 @@ pub mod conflict_resolver;
 pub mod coordinator;
 pub mod error;
 pub mod job;
+pub mod metadata_processor;
 pub mod repository;
 pub mod scan_queue;
 
@@ -39,3 +40,4 @@ pub use conflict_resolver::{
     ConflictPolicy, ConflictResolver, DuplicateSet, MetadataConflict, ResolutionResult,
 };
 pub use coordinator::{SyncConfig, SyncCoordinator};
+pub use metadata_processor::{MetadataProcessor, ProcessingResult, ProcessorConfig};

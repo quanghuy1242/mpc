@@ -41,6 +41,15 @@ pub enum SyncError {
 
     #[error("Database error: {0}")]
     Database(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
+
+    #[error("Library error: {0}")]
+    Library(#[from] core_library::error::LibraryError),
+
+    #[error("Metadata error: {0}")]
+    Metadata(#[from] core_metadata::error::MetadataError),
 }
 
 pub type Result<T> = std::result::Result<T, SyncError>;

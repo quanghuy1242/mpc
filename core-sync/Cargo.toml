@@ -9,6 +9,7 @@ bridge-traits = { path = "../bridge-traits" }
 core-runtime = { path = "../core-runtime" }
 core-auth = { path = "../core-auth" }
 core-library = { path = "../core-library" }
+core-metadata = { path = "../core-metadata" }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }
