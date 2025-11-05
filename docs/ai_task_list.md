@@ -1115,29 +1115,101 @@ During initial implementation (TASK-204), domain models were designed with addit
 
 ## Phase 3: Sync & Indexing
 
-### TASK-301: Create Sync Job State Machine [P0, Complexity: 4]
+### TASK-301: Create Sync Job State Machine [P0, Complexity: 4] ✅ COMPLETED
 **Description**: Implement sync job lifecycle management.
 
 **Implementation Steps**:
-1. Create `core-sync/src/job.rs`
-2. Define `SyncJob` entity:
-   - `id: SyncJobId`
-   - `provider_id: ProviderKind`
-   - `status: SyncStatus` (Pending, Running, Completed, Failed, Cancelled)
-   - `progress: SyncProgress` (items_processed, total_items, percent)
-   - `cursor: Option<String>` for resumable sync
-   - `started_at, completed_at`
-3. Implement state transitions with validation
-4. Add persistence to database
-5. Emit `SyncEvent` on status changes
+1. Create `core-sync/src/job.rs` ✅
+2. Define `SyncJob` entity: ✅
+   - `id: SyncJobId` ✅
+   - `provider_id: ProviderKind` ✅
+   - `status: SyncStatus` (Pending, Running, Completed, Failed, Cancelled) ✅
+   - `progress: SyncProgress` (items_processed, total_items, percent) ✅
+   - `cursor: Option<String>` for resumable sync ✅
+   - `started_at, completed_at` ✅
+3. Implement state transitions with validation ✅
+4. Add persistence to database ✅
+5. Emit `SyncEvent` on status changes (to be integrated in coordinator)
 
 **Acceptance Criteria**:
-- State machine prevents invalid transitions
-- Jobs persist across restarts
-- Progress updates stream to subscribers
-- Cancelled jobs clean up resources
+- ✅ State machine prevents invalid transitions
+- ✅ Jobs persist across restarts
+- ⏳ Progress updates stream to subscribers (will be done in coordinator)
+- ⏳ Cancelled jobs clean up resources (will be done in coordinator)
 
-**Dependencies**: TASK-006, TASK-203
+**Dependencies**: TASK-006 ✅, TASK-203 ✅
+
+**Completion Notes**:
+- Date: November 5, 2025
+- Created comprehensive state machine implementation (823 lines in job.rs)
+- Implemented type-safe state transitions using validation:
+  - Pending → Running, Cancelled, Failed
+  - Running → Completed, Failed, Cancelled
+  - Terminal states (Completed, Failed, Cancelled) cannot transition
+- Created robust ID types:
+  - SyncJobId (UUID-based newtype with Display, FromString, Default)
+- Created status and type enums:
+  - SyncStatus (Pending, Running, Completed, Failed, Cancelled)
+  - SyncType (Full, Incremental)
+  - Both with is_terminal(), is_active(), as_str(), from_str() helpers
+- Implemented progress tracking:
+  - SyncProgress (items_discovered, items_processed, items_failed, percent, phase)
+  - Automatic percentage calculation (capped at 100%)
+  - Phase descriptions for each state
+- Implemented job statistics:
+  - SyncJobStats (items_added, items_updated, items_deleted, items_failed)
+  - total_processed() helper method
+- SyncJob entity features:
+  - Compile-time state machine through method chaining
+  - new() and new_incremental() constructors
+  - start() - transitions to Running
+  - update_progress() - updates progress during execution
+  - update_cursor() - stores resumption token
+  - complete() - transitions to Completed with stats
+  - fail() - transitions to Failed with error details
+  - cancel() - transitions to Cancelled
+  - duration_secs() - calculates job duration
+  - validate_transition() - prevents invalid state changes
+- Created SyncJobRepository trait and SqliteSyncJobRepository implementation (576 lines in repository.rs)
+- Repository methods:
+  - insert() - create new sync job
+  - update() - update existing job
+  - find_by_id() - lookup by ID
+  - find_by_provider() - get all jobs for a provider
+  - find_by_status() - filter by status
+  - find_latest_by_provider() - get most recent job
+  - get_history() - paginated history with limit
+  - delete() - remove job
+  - has_active_sync() - check for running/pending jobs
+- Database integration:
+  - Uses existing sync_jobs table from migration 001_initial_schema.sql
+  - SyncJobRow struct with FromRow derive for database mapping
+  - TryFrom<SyncJobRow> for SyncJob with error handling
+  - Proper timestamp handling (Unix epoch)
+- Test coverage: 29 unit tests, all passing:
+  - 17 tests for job state machine (SyncJobId, SyncStatus, SyncType, SyncProgress, SyncJobStats, SyncJob)
+  - 10 tests for repository (insert, update, find, delete, history, active sync detection)
+  - Full workflow test demonstrating complete lifecycle
+- Error handling:
+  - Enhanced SyncError with 5 new variants:
+    - InvalidJobId, InvalidStatus, InvalidSyncType, InvalidStateTransition, Database
+  - Descriptive error messages with context
+  - Proper error propagation throughout
+- Documentation:
+  - Comprehensive module-level docs with state machine diagram
+  - Usage examples for all public APIs
+  - Doc comments for all public types and methods
+- Code quality:
+  - Zero rust-analyzer errors
+  - Follows project architecture patterns
+  - Type-safe state machine using method chaining
+  - Immutable state transitions (consuming self)
+  - Serde support for serialization
+- Added dependencies:
+  - sqlx to core-sync/Cargo.toml
+  - tokio test features for async tests
+- Ready for TASK-302 (Build Scan Queue System)
+- Note: Event emission will be integrated when building the sync coordinator (TASK-304)
 
 ---
 

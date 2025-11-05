@@ -12,5 +12,11 @@
 //! - Persisting library entries to the database
 
 pub mod error;
+pub mod job;
+pub mod repository;
 
 pub use error::{Result, SyncError};
+pub use job::{
+    SyncJob, SyncJobId, SyncJobStats, SyncProgress, SyncStatus, SyncType,
+};
+pub use repository::{SyncJobRepository, SqliteSyncJobRepository};

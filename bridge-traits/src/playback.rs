@@ -133,6 +133,12 @@ impl PlaybackSessionId {
     }
 }
 
+impl Default for PlaybackSessionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Playback lifecycle state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlaybackState {

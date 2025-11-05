@@ -5,6 +5,8 @@ Say explicitly that you are unable to help if you cannot find a solution that me
 Or at least put TODO comments in the code where you are unsure.
 Or even terminate the implementation if you cannot find a solution that meets all the requirements.
 Don't workaround or simplify the requirements.
+This is not a toy project, this is a production-grade cross-platform library that will be used in real world applications.
+Don't use any simpler approaches or libraries that do not meet the performance, security, or cross-platform requirements.
 
 ## Context7 Usage
 
