@@ -334,9 +334,7 @@ CREATE VIRTUAL TABLE tracks_fts USING fts5(
     title,                                     -- Track title
     artist_name,                               -- Artist name
     album_name,                                -- Album name
-    genre,                                     -- Genre
-    content=tracks,                            -- Link to tracks table
-    content_rowid=rowid
+    genre                                      -- Genre
 );
 
 -- Triggers to keep FTS index in sync with tracks table
@@ -369,9 +367,7 @@ END;
 CREATE VIRTUAL TABLE albums_fts USING fts5(
     album_id UNINDEXED,
     name,
-    artist_name,
-    content=albums,
-    content_rowid=rowid
+    artist_name
 );
 
 CREATE TRIGGER albums_fts_insert AFTER INSERT ON albums BEGIN
@@ -398,9 +394,7 @@ END;
 -- Artist search index
 CREATE VIRTUAL TABLE artists_fts USING fts5(
     artist_id UNINDEXED,
-    name,
-    content=artists,
-    content_rowid=rowid
+    name
 );
 
 CREATE TRIGGER artists_fts_insert AFTER INSERT ON artists BEGIN

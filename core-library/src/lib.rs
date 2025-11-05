@@ -14,6 +14,9 @@
 pub mod db;
 pub mod error;
 pub mod models;
+pub mod repositories;
 
 pub use db::{create_pool, create_test_pool, DatabaseConfig};
 pub use error::{LibraryError, Result};
+pub use models::{AlbumId, ArtistId, PlaylistId, Track, TrackId};
+pub use repositories::{Page, PageRequest, SqliteTrackRepository, TrackRepository};
