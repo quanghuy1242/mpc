@@ -10,7 +10,9 @@
 //! - Querying jobs by provider or status
 //! - Job history retrieval
 
-use crate::{Result, SyncError, SyncJob, SyncJobId, SyncJobStats, SyncProgress, SyncStatus, SyncType};
+use crate::{
+    Result, SyncError, SyncJob, SyncJobId, SyncJobStats, SyncProgress, SyncStatus, SyncType,
+};
 use async_trait::async_trait;
 use core_auth::ProviderKind;
 use sqlx::{FromRow, SqlitePool};
@@ -132,8 +134,9 @@ impl TryFrom<SyncJobRow> for SyncJob {
     type Error = SyncError;
 
     fn try_from(row: SyncJobRow) -> Result<Self> {
-        let provider_id = ProviderKind::parse(&row.provider_id)
-            .ok_or_else(|| SyncError::Database(format!("Invalid provider_id: {}", row.provider_id)))?;
+        let provider_id = ProviderKind::parse(&row.provider_id).ok_or_else(|| {
+            SyncError::Database(format!("Invalid provider_id: {}", row.provider_id))
+        })?;
 
         let status: SyncStatus = row.status.parse()?;
         let sync_type: SyncType = row.sync_type.parse()?;
@@ -202,7 +205,11 @@ impl SyncJobRepository for SqliteSyncJobRepository {
         .bind(job.progress.items_discovered as i64)
         .bind(job.progress.items_processed as i64)
         // Use stats.items_failed if available (for completed jobs), otherwise use progress.items_failed
-        .bind(job.stats.as_ref().map_or(job.progress.items_failed as i64, |s| s.items_failed as i64))
+        .bind(
+            job.stats
+                .as_ref()
+                .map_or(job.progress.items_failed as i64, |s| s.items_failed as i64),
+        )
         .bind(job.stats.as_ref().map_or(0, |s| s.items_added as i64))
         .bind(job.stats.as_ref().map_or(0, |s| s.items_updated as i64))
         .bind(job.stats.as_ref().map_or(0, |s| s.items_deleted as i64))
@@ -242,7 +249,11 @@ impl SyncJobRepository for SqliteSyncJobRepository {
         .bind(job.progress.items_discovered as i64)
         .bind(job.progress.items_processed as i64)
         // Use stats.items_failed if available (for completed jobs), otherwise use progress.items_failed
-        .bind(job.stats.as_ref().map_or(job.progress.items_failed as i64, |s| s.items_failed as i64))
+        .bind(
+            job.stats
+                .as_ref()
+                .map_or(job.progress.items_failed as i64, |s| s.items_failed as i64),
+        )
         .bind(job.stats.as_ref().map_or(0, |s| s.items_added as i64))
         .bind(job.stats.as_ref().map_or(0, |s| s.items_updated as i64))
         .bind(job.stats.as_ref().map_or(0, |s| s.items_deleted as i64))

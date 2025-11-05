@@ -14,6 +14,7 @@
 
 pub mod artwork;
 pub mod enrichment_job;
+pub mod enrichment_service;
 pub mod error;
 pub mod extractor;
 pub mod lyrics;
@@ -21,6 +22,7 @@ pub mod providers;
 
 pub use artwork::{ArtworkService, ArtworkSize, ProcessedArtwork};
 pub use enrichment_job::{EnrichmentConfig, EnrichmentJob, EnrichmentProgress, EnrichmentResult};
+pub use enrichment_service::{EnrichmentRequest, EnrichmentResponse, EnrichmentService};
 pub use error::{MetadataError, Result};
 pub use extractor::{ArtworkType, ExtractedArtwork, ExtractedMetadata, MetadataExtractor};
 pub use lyrics::{LyricsProvider, LyricsResult, LyricsSearchQuery, LyricsService, LyricsSource};

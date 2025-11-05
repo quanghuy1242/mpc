@@ -45,9 +45,9 @@
 
 use crate::error::{Result, SyncError};
 use core_library::models::{Track, TrackId};
-use sqlx::{SqlitePool, Row};
+use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
-use tracing::{debug, info, warn, instrument};
+use tracing::{debug, info, instrument, warn};
 
 /// Conflict resolution policy
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -55,10 +55,10 @@ pub enum ConflictPolicy {
     /// Keep the most recently modified version
     #[default]
     KeepNewest,
-    
+
     /// Keep both versions (rename one to avoid collision)
     KeepBoth,
-    
+
     /// Prompt user for manual resolution (not yet implemented)
     UserPrompt,
 }
@@ -68,10 +68,10 @@ pub enum ConflictPolicy {
 pub struct DuplicateSet {
     /// Content hash that identifies this duplicate set
     pub hash: String,
-    
+
     /// List of track IDs that share this hash
     pub track_ids: Vec<TrackId>,
-    
+
     /// Total size of duplicated data in bytes
     pub wasted_space: u64,
 }
@@ -81,13 +81,13 @@ pub struct DuplicateSet {
 pub struct MetadataConflict {
     /// Track ID in local database
     pub track_id: TrackId,
-    
+
     /// Local track metadata
     pub local: Track,
-    
+
     /// Remote file modified timestamp
     pub remote_modified_at: i64,
-    
+
     /// Fields that differ between local and remote
     pub conflicting_fields: Vec<String>,
 }
@@ -97,23 +97,23 @@ pub struct MetadataConflict {
 pub enum ResolutionResult {
     /// Track was updated with new metadata
     Updated { track_id: TrackId },
-    
+
     /// Track was marked as deleted (soft delete)
     Deleted { track_id: TrackId },
-    
+
     /// Duplicate track was merged into primary
-    Merged { 
+    Merged {
         primary_id: TrackId,
         duplicate_id: TrackId,
     },
-    
+
     /// Track was renamed (provider file ID updated)
     Renamed {
         track_id: TrackId,
         old_provider_file_id: String,
         new_provider_file_id: String,
     },
-    
+
     /// No action taken
     NoAction,
 }
@@ -179,23 +179,28 @@ impl ConflictResolver {
         let mut duplicate_sets = Vec::new();
 
         for row in rows {
-            let hash: String = row.try_get("hash")
+            let hash: String = row
+                .try_get("hash")
                 .map_err(|e| SyncError::Database(e.to_string()))?;
-            let track_ids_str: String = row.try_get("track_ids")
+            let track_ids_str: String = row
+                .try_get("track_ids")
                 .map_err(|e| SyncError::Database(e.to_string()))?;
-            let file_size: i64 = row.try_get("file_size")
+            let file_size: i64 = row
+                .try_get("file_size")
                 .map_err(|e| SyncError::Database(e.to_string()))?;
-            let count: i64 = row.try_get("count")
+            let count: i64 = row
+                .try_get("count")
                 .map_err(|e| SyncError::Database(e.to_string()))?;
 
             // Parse track IDs
             let track_ids: Result<Vec<TrackId>> = track_ids_str
                 .split(',')
-                .map(|id| TrackId::from_string(id.trim())
-                    .map_err(|e| SyncError::InvalidInput {
+                .map(|id| {
+                    TrackId::from_string(id.trim()).map_err(|e| SyncError::InvalidInput {
                         field: "track_id".to_string(),
                         message: e.to_string(),
-                    }))
+                    })
+                })
                 .collect();
 
             let track_ids = track_ids?;
@@ -261,23 +266,25 @@ impl ConflictResolver {
         );
 
         // Find track with old provider file ID
-        let track_row = sqlx::query(
-            "SELECT id FROM tracks WHERE provider_file_id = ?"
-        )
-        .bind(old_provider_file_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+        let track_row = sqlx::query("SELECT id FROM tracks WHERE provider_file_id = ?")
+            .bind(old_provider_file_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
         let Some(track_row) = track_row else {
-            debug!("No track found with provider_file_id: {}", old_provider_file_id);
+            debug!(
+                "No track found with provider_file_id: {}",
+                old_provider_file_id
+            );
             return Ok(ResolutionResult::NoAction);
         };
 
-        let track_id_str: String = track_row.try_get("id")
+        let track_id_str: String = track_row
+            .try_get("id")
             .map_err(|e| SyncError::Database(e.to_string()))?;
-        let track_id = TrackId::from_string(&track_id_str)
-            .map_err(|e| SyncError::InvalidInput {
+        let track_id =
+            TrackId::from_string(&track_id_str).map_err(|e| SyncError::InvalidInput {
                 field: "track_id".to_string(),
                 message: e.to_string(),
             })?;
@@ -350,26 +357,28 @@ impl ConflictResolver {
         provider_file_id: &str,
         hard_delete: bool,
     ) -> Result<ResolutionResult> {
-        debug!("Handling deletion: {} (hard: {})", provider_file_id, hard_delete);
+        debug!(
+            "Handling deletion: {} (hard: {})",
+            provider_file_id, hard_delete
+        );
 
         // Find track with this provider file ID
-        let track_row = sqlx::query(
-            "SELECT id FROM tracks WHERE provider_file_id = ?"
-        )
-        .bind(provider_file_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+        let track_row = sqlx::query("SELECT id FROM tracks WHERE provider_file_id = ?")
+            .bind(provider_file_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
         let Some(track_row) = track_row else {
             debug!("No track found with provider_file_id: {}", provider_file_id);
             return Ok(ResolutionResult::NoAction);
         };
 
-        let track_id_str: String = track_row.try_get("id")
+        let track_id_str: String = track_row
+            .try_get("id")
             .map_err(|e| SyncError::Database(e.to_string()))?;
-        let track_id = TrackId::from_string(&track_id_str)
-            .map_err(|e| SyncError::InvalidInput {
+        let track_id =
+            TrackId::from_string(&track_id_str).map_err(|e| SyncError::InvalidInput {
                 field: "track_id".to_string(),
                 message: e.to_string(),
             })?;
@@ -387,17 +396,18 @@ impl ConflictResolver {
             // Soft delete: mark as unavailable by setting a special marker in provider_file_id
             // Since provider_file_id is NOT NULL, we use a marker like "DELETED_<original_id>"
             let marker = format!("DELETED_{}", provider_file_id);
-            sqlx::query(
-                "UPDATE tracks SET provider_file_id = ?, updated_at = ? WHERE id = ?"
-            )
-            .bind(marker)
-            .bind(chrono::Utc::now().timestamp())
-            .bind(track_id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(|e| SyncError::Database(e.to_string()))?;
+            sqlx::query("UPDATE tracks SET provider_file_id = ?, updated_at = ? WHERE id = ?")
+                .bind(marker)
+                .bind(chrono::Utc::now().timestamp())
+                .bind(track_id.to_string())
+                .execute(&self.pool)
+                .await
+                .map_err(|e| SyncError::Database(e.to_string()))?;
 
-            info!("Soft deleted track {} (marked provider_file_id as deleted)", track_id);
+            info!(
+                "Soft deleted track {} (marked provider_file_id as deleted)",
+                track_id
+            );
         }
 
         Ok(ResolutionResult::Deleted { track_id })
@@ -444,22 +454,23 @@ impl ConflictResolver {
         debug!("Merging metadata for track {}", track_id);
 
         // Fetch current track
-        let track_row = sqlx::query(
-            "SELECT provider_modified_at, updated_at FROM tracks WHERE id = ?"
-        )
-        .bind(track_id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+        let track_row =
+            sqlx::query("SELECT provider_modified_at, updated_at FROM tracks WHERE id = ?")
+                .bind(track_id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SyncError::Database(e.to_string()))?;
 
         let Some(track_row) = track_row else {
             warn!("Track {} not found", track_id);
             return Ok(ResolutionResult::NoAction);
         };
 
-        let local_provider_modified: Option<i64> = track_row.try_get("provider_modified_at")
+        let local_provider_modified: Option<i64> = track_row
+            .try_get("provider_modified_at")
             .map_err(|e| SyncError::Database(e.to_string()))?;
-        let _local_updated: i64 = track_row.try_get("updated_at")
+        let _local_updated: i64 = track_row
+            .try_get("updated_at")
             .map_err(|e| SyncError::Database(e.to_string()))?;
 
         // Decide whether to update based on policy
@@ -537,10 +548,7 @@ impl ConflictResolver {
         values.push(chrono::Utc::now().timestamp().to_string());
 
         // Build and execute query
-        let query_str = format!(
-            "UPDATE tracks SET {} WHERE id = ?",
-            updates.join(", ")
-        );
+        let query_str = format!("UPDATE tracks SET {} WHERE id = ?", updates.join(", "));
 
         let mut query = sqlx::query(&query_str);
         for value in values {
@@ -548,7 +556,8 @@ impl ConflictResolver {
         }
         query = query.bind(track_id.to_string());
 
-        query.execute(&self.pool)
+        query
+            .execute(&self.pool)
             .await
             .map_err(|e| SyncError::Database(e.to_string()))?;
 
@@ -587,19 +596,20 @@ impl ConflictResolver {
     /// # }
     /// ```
     #[instrument(skip(self))]
-    pub async fn deduplicate(
-        &self,
-        duplicate_set: &DuplicateSet,
-    ) -> Result<Vec<ResolutionResult>> {
-        debug!("Deduplicating {} tracks with hash {}", 
-               duplicate_set.track_ids.len(), duplicate_set.hash);
+    pub async fn deduplicate(&self, duplicate_set: &DuplicateSet) -> Result<Vec<ResolutionResult>> {
+        debug!(
+            "Deduplicating {} tracks with hash {}",
+            duplicate_set.track_ids.len(),
+            duplicate_set.hash
+        );
 
         if duplicate_set.track_ids.len() < 2 {
             return Ok(vec![]);
         }
 
         // Fetch all tracks in the duplicate set with quality metrics
-        let track_ids_str: Vec<String> = duplicate_set.track_ids
+        let track_ids_str: Vec<String> = duplicate_set
+            .track_ids
             .iter()
             .map(|id| format!("'{}'", id))
             .collect();
@@ -624,10 +634,11 @@ impl ConflictResolver {
         }
 
         // First row is the primary (highest quality, most recent)
-        let primary_id_str: String = rows[0].try_get("id")
+        let primary_id_str: String = rows[0]
+            .try_get("id")
             .map_err(|e| SyncError::Database(e.to_string()))?;
-        let primary_id = TrackId::from_string(&primary_id_str)
-            .map_err(|e| SyncError::InvalidInput {
+        let primary_id =
+            TrackId::from_string(&primary_id_str).map_err(|e| SyncError::InvalidInput {
                 field: "track_id".to_string(),
                 message: e.to_string(),
             })?;
@@ -637,10 +648,11 @@ impl ConflictResolver {
         // Delete all other tracks in the set
         let mut results = Vec::new();
         for row in rows.iter().skip(1) {
-            let dup_id_str: String = row.try_get("id")
+            let dup_id_str: String = row
+                .try_get("id")
                 .map_err(|e| SyncError::Database(e.to_string()))?;
-            let dup_id = TrackId::from_string(&dup_id_str)
-                .map_err(|e| SyncError::InvalidInput {
+            let dup_id =
+                TrackId::from_string(&dup_id_str).map_err(|e| SyncError::InvalidInput {
                     field: "track_id".to_string(),
                     message: e.to_string(),
                 })?;
@@ -654,7 +666,10 @@ impl ConflictResolver {
                 .await
                 .map_err(|e| SyncError::Database(e.to_string()))?;
 
-            info!("Merged duplicate track {} into primary {}", dup_id, primary_id);
+            info!(
+                "Merged duplicate track {} into primary {}",
+                dup_id, primary_id
+            );
 
             results.push(ResolutionResult::Merged {
                 primary_id,
@@ -674,13 +689,13 @@ mod tests {
     async fn create_test_pool() -> SqlitePool {
         let config = DatabaseConfig::in_memory();
         let pool = core_library::db::create_pool(config).await.unwrap();
-        
+
         // Create a test provider to satisfy foreign key constraints
         sqlx::query(
             r#"
             INSERT INTO providers (id, type, display_name, profile_id, created_at) 
             VALUES (?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind("test_provider")
         .bind("GoogleDrive")
@@ -690,21 +705,21 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        
+
         pool
     }
 
     async fn create_test_track(pool: &SqlitePool, title: &str, hash: Option<&str>) -> TrackId {
         let track_id = TrackId::new();
         let now = chrono::Utc::now().timestamp();
-        
+
         sqlx::query(
             r#"
             INSERT INTO tracks (
                 id, provider_id, provider_file_id, title, normalized_title,
                 duration_ms, format, file_size, created_at, updated_at, hash
             ) VALUES (?, ?, ?, ?, LOWER(TRIM(?)), ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(track_id.to_string())
         .bind("test_provider")
@@ -712,7 +727,7 @@ mod tests {
         .bind(title)
         .bind(title)
         .bind(180000)
-        .bind("mp3")  // Required NOT NULL field
+        .bind("mp3") // Required NOT NULL field
         .bind(5000000)
         .bind(now)
         .bind(now)
@@ -754,14 +769,14 @@ mod tests {
         let track_id = TrackId::new();
         let now = chrono::Utc::now().timestamp();
         let old_provider_id = "old_file_123";
-        
+
         sqlx::query(
             r#"
             INSERT INTO tracks (
                 id, provider_id, provider_file_id, title, normalized_title,
                 duration_ms, format, file_size, created_at, updated_at
             ) VALUES (?, ?, ?, ?, LOWER(TRIM(?)), ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(track_id.to_string())
         .bind("test_provider")
@@ -778,14 +793,16 @@ mod tests {
         .unwrap();
 
         // Resolve rename
-        let result = resolver.resolve_rename(
-            old_provider_id,
-            "new_file_456",
-            "New Title"
-        ).await.unwrap();
+        let result = resolver
+            .resolve_rename(old_provider_id, "new_file_456", "New Title")
+            .await
+            .unwrap();
 
         match result {
-            ResolutionResult::Renamed { track_id: renamed_id, .. } => {
+            ResolutionResult::Renamed {
+                track_id: renamed_id,
+                ..
+            } => {
                 assert_eq!(renamed_id, track_id);
             }
             _ => panic!("Expected Renamed result"),
@@ -814,10 +831,15 @@ mod tests {
         let provider_file_id = format!("file_{}", track_id);
 
         // Soft delete
-        let result = resolver.handle_deletion(&provider_file_id, false).await.unwrap();
+        let result = resolver
+            .handle_deletion(&provider_file_id, false)
+            .await
+            .unwrap();
 
         match result {
-            ResolutionResult::Deleted { track_id: deleted_id } => {
+            ResolutionResult::Deleted {
+                track_id: deleted_id,
+            } => {
                 assert_eq!(deleted_id, track_id);
             }
             _ => panic!("Expected Deleted result"),
@@ -843,10 +865,15 @@ mod tests {
         let provider_file_id = format!("file_{}", track_id);
 
         // Hard delete
-        let result = resolver.handle_deletion(&provider_file_id, true).await.unwrap();
+        let result = resolver
+            .handle_deletion(&provider_file_id, true)
+            .await
+            .unwrap();
 
         match result {
-            ResolutionResult::Deleted { track_id: deleted_id } => {
+            ResolutionResult::Deleted {
+                track_id: deleted_id,
+            } => {
                 assert_eq!(deleted_id, track_id);
             }
             _ => panic!("Expected Deleted result"),
@@ -885,10 +912,15 @@ mod tests {
         metadata.insert("title".to_string(), "New Title".to_string());
         metadata.insert("year".to_string(), "2024".to_string());
 
-        let result = resolver.merge_metadata(track_id, new_timestamp, metadata).await.unwrap();
+        let result = resolver
+            .merge_metadata(track_id, new_timestamp, metadata)
+            .await
+            .unwrap();
 
         match result {
-            ResolutionResult::Updated { track_id: updated_id } => {
+            ResolutionResult::Updated {
+                track_id: updated_id,
+            } => {
                 assert_eq!(updated_id, track_id);
             }
             _ => panic!("Expected Updated result"),
@@ -915,7 +947,7 @@ mod tests {
 
         // Create duplicate tracks with same hash but different quality
         let hash = "duplicate_hash_123";
-        
+
         // Low quality
         let track1 = create_test_track(&pool, "Song - Low", Some(hash)).await;
         sqlx::query("UPDATE tracks SET bitrate = 128000 WHERE id = ?")
@@ -993,7 +1025,10 @@ mod tests {
         let mut metadata = HashMap::new();
         metadata.insert("title".to_string(), "Should Not Update".to_string());
 
-        let result = resolver.merge_metadata(track_id, older_time, metadata).await.unwrap();
+        let result = resolver
+            .merge_metadata(track_id, older_time, metadata)
+            .await
+            .unwrap();
         assert!(matches!(result, ResolutionResult::NoAction));
 
         // Try to merge with newer metadata (should update)
@@ -1001,7 +1036,10 @@ mod tests {
         let mut metadata = HashMap::new();
         metadata.insert("title".to_string(), "Should Update".to_string());
 
-        let result = resolver.merge_metadata(track_id, newer_time, metadata).await.unwrap();
+        let result = resolver
+            .merge_metadata(track_id, newer_time, metadata)
+            .await
+            .unwrap();
         assert!(matches!(result, ResolutionResult::Updated { .. }));
 
         // Verify the title was updated

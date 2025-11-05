@@ -59,19 +59,19 @@ use tracing::{debug, error, info, instrument, warn};
 pub struct ConflictResolutionStats {
     /// Number of duplicate tracks detected
     pub duplicates_detected: u64,
-    
+
     /// Number of duplicate tracks merged/removed
     pub duplicates_resolved: u64,
-    
+
     /// Number of renames detected and resolved
     pub renames_resolved: u64,
-    
+
     /// Number of tracks marked as deleted
     pub deletions_soft: u64,
-    
+
     /// Number of tracks permanently deleted
     pub deletions_hard: u64,
-    
+
     /// Total space reclaimed from deduplication (bytes)
     pub space_reclaimed: u64,
 }
@@ -198,12 +198,16 @@ impl ConflictResolutionOrchestrator {
                 ConflictPolicy::KeepNewest | ConflictPolicy::KeepBoth => {
                     // Deduplicate by keeping best quality track
                     let results = self.conflict_resolver.deduplicate(&dup_set).await?;
-                    
+
                     stats.duplicates_resolved += results.len() as u64;
                     stats.space_reclaimed += dup_set.wasted_space;
 
                     for result in results {
-                        if let ResolutionResult::Merged { primary_id, duplicate_id } = result {
+                        if let ResolutionResult::Merged {
+                            primary_id,
+                            duplicate_id,
+                        } = result
+                        {
                             debug!(
                                 "Merged duplicate {} into primary {}",
                                 duplicate_id, primary_id
@@ -236,9 +240,7 @@ impl ConflictResolutionOrchestrator {
         debug!("Detecting renamed files by content hash matching");
 
         // Query tracks from this provider with hashes
-        let tracks_with_hashes = self
-            .query_tracks_with_hashes(provider_id)
-            .await?;
+        let tracks_with_hashes = self.query_tracks_with_hashes(provider_id).await?;
 
         debug!(
             "Checking {} tracks with hashes for potential renames",
@@ -264,7 +266,7 @@ impl ConflictResolutionOrchestrator {
                 // This would require querying the provider for file hashes, which
                 // is expensive. Instead, we'll handle this in the deletion phase
                 // and rely on re-sync to detect renames organically.
-                
+
                 debug!(
                     "Track {} with provider_file_id {} not in current provider list",
                     track_id, old_provider_file_id
@@ -275,7 +277,7 @@ impl ConflictResolutionOrchestrator {
         // Note: Full rename detection requires comparing hashes from the provider
         // response, which is not available in the current StorageProvider API.
         // This is a future enhancement (TASK-304.4).
-        
+
         stats.renames_resolved = renames_detected;
 
         if renames_detected > 0 {
@@ -329,9 +331,11 @@ impl ConflictResolutionOrchestrator {
                     .handle_deletion(&provider_file_id, self.hard_delete)
                     .await
                 {
-                    Ok(ResolutionResult::Deleted { track_id: deleted_track_id }) => {
+                    Ok(ResolutionResult::Deleted {
+                        track_id: deleted_track_id,
+                    }) => {
                         deleted_count += 1;
-                        
+
                         if self.hard_delete {
                             stats.deletions_hard += 1;
                             debug!("Hard deleted track {}", deleted_track_id);
@@ -400,12 +404,11 @@ impl ConflictResolutionOrchestrator {
                 .try_get("id")
                 .map_err(|e| SyncError::Database(e.to_string()))?;
 
-            let track_id = TrackId::from_string(&track_id_str).map_err(|e| {
-                SyncError::InvalidInput {
+            let track_id =
+                TrackId::from_string(&track_id_str).map_err(|e| SyncError::InvalidInput {
                     field: "track_id".to_string(),
                     message: e.to_string(),
-                }
-            })?;
+                })?;
 
             result.push((hash, provider_file_id, track_id));
         }
@@ -440,12 +443,11 @@ impl ConflictResolutionOrchestrator {
                 .try_get("id")
                 .map_err(|e| SyncError::Database(e.to_string()))?;
 
-            let track_id = TrackId::from_string(&track_id_str).map_err(|e| {
-                SyncError::InvalidInput {
+            let track_id =
+                TrackId::from_string(&track_id_str).map_err(|e| SyncError::InvalidInput {
                     field: "track_id".to_string(),
                     message: e.to_string(),
-                }
-            })?;
+                })?;
 
             result.push((provider_file_id, track_id));
         }
@@ -571,7 +573,7 @@ mod tests {
 
         // Verify track is soft-deleted (marked with DELETED_ prefix)
         let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tracks WHERE provider_file_id LIKE 'DELETED_%'"
+            "SELECT COUNT(*) FROM tracks WHERE provider_file_id LIKE 'DELETED_%'",
         )
         .fetch_one(&pool)
         .await
@@ -652,7 +654,7 @@ mod tests {
 
         let provider_files = HashSet::new();
         let job_id = SyncJobId::new();
-        
+
         let stats = orchestrator
             .resolve_conflicts(&job_id, "test_provider", &provider_files)
             .await

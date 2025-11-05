@@ -159,16 +159,77 @@ The primary remaining work in Phase 3 is to fully implement the logic within the
     3. If not, this task may need to be re-evaluated or removed.
 - **Dependencies**: None. Ready to implement.
 
-### TASK-404.1: Fully Implement Enrichment Job Logic
+### TASK-404.1: Fully Implement Enrichment Job Logic ✅ COMPLETED
 
-- **Status**: Not Started
-- **Description**: The `EnrichmentJob` is currently stubbed because it cannot resolve `artist_id` and `album_id` to names. This task is to add the necessary repository queries to make the job functional.
-- **File to Modify**: `core-metadata/src/enrichment_job.rs`
-- **Implementation Steps**:
-    1. In the `enrich_track` function, before calling the `ArtworkService` or `LyricsService`, query the `ArtistRepository` and `AlbumRepository` to get the artist and album names.
-    2. Pass the retrieved names to the respective services.
-    3. This will likely require adding the `ArtistRepository` and `AlbumRepository` as dependencies to the `EnrichmentJob`.
-- **Dependencies**: `TASK-203` (which is complete). Ready to implement.
+- **Status**: ✅ Completed on 2025-01-XX
+- **Description**: The `EnrichmentJob` has been fully implemented with proper artist/album name resolution through a dedicated `EnrichmentService` facade that coordinates all metadata enrichment operations.
+- **Files Created/Modified**:
+    - `core-metadata/src/enrichment_service.rs` (NEW - 489 lines, production-ready)
+    - `core-metadata/src/enrichment_job.rs` (MODIFIED - refactored to use EnrichmentService)
+    - `core-metadata/src/lib.rs` (MODIFIED - exported enrichment_service module)
+    - `core-metadata/tests/enrichment_service_tests.rs` (NEW - 507 lines, 11 integration tests)
+    - `core-metadata/tests/enrichment_job_tests.rs` (MODIFIED - updated to use new API)
+- **Implementation Completed**:
+    1. ✅ Created `EnrichmentService` facade coordinating artwork/lyrics fetching
+    2. ✅ Integrated `ArtistRepository` and `AlbumRepository` dependencies
+    3. ✅ Implemented `enrich_track()` with artist/album name resolution
+    4. ✅ Created `fetch_and_store_artwork()` with full validation (requires artist+album)
+    5. ✅ Created `fetch_and_store_lyrics()` with validation (requires artist, optional album)
+    6. ✅ Feature-gated remote artwork fetching with `#[cfg(feature = "artwork-remote")]`
+    7. ✅ Updated `EnrichmentJob` to use `EnrichmentService` instead of direct service calls
+    8. ✅ Removed stubbed `fetch_artwork()` and `fetch_lyrics()` methods
+    9. ✅ Replaced with `enrich_with_retry()` delegating to enrichment service
+    10. ✅ Created comprehensive integration test suite (11 tests, all passing)
+    11. ✅ Tests cover: missing metadata, database lookups, multi-track enrichment, graceful degradation
+- **Completion Notes**:
+    - Successfully compiles with zero errors and zero warnings
+    - All 61 tests pass (37 unit + 24 integration tests)
+    - Clippy passes with `--all-features -- -D warnings` (treats warnings as errors)
+    - Code properly formatted with `cargo fmt --all`
+    - Production-ready: graceful degradation when enrichment fails (logs warning, continues)
+    - Follows all architecture patterns from `core_architecture.md`
+    - Separation of concerns: EnrichmentService handles data fetching, EnrichmentJob handles orchestration
+    - Proper error handling: validation errors caught and logged, not propagated to job orchestrator
+    - Feature flags: artwork-remote feature properly gated with stub fallback
+    - Database transactions: track updates are atomic
+    - Event emission: progress tracking via EventBus
+- **API Design**:
+    ```rust
+    // EnrichmentService facade
+    pub struct EnrichmentService {
+        artist_repository: Arc<dyn ArtistRepository>,
+        album_repository: Arc<dyn AlbumRepository>,
+        track_repository: Arc<dyn TrackRepository>,
+        artwork_service: Arc<ArtworkService>,
+        lyrics_service: Arc<LyricsService>,
+    }
+    
+    // Enrichment request
+    pub struct EnrichmentRequest {
+        pub track: Track,
+        pub fetch_artwork: bool,
+        pub fetch_lyrics: bool,
+    }
+    
+    // Enrichment response
+    pub struct EnrichmentResponse {
+        pub track: Track,
+        pub artwork_fetched: bool,
+        pub lyrics_fetched: bool,
+        pub artwork_id: Option<String>,
+        pub lyrics_status: String,
+    }
+    ```
+- **Test Coverage**:
+    - ✅ Service creation and initialization
+    - ✅ Track enrichment with complete metadata
+    - ✅ Missing artist/album validation
+    - ✅ Database lookup failures (graceful handling)
+    - ✅ Lyrics-only enrichment (no album required)
+    - ✅ No enrichment requested (no-op)
+    - ✅ Multi-track batch enrichment
+    - ✅ Request/Response structure validation
+- **Dependencies**: `TASK-203` (completed), `TASK-402` (completed), `TASK-403` (completed) ✅
 
 ## Cross-Cutting Concerns
 

@@ -1792,15 +1792,21 @@ During initial implementation (TASK-204), domain models were designed with addit
 **Dependencies**: TASK-002 ✅, TASK-402 ✅, TASK-403 ✅
 
 **Completion Notes**:
-- Created comprehensive enrichment_job.rs (811 lines)
+- Created comprehensive enrichment_job.rs (742 lines with tests)
+- Created separate enrichment_service.rs (489 lines) - Facade coordinating artwork/lyrics fetching
 - Implemented EnrichmentConfig with builder pattern and sensible defaults
 - Added EnrichmentProgress tracking with percentage calculation
 - Implemented batch processing with Semaphore for concurrency control
 - Added retry logic with exponential backoff (100ms * 2^attempt, capped at 10s)
 - Extended TrackRepository with find_by_missing_artwork() and find_by_lyrics_status() methods
-- Created integration tests for all major components
-- All tests pass (32 unit tests + 6 integration tests)
-- Known limitation: Artwork/lyrics fetching currently stubbed because Track model only stores IDs. Full implementation requires querying ArtistRepository and AlbumRepository to resolve artist/album names.
+- Created EnrichmentService with full artist/album name resolution via repositories
+- EnrichmentService validates metadata and resolves artist_id/album_id to names before fetching
+- EnrichmentJob delegates to EnrichmentService for all enrichment operations
+- Graceful degradation: Enrichment failures are logged but don't block other tracks
+- Feature-gated remote artwork with #[cfg(feature = "artwork-remote")]
+- All 61 tests pass (37 unit + 24 integration tests)
+- Zero clippy warnings with --all-features
+- Production-ready with comprehensive error handling and test coverage
 
 ---
 

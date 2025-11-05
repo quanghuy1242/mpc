@@ -28,15 +28,6 @@ pub mod metadata_processor;
 pub mod repository;
 pub mod scan_queue;
 
-pub use error::{Result, SyncError};
-pub use job::{
-    SyncJob, SyncJobId, SyncJobStats, SyncProgress, SyncStatus, SyncType,
-};
-pub use repository::{SyncJobRepository, SqliteSyncJobRepository};
-pub use scan_queue::{
-    Priority, QueueStats, ScanQueue, ScanQueueRepository, SqliteScanQueueRepository,
-    WorkItem, WorkItemId, WorkItemStatus,
-};
 pub use conflict_resolution_orchestrator::{
     ConflictResolutionOrchestrator, ConflictResolutionStats,
 };
@@ -44,4 +35,11 @@ pub use conflict_resolver::{
     ConflictPolicy, ConflictResolver, DuplicateSet, MetadataConflict, ResolutionResult,
 };
 pub use coordinator::{SyncConfig, SyncCoordinator};
+pub use error::{Result, SyncError};
+pub use job::{SyncJob, SyncJobId, SyncJobStats, SyncProgress, SyncStatus, SyncType};
 pub use metadata_processor::{MetadataProcessor, ProcessingResult, ProcessorConfig};
+pub use repository::{SqliteSyncJobRepository, SyncJobRepository};
+pub use scan_queue::{
+    Priority, QueueStats, ScanQueue, ScanQueueRepository, SqliteScanQueueRepository, WorkItem,
+    WorkItemId, WorkItemStatus,
+};

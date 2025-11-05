@@ -198,15 +198,12 @@ impl MetadataProcessor {
             })?;
 
         // Step 2: Extract metadata
-        let metadata = self
-            .extract_metadata(&temp_path)
-            .await
-            .map_err(|e| {
-                // Clean up temp file on error
-                let _ = self.cleanup_temp_file(&temp_path);
-                error!("Failed to extract metadata from {}: {}", file_name, e);
-                e
-            })?;
+        let metadata = self.extract_metadata(&temp_path).await.map_err(|e| {
+            // Clean up temp file on error
+            let _ = self.cleanup_temp_file(&temp_path);
+            error!("Failed to extract metadata from {}: {}", file_name, e);
+            e
+        })?;
 
         // Step 3: Check if track already exists
         let existing_track = self
@@ -230,9 +227,11 @@ impl MetadataProcessor {
         }
 
         // Step 4: Begin database transaction for atomicity
-        let mut tx = self.db_pool.begin().await.map_err(|e| {
-            SyncError::Internal(format!("Failed to begin transaction: {}", e))
-        })?;
+        let mut tx = self
+            .db_pool
+            .begin()
+            .await
+            .map_err(|e| SyncError::Internal(format!("Failed to begin transaction: {}", e)))?;
 
         // Step 5: Resolve or create artist
         let artist_id = self
@@ -262,10 +261,7 @@ impl MetadataProcessor {
                 }
                 Ok(None) => None,
                 Err(e) => {
-                    warn!(
-                        "Failed to process artwork for {}: {}",
-                        file_name, e
-                    );
+                    warn!("Failed to process artwork for {}: {}", file_name, e);
                     None
                 }
             }
@@ -275,8 +271,17 @@ impl MetadataProcessor {
 
         // Step 7: Create or update track
         let track_id = if is_new {
-            self.create_track(work_item, &metadata, provider_id, artist_id, album_id, artwork_id, &mut tx, file_name)
-                .await?
+            self.create_track(
+                work_item,
+                &metadata,
+                provider_id,
+                artist_id,
+                album_id,
+                artwork_id,
+                &mut tx,
+                file_name,
+            )
+            .await?
         } else {
             self.update_track(
                 &existing_track.unwrap(),
@@ -290,9 +295,9 @@ impl MetadataProcessor {
         };
 
         // Step 9: Commit transaction
-        tx.commit().await.map_err(|e| {
-            SyncError::Internal(format!("Failed to commit transaction: {}", e))
-        })?;
+        tx.commit()
+            .await
+            .map_err(|e| SyncError::Internal(format!("Failed to commit transaction: {}", e)))?;
 
         // Step 10: Clean up temporary file
         self.cleanup_temp_file(&temp_path).await;
@@ -320,20 +325,17 @@ impl MetadataProcessor {
         provider: &Arc<dyn StorageProvider>,
         file_name: &str,
     ) -> Result<(PathBuf, u64)> {
-        let cache_dir = self
-            .file_system
-            .get_cache_directory()
-            .await
-            .map_err(|e| SyncError::Provider(format!("Failed to get cache directory: {}", e)))?;
+        let cache_dir =
+            self.file_system.get_cache_directory().await.map_err(|e| {
+                SyncError::Provider(format!("Failed to get cache directory: {}", e))
+            })?;
 
         // Create temp directory if it doesn't exist
         let temp_dir = cache_dir.join("sync_temp");
         self.file_system
             .create_dir_all(&temp_dir)
             .await
-            .map_err(|e| {
-                SyncError::Provider(format!("Failed to create temp directory: {}", e))
-            })?;
+            .map_err(|e| SyncError::Provider(format!("Failed to create temp directory: {}", e)))?;
 
         // Generate temporary file path using file name
         let temp_path = temp_dir.join(format!("{}_{}", work_item.id, file_name));
@@ -359,10 +361,8 @@ impl MetadataProcessor {
                         "Download attempt {} failed for {}: {}. Retrying...",
                         attempt, work_item.remote_file_id, e
                     );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(
-                        2u64.pow(attempt - 1),
-                    ))
-                    .await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2u64.pow(attempt - 1)))
+                        .await;
                 }
                 Err(e) => {
                     return Err(SyncError::Provider(format!(
@@ -379,14 +379,9 @@ impl MetadataProcessor {
         self.file_system
             .write_file(&temp_path, data)
             .await
-            .map_err(|e| {
-                SyncError::Provider(format!("Failed to write temporary file: {}", e))
-            })?;
+            .map_err(|e| SyncError::Provider(format!("Failed to write temporary file: {}", e)))?;
 
-        debug!(
-            "Downloaded {} bytes to {:?}",
-            bytes_downloaded, temp_path
-        );
+        debug!("Downloaded {} bytes to {:?}", bytes_downloaded, temp_path);
 
         Ok((temp_path, bytes_downloaded))
     }
@@ -398,8 +393,7 @@ impl MetadataProcessor {
         file_id: &str,
         range: Option<&str>,
     ) -> Result<Bytes> {
-        let timeout_duration =
-            tokio::time::Duration::from_secs(self.config.download_timeout_secs);
+        let timeout_duration = tokio::time::Duration::from_secs(self.config.download_timeout_secs);
 
         tokio::time::timeout(timeout_duration, provider.download(file_id, range))
             .await
@@ -412,9 +406,7 @@ impl MetadataProcessor {
         self.metadata_extractor
             .extract_from_file(path)
             .await
-            .map_err(|e| {
-                SyncError::Internal(format!("Metadata extraction failed: {}", e))
-            })
+            .map_err(|e| SyncError::Internal(format!("Metadata extraction failed: {}", e)))
     }
 
     /// Resolve or create artist entity
@@ -432,13 +424,12 @@ impl MetadataProcessor {
         let normalized_name = normalize_name(artist_name);
 
         // Query within transaction using runtime query
-        let existing = sqlx::query_as::<_, (String,)>(
-            "SELECT id FROM artists WHERE normalized_name = ?"
-        )
-        .bind(&normalized_name)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(|e| SyncError::Internal(format!("Failed to query artist: {}", e)))?;
+        let existing =
+            sqlx::query_as::<_, (String,)>("SELECT id FROM artists WHERE normalized_name = ?")
+                .bind(&normalized_name)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(|e| SyncError::Internal(format!("Failed to query artist: {}", e)))?;
 
         if let Some((id,)) = existing {
             let artist_id = ArtistId::from_string(&id)
@@ -475,10 +466,9 @@ impl MetadataProcessor {
 
         debug!("Created new artist: {} ({})", artist.name, artist.id);
 
-        Ok(Some(
-            ArtistId::from_string(&artist.id)
-                .map_err(|e| SyncError::Internal(format!("Invalid artist ID: {}", e)))?,
-        ))
+        Ok(Some(ArtistId::from_string(&artist.id).map_err(|e| {
+            SyncError::Internal(format!("Invalid artist ID: {}", e))
+        })?))
     }
 
     /// Resolve or create album entity
@@ -499,7 +489,7 @@ impl MetadataProcessor {
         // Try to find existing album by normalized name and artist using runtime query
         let existing = if let Some(ref aid) = artist_id_str {
             sqlx::query_as::<_, (String,)>(
-                "SELECT id FROM albums WHERE normalized_name = ? AND artist_id = ?"
+                "SELECT id FROM albums WHERE normalized_name = ? AND artist_id = ?",
             )
             .bind(&normalized_name)
             .bind(aid)
@@ -507,7 +497,7 @@ impl MetadataProcessor {
             .await
         } else {
             sqlx::query_as::<_, (String,)>(
-                "SELECT id FROM albums WHERE normalized_name = ? AND artist_id IS NULL"
+                "SELECT id FROM albums WHERE normalized_name = ? AND artist_id IS NULL",
             )
             .bind(&normalized_name)
             .fetch_optional(&mut **tx)
@@ -556,10 +546,9 @@ impl MetadataProcessor {
 
         debug!("Created new album: {} ({})", album.name, album.id);
 
-        Ok(Some(
-            AlbumId::from_string(&album.id)
-                .map_err(|e| SyncError::Internal(format!("Invalid album ID: {}", e)))?,
-        ))
+        Ok(Some(AlbumId::from_string(&album.id).map_err(|e| {
+            SyncError::Internal(format!("Invalid album ID: {}", e))
+        })?))
     }
 
     /// Process embedded artwork
@@ -601,16 +590,13 @@ impl MetadataProcessor {
         file_name: &str,
     ) -> Result<String> {
         let track_id = TrackId::new().to_string();
-        let title = metadata
-            .title
-            .clone()
-            .unwrap_or_else(|| {
-                Path::new(file_name)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Unknown")
-                    .to_string()
-            });
+        let title = metadata.title.clone().unwrap_or_else(|| {
+            Path::new(file_name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Unknown")
+                .to_string()
+        });
 
         let normalized_title = normalize_name(&title);
 
@@ -623,7 +609,7 @@ impl MetadataProcessor {
                 channels, format, mime_type, file_size, artwork_id, lyrics_status,
                 year, genre, composer, comment, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(&track_id)
         .bind(provider_id)
@@ -687,7 +673,7 @@ impl MetadataProcessor {
                 artwork_id = COALESCE(?, artwork_id), year = ?, genre = ?,
                 composer = ?, comment = ?, updated_at = ?
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(&metadata.content_hash)
         .bind(&title)

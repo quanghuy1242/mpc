@@ -570,8 +570,14 @@ mod tests {
 
     #[test]
     fn test_sync_status_from_str() {
-        assert_eq!(SyncStatus::from_str("pending").unwrap(), SyncStatus::Pending);
-        assert_eq!(SyncStatus::from_str("RUNNING").unwrap(), SyncStatus::Running);
+        assert_eq!(
+            SyncStatus::from_str("pending").unwrap(),
+            SyncStatus::Pending
+        );
+        assert_eq!(
+            SyncStatus::from_str("RUNNING").unwrap(),
+            SyncStatus::Running
+        );
         assert_eq!(
             SyncStatus::from_str("completed").unwrap(),
             SyncStatus::Completed
@@ -647,8 +653,7 @@ mod tests {
 
     #[test]
     fn test_sync_job_new_incremental() {
-        let job =
-            SyncJob::new_incremental(ProviderKind::OneDrive, "cursor-123".to_string());
+        let job = SyncJob::new_incremental(ProviderKind::OneDrive, "cursor-123".to_string());
 
         assert_eq!(job.sync_type, SyncType::Incremental);
         assert_eq!(job.cursor, Some("cursor-123".to_string()));
@@ -799,7 +804,10 @@ mod tests {
         assert!(completed_job.clone().start().is_err());
 
         // Cannot fail from completed
-        assert!(completed_job.clone().fail("Error".to_string(), None).is_err());
+        assert!(completed_job
+            .clone()
+            .fail("Error".to_string(), None)
+            .is_err());
 
         // Cannot cancel from completed
         assert!(completed_job.cancel().is_err());
@@ -822,8 +830,7 @@ mod tests {
         job.update_progress(50, 100, "Processing files").unwrap();
         assert_eq!(job.progress.percent, 50);
 
-        job.update_progress(75, 100, "Extracting metadata")
-            .unwrap();
+        job.update_progress(75, 100, "Extracting metadata").unwrap();
         assert_eq!(job.progress.percent, 75);
 
         // Complete job

@@ -78,7 +78,9 @@ async fn test_enrichment_config_builder() {
 
 #[tokio::test]
 async fn test_query_tracks_missing_artwork() {
-    let pool = create_test_pool().await.expect("Failed to create test pool");
+    let pool = create_test_pool()
+        .await
+        .expect("Failed to create test pool");
     insert_test_provider(&pool).await;
 
     let repository = SqliteTrackRepository::new(pool.clone());
@@ -88,9 +90,18 @@ async fn test_query_tracks_missing_artwork() {
     let track2 = create_test_track("track-2", "Track 2", None);
     let track3 = create_test_track("track-3", "Track 3", None);
 
-    repository.insert(&track1).await.expect("Failed to insert track1");
-    repository.insert(&track2).await.expect("Failed to insert track2");
-    repository.insert(&track3).await.expect("Failed to insert track3");
+    repository
+        .insert(&track1)
+        .await
+        .expect("Failed to insert track1");
+    repository
+        .insert(&track2)
+        .await
+        .expect("Failed to insert track2");
+    repository
+        .insert(&track3)
+        .await
+        .expect("Failed to insert track3");
 
     // Create a dummy artwork so we can set it on track2
     sqlx::query(
@@ -121,7 +132,9 @@ async fn test_query_tracks_missing_artwork() {
 
 #[tokio::test]
 async fn test_query_tracks_by_lyrics_status() {
-    let pool = create_test_pool().await.expect("Failed to create test pool");
+    let pool = create_test_pool()
+        .await
+        .expect("Failed to create test pool");
     insert_test_provider(&pool).await;
 
     let repository = SqliteTrackRepository::new(pool.clone());
@@ -136,9 +149,18 @@ async fn test_query_tracks_by_lyrics_status() {
     let mut track3 = create_test_track("track-3", "Track 3", None);
     track3.lyrics_status = "not_fetched".to_string();
 
-    repository.insert(&track1).await.expect("Failed to insert track1");
-    repository.insert(&track2).await.expect("Failed to insert track2");
-    repository.insert(&track3).await.expect("Failed to insert track3");
+    repository
+        .insert(&track1)
+        .await
+        .expect("Failed to insert track1");
+    repository
+        .insert(&track2)
+        .await
+        .expect("Failed to insert track2");
+    repository
+        .insert(&track3)
+        .await
+        .expect("Failed to insert track3");
 
     // Query tracks with 'not_fetched' status
     let tracks = repository
@@ -163,24 +185,33 @@ async fn test_query_tracks_by_lyrics_status() {
 
 #[tokio::test]
 async fn test_enrichment_job_initialization() {
-    let pool = create_test_pool().await.expect("Failed to create test pool");
+    let pool = create_test_pool()
+        .await
+        .expect("Failed to create test pool");
 
     let artwork_repo = Arc::new(SqliteArtworkRepository::new(pool.clone()));
     let lyrics_repo = Arc::new(SqliteLyricsRepository::new(pool.clone()));
     let track_repo: Arc<dyn TrackRepository> = Arc::new(SqliteTrackRepository::new(pool.clone()));
+    let artist_repo =
+        Arc::new(core_library::repositories::artist::SqliteArtistRepository::new(pool.clone()));
+    let album_repo =
+        Arc::new(core_library::repositories::album::SqliteAlbumRepository::new(pool.clone()));
     let event_bus = Arc::new(EventBus::new(100));
 
     let artwork_service = Arc::new(ArtworkService::new(artwork_repo, 200 * 1024 * 1024));
     let lyrics_service = Arc::new(LyricsService::without_providers(lyrics_repo));
 
-    let config = EnrichmentConfig::default();
-    let _job = EnrichmentJob::new(
-        config,
+    // Create EnrichmentService
+    let enrichment_service = Arc::new(core_metadata::enrichment_service::EnrichmentService::new(
+        artist_repo,
+        album_repo,
+        track_repo.clone(),
         artwork_service,
         lyrics_service,
-        track_repo,
-        event_bus,
-    );
+    ));
+
+    let config = EnrichmentConfig::default();
+    let _job = EnrichmentJob::new(config, enrichment_service, track_repo, event_bus);
 
     // Job created successfully
 }

@@ -177,10 +177,7 @@ impl LastFmClient {
                 url
             }
             None => {
-                info!(
-                    "No artwork found for '{} - {}' on Last.fm",
-                    artist, album
-                );
+                info!("No artwork found for '{} - {}' on Last.fm", artist, album);
                 return Ok(None);
             }
         };
@@ -211,7 +208,10 @@ impl LastFmClient {
             urlencoding::encode(album)
         );
 
-        debug!("Querying Last.fm: album.getinfo for '{} - {}'", artist, album);
+        debug!(
+            "Querying Last.fm: album.getinfo for '{} - {}'",
+            artist, album
+        );
 
         // Apply rate limiting
         self.rate_limiter.lock().await.wait_if_needed().await;
@@ -222,11 +222,10 @@ impl LastFmClient {
             .header("Accept", "application/json")
             .timeout(REQUEST_TIMEOUT);
 
-        let response = self
-            .http_client
-            .execute(request)
-            .await
-            .map_err(|e| MetadataError::NetworkError(format!("Last.fm request failed: {}", e)))?;
+        let response =
+            self.http_client.execute(request).await.map_err(|e| {
+                MetadataError::NetworkError(format!("Last.fm request failed: {}", e))
+            })?;
 
         // Check status
         if !response.is_success() {
@@ -268,8 +267,10 @@ impl LastFmClient {
         }
 
         // Parse successful response
-        let album_response: AlbumResponse = serde_json::from_slice(&response.body)
-            .map_err(|e| MetadataError::JsonParse(format!("Failed to parse Last.fm response: {}", e)))?;
+        let album_response: AlbumResponse =
+            serde_json::from_slice(&response.body).map_err(|e| {
+                MetadataError::JsonParse(format!("Failed to parse Last.fm response: {}", e))
+            })?;
 
         // Extract artwork URL
         // Prefer sizes in order: mega > extralarge > large > medium > small
@@ -313,15 +314,17 @@ impl LastFmClient {
             .header("User-Agent", "MusicPlatformCore/1.0")
             .timeout(REQUEST_TIMEOUT);
 
-        let response = self
-            .http_client
-            .execute(request)
-            .await
-            .map_err(|e| MetadataError::NetworkError(format!("Image download failed: {}", e)))?;
+        let response =
+            self.http_client.execute(request).await.map_err(|e| {
+                MetadataError::NetworkError(format!("Image download failed: {}", e))
+            })?;
 
         // Check status
         if !response.is_success() {
-            warn!("Failed to download image from {}: status {}", url, response.status);
+            warn!(
+                "Failed to download image from {}: status {}",
+                url, response.status
+            );
             return Ok(None);
         }
 

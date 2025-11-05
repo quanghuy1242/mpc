@@ -198,9 +198,9 @@ impl MetadataExtractor {
         debug!("Extracting metadata from: {}", path.display());
 
         // Read file and calculate hash
-        let file_data = tokio::fs::read(path).await.map_err(|e| {
-            MetadataError::ExtractionFailed(format!("Failed to read file: {}", e))
-        })?;
+        let file_data = tokio::fs::read(path)
+            .await
+            .map_err(|e| MetadataError::ExtractionFailed(format!("Failed to read file: {}", e)))?;
 
         let file_size = file_data.len() as u64;
         let content_hash = self.calculate_hash(&file_data);
@@ -209,9 +209,7 @@ impl MetadataExtractor {
         let tagged_file = Probe::new(std::io::Cursor::new(&file_data))
             .options(self.parse_options)
             .guess_file_type()
-            .map_err(|e| {
-                MetadataError::ExtractionFailed(format!("Failed to probe file: {}", e))
-            })?
+            .map_err(|e| MetadataError::ExtractionFailed(format!("Failed to probe file: {}", e)))?
             .read()
             .map_err(|e| MetadataError::ExtractionFailed(format!("Failed to parse file: {}", e)))?;
 
@@ -239,7 +237,20 @@ impl MetadataExtractor {
         };
 
         // Extract text metadata
-        let (title, artist, album, album_artist, year, track_number, total_tracks, disc_number, total_discs, genre, composer, comment) = if let Some(tag) = tag {
+        let (
+            title,
+            artist,
+            album,
+            album_artist,
+            year,
+            track_number,
+            total_tracks,
+            disc_number,
+            total_discs,
+            genre,
+            composer,
+            comment,
+        ) = if let Some(tag) = tag {
             (
                 tag.title().map(|s| Self::normalize_text(s.as_ref())),
                 tag.artist().map(|s| Self::normalize_text(s.as_ref())),
@@ -252,8 +263,7 @@ impl MetadataExtractor {
                 tag.disk(),
                 tag.disk_total(),
                 tag.genre().map(|s| Self::normalize_text(s.as_ref())),
-                tag.get_string(&ItemKey::Composer)
-                    .map(Self::normalize_text),
+                tag.get_string(&ItemKey::Composer).map(Self::normalize_text),
                 tag.comment().map(|s| Self::normalize_text(s.as_ref())),
             )
         } else {
@@ -335,7 +345,7 @@ impl MetadataExtractor {
     /// - Normalizes consecutive whitespace to single space
     /// - Removes null bytes and control characters
     fn normalize_text(text: &str) -> String {
-          text.split_whitespace()
+        text.split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
             .chars()
@@ -349,7 +359,7 @@ impl MetadataExtractor {
             .iter()
             .filter_map(|pic| {
                 let data = Bytes::copy_from_slice(pic.data());
-                
+
                 // Get MIME type, defaulting to octet-stream if None
                 let mime_type = pic
                     .mime_type()
@@ -464,14 +474,8 @@ mod tests {
             ArtworkType::from(PictureType::CoverBack),
             ArtworkType::CoverBack
         );
-        assert_eq!(
-            ArtworkType::from(PictureType::Artist),
-            ArtworkType::Artist
-        );
-        assert_eq!(
-            ArtworkType::from(PictureType::Other),
-            ArtworkType::Other
-        );
+        assert_eq!(ArtworkType::from(PictureType::Artist), ArtworkType::Artist);
+        assert_eq!(ArtworkType::from(PictureType::Other), ArtworkType::Other);
     }
 
     #[test]

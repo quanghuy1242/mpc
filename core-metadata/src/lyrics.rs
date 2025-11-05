@@ -380,9 +380,10 @@ impl LyricsService {
 
     /// Update existing lyrics in database
     pub async fn update_lyrics(&self, lyrics: &Lyrics) -> Result<()> {
-        self.repository.update(lyrics).await.map_err(|e| {
-            MetadataError::Database(format!("Failed to update lyrics: {}", e))
-        })
+        self.repository
+            .update(lyrics)
+            .await
+            .map_err(|e| MetadataError::Database(format!("Failed to update lyrics: {}", e)))
     }
 
     /// Delete lyrics for a track
@@ -395,9 +396,11 @@ impl LyricsService {
 
     /// Get statistics about cached lyrics
     pub async fn get_stats(&self) -> Result<LyricsStats> {
-        let total = self.repository.count().await.map_err(|e| {
-            MetadataError::Database(format!("Failed to count lyrics: {}", e))
-        })?;
+        let total = self
+            .repository
+            .count()
+            .await
+            .map_err(|e| MetadataError::Database(format!("Failed to count lyrics: {}", e)))?;
 
         let synced = self.repository.count_synced().await.map_err(|e| {
             MetadataError::Database(format!("Failed to count synced lyrics: {}", e))
@@ -507,7 +510,8 @@ mod providers {
                 )));
             }
 
-            let lrc_response: LrcLibResponse = response.json()
+            let lrc_response: LrcLibResponse = response
+                .json()
                 .map_err(|e| MetadataError::LyricsFetchFailed(format!("Parse error: {}", e)))?;
 
             // Prefer synced lyrics if available
@@ -589,10 +593,9 @@ mod providers {
                 )));
             }
 
-            let search_response: MusixmatchSearchResponse = response.json()
-                .map_err(|e| {
-                    MetadataError::LyricsFetchFailed(format!("Parse error: {}", e))
-                })?;
+            let search_response: MusixmatchSearchResponse = response
+                .json()
+                .map_err(|e| MetadataError::LyricsFetchFailed(format!("Parse error: {}", e)))?;
 
             let track_id = search_response
                 .message
@@ -620,10 +623,9 @@ mod providers {
                 return Ok(None);
             }
 
-            let lyrics_response: MusixmatchLyricsResponse = response.json()
-                .map_err(|e| {
-                    MetadataError::LyricsFetchFailed(format!("Parse error: {}", e))
-                })?;
+            let lyrics_response: MusixmatchLyricsResponse = response
+                .json()
+                .map_err(|e| MetadataError::LyricsFetchFailed(format!("Parse error: {}", e)))?;
 
             if let Some(lyrics_body) = lyrics_response.message.body.lyrics {
                 let text = lyrics_body.lyrics_body;
@@ -632,7 +634,11 @@ mod providers {
                         text,
                         false,
                         LyricsSource::Musixmatch,
-                        Some(lyrics_body.lyrics_language.unwrap_or_else(|| "en".to_string())),
+                        Some(
+                            lyrics_body
+                                .lyrics_language
+                                .unwrap_or_else(|| "en".to_string()),
+                        ),
                     )));
                 }
             }
@@ -726,7 +732,8 @@ mod providers {
                 )));
             }
 
-            let _search_response: GeniusSearchResponse = response.json()
+            let _search_response: GeniusSearchResponse = response
+                .json()
                 .map_err(|e| MetadataError::LyricsFetchFailed(format!("Parse error: {}", e)))?;
 
             // Genius API doesn't directly provide lyrics in their API
@@ -799,12 +806,15 @@ mod tests {
     }
 
     /// Helper function to create a test track (lyrics table has foreign key to tracks)
-    async fn create_test_track(track_repo: &SqliteTrackRepository, track_id: &str) -> std::result::Result<(), LibraryError> {
+    async fn create_test_track(
+        track_repo: &SqliteTrackRepository,
+        track_id: &str,
+    ) -> std::result::Result<(), LibraryError> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        
+
         let track = Track {
             id: track_id.to_string(),
             provider_id: "test-provider".to_string(),
@@ -881,13 +891,7 @@ mod tests {
 
     #[test]
     fn test_lyrics_search_query_new() {
-        let query = LyricsSearchQuery::new(
-            "Artist",
-            "Track",
-            "Album",
-            180,
-            "track-123",
-        );
+        let query = LyricsSearchQuery::new("Artist", "Track", "Album", 180, "track-123");
         assert_eq!(query.artist, "Artist");
         assert_eq!(query.track, "Track");
         assert_eq!(query.album, Some("Album".to_string()));

@@ -165,10 +165,7 @@ impl Priority {
             0 => Ok(Self::Low),
             1 => Ok(Self::Normal),
             2 => Ok(Self::High),
-            _ => Err(SyncError::InvalidStatus(format!(
-                "Invalid priority: {}",
-                i
-            ))),
+            _ => Err(SyncError::InvalidStatus(format!("Invalid priority: {}", i))),
         }
     }
 }
@@ -220,11 +217,7 @@ impl WorkItem {
     }
 
     /// Create a new work item with specified priority
-    pub fn with_priority(
-        remote_file_id: String,
-        mime_type: String,
-        priority: Priority,
-    ) -> Self {
+    pub fn with_priority(remote_file_id: String, mime_type: String, priority: Priority) -> Self {
         let mut item = Self::new(remote_file_id, mime_type);
         item.priority = priority;
         item
@@ -469,13 +462,11 @@ impl ScanQueueRepository for SqliteScanQueueRepository {
     }
 
     async fn count_by_status(&self, status: WorkItemStatus) -> Result<u64> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM scan_queue WHERE status = ?",
-        )
-        .bind(status.as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scan_queue WHERE status = ?")
+            .bind(status.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
         Ok(count as u64)
     }
@@ -533,10 +524,7 @@ pub struct ScanQueue {
 
 impl ScanQueue {
     /// Create a new scan queue with specified concurrency limit
-    pub async fn new(
-        pool: SqlitePool,
-        max_concurrent: usize,
-    ) -> Result<Self> {
+    pub async fn new(pool: SqlitePool, max_concurrent: usize) -> Result<Self> {
         let repository = SqliteScanQueueRepository::new(pool);
         repository.initialize().await?;
 
@@ -575,9 +563,11 @@ impl ScanQueue {
     /// Dequeue the next work item (blocks if at concurrency limit)
     pub async fn dequeue(&self) -> Result<Option<WorkItem>> {
         // Acquire permit from semaphore (blocks if at max concurrent)
-        let _permit = self.semaphore.acquire().await.map_err(|_| {
-            SyncError::Provider("Semaphore closed".to_string())
-        })?;
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|_| SyncError::Provider("Semaphore closed".to_string()))?;
 
         // Get next pending item
         if let Some(mut item) = self.repository.get_next_pending().await? {
@@ -599,13 +589,13 @@ impl ScanQueue {
 
     /// Mark a work item as successfully completed
     pub async fn mark_complete(&self, item_id: WorkItemId) -> Result<()> {
-        let mut item = self
-            .repository
-            .find_by_id(item_id)
-            .await?
-            .ok_or_else(|| SyncError::JobNotFound {
-                job_id: item_id.to_string(),
-            })?;
+        let mut item =
+            self.repository
+                .find_by_id(item_id)
+                .await?
+                .ok_or_else(|| SyncError::JobNotFound {
+                    job_id: item_id.to_string(),
+                })?;
 
         item.complete();
         self.repository.update(&item).await?;
@@ -624,13 +614,13 @@ impl ScanQueue {
         item_id: WorkItemId,
         error_message: Option<String>,
     ) -> Result<()> {
-        let mut item = self
-            .repository
-            .find_by_id(item_id)
-            .await?
-            .ok_or_else(|| SyncError::JobNotFound {
-                job_id: item_id.to_string(),
-            })?;
+        let mut item =
+            self.repository
+                .find_by_id(item_id)
+                .await?
+                .ok_or_else(|| SyncError::JobNotFound {
+                    job_id: item_id.to_string(),
+                })?;
 
         let will_retry = item.can_retry();
         let retry_count = item.retry_count;
@@ -665,7 +655,10 @@ impl ScanQueue {
 
     /// Get queue statistics
     pub async fn stats(&self) -> Result<QueueStats> {
-        let pending = self.repository.count_by_status(WorkItemStatus::Pending).await?;
+        let pending = self
+            .repository
+            .count_by_status(WorkItemStatus::Pending)
+            .await?;
         let processing = self
             .repository
             .count_by_status(WorkItemStatus::Processing)
@@ -674,7 +667,10 @@ impl ScanQueue {
             .repository
             .count_by_status(WorkItemStatus::Completed)
             .await?;
-        let failed = self.repository.count_by_status(WorkItemStatus::Failed).await?;
+        let failed = self
+            .repository
+            .count_by_status(WorkItemStatus::Failed)
+            .await?;
 
         Ok(QueueStats {
             pending,
@@ -780,21 +776,21 @@ mod tests {
     #[test]
     fn test_retry_backoff() {
         let mut item = WorkItem::new("file123".to_string(), "audio/mpeg".to_string());
-        
+
         // First attempt
         assert_eq!(item.next_retry_delay_ms(), 100);
         assert!(item.can_retry());
-        
+
         // After first failure
         item.retry_count = 1;
         assert_eq!(item.next_retry_delay_ms(), 200);
         assert!(item.can_retry());
-        
+
         // After second failure
         item.retry_count = 2;
         assert_eq!(item.next_retry_delay_ms(), 400);
         assert!(item.can_retry());
-        
+
         // After third failure (max retries)
         item.retry_count = 3;
         assert_eq!(item.next_retry_delay_ms(), 800);
@@ -804,16 +800,16 @@ mod tests {
     #[test]
     fn test_work_item_state_transitions() {
         let mut item = WorkItem::new("file123".to_string(), "audio/mpeg".to_string());
-        
+
         // Pending -> Processing
         item.start_processing();
         assert_eq!(item.status, WorkItemStatus::Processing);
         assert!(item.processing_started_at.is_some());
-        
+
         // Processing -> Completed
         item.complete();
         assert_eq!(item.status, WorkItemStatus::Completed);
-        
+
         // Test failure with retry
         let mut item2 = WorkItem::new("file456".to_string(), "audio/flac".to_string());
         item2.start_processing();
@@ -821,7 +817,7 @@ mod tests {
         assert_eq!(item2.status, WorkItemStatus::Pending); // Back to pending for retry
         assert_eq!(item2.retry_count, 1);
         assert_eq!(item2.error_message, Some("Test error".to_string()));
-        
+
         // Test failure after max retries
         item2.retry_count = MAX_RETRY_ATTEMPTS;
         item2.fail(Some("Final error".to_string()));
@@ -860,21 +856,15 @@ mod tests {
         repo.initialize().await.unwrap();
 
         // Insert items with different priorities
-        let low = WorkItem::with_priority(
-            "low".to_string(),
-            "audio/mpeg".to_string(),
-            Priority::Low,
-        );
+        let low =
+            WorkItem::with_priority("low".to_string(), "audio/mpeg".to_string(), Priority::Low);
         let normal = WorkItem::with_priority(
             "normal".to_string(),
             "audio/mpeg".to_string(),
             Priority::Normal,
         );
-        let high = WorkItem::with_priority(
-            "high".to_string(),
-            "audio/mpeg".to_string(),
-            Priority::High,
-        );
+        let high =
+            WorkItem::with_priority("high".to_string(), "audio/mpeg".to_string(), Priority::High);
 
         repo.insert(&low).await.unwrap();
         repo.insert(&normal).await.unwrap();

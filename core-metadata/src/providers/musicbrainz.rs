@@ -101,6 +101,7 @@ impl RateLimiter {
 /// MusicBrainz release group search result
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[allow(dead_code)]  // Fields used for future features
 struct ReleaseGroup {
     id: String,
     title: String,
@@ -181,19 +182,13 @@ impl MusicBrainzClient {
     ) -> Result<Option<Bytes>> {
         // If MBID is provided, use it directly
         let release_group_id = if let Some(id) = mbid {
-            info!(
-                "Using provided MBID {} for '{} - {}'",
-                id, artist, album
-            );
+            info!("Using provided MBID {} for '{} - {}'", id, artist, album);
             id.to_string()
         } else {
             // Search for release group
             match self.search_release_group(artist, album).await? {
                 Some(id) => {
-                    info!(
-                        "Found release group {} for '{} - {}'",
-                        id, artist, album
-                    );
+                    info!("Found release group {} for '{} - {}'", id, artist, album);
                     id
                 }
                 None => {
@@ -248,11 +243,9 @@ impl MusicBrainzClient {
             .header("Accept", "application/json")
             .timeout(REQUEST_TIMEOUT);
 
-        let response = self
-            .http_client
-            .execute(request)
-            .await
-            .map_err(|e| MetadataError::NetworkError(format!("MusicBrainz search failed: {}", e)))?;
+        let response = self.http_client.execute(request).await.map_err(|e| {
+            MetadataError::NetworkError(format!("MusicBrainz search failed: {}", e))
+        })?;
 
         // Check status
         if !response.is_success() {
@@ -269,8 +262,10 @@ impl MusicBrainzClient {
         }
 
         // Parse response
-        let search_result: SearchResponse = serde_json::from_slice(&response.body)
-            .map_err(|e| MetadataError::JsonParse(format!("Failed to parse search results: {}", e)))?;
+        let search_result: SearchResponse =
+            serde_json::from_slice(&response.body).map_err(|e| {
+                MetadataError::JsonParse(format!("Failed to parse search results: {}", e))
+            })?;
 
         // Return first result (best match)
         // Prefer "Album" type over others
@@ -308,11 +303,10 @@ impl MusicBrainzClient {
             .header("User-Agent", &self.user_agent)
             .timeout(REQUEST_TIMEOUT);
 
-        let response = self
-            .http_client
-            .execute(request)
-            .await
-            .map_err(|e| MetadataError::NetworkError(format!("Cover art fetch failed: {}", e)))?;
+        let response =
+            self.http_client.execute(request).await.map_err(|e| {
+                MetadataError::NetworkError(format!("Cover art fetch failed: {}", e))
+            })?;
 
         // Check status
         match response.status {
@@ -325,7 +319,7 @@ impl MusicBrainzClient {
                 warn!("Cover Art Archive service unavailable (503)");
                 Ok(None)
             }
-            status if status == 429 => {
+            429 => {
                 // Rate limited
                 let retry_after = response
                     .headers

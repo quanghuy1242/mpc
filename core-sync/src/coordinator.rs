@@ -132,8 +132,8 @@ impl Default for SyncConfig {
             download_timeout_secs: 60,
             wifi_only: false,
             max_file_size_bytes: 500 * 1024 * 1024, // 500 MB
-            header_only_download: true, // More efficient for metadata extraction
-            header_size_bytes: 256 * 1024, // 256KB should contain all metadata
+            header_only_download: true,             // More efficient for metadata extraction
+            header_size_bytes: 256 * 1024,          // 256KB should contain all metadata
             extract_artwork: true,
             retry_attempts: 3,
             audio_mime_types: vec![
@@ -260,9 +260,8 @@ impl SyncCoordinator {
         file_system: Arc<dyn FileSystemAccess>,
         db_pool: SqlitePool,
     ) -> Result<Self> {
-        let scan_queue = Arc::new(
-            ScanQueue::new(db_pool.clone(), config.max_concurrent_downloads).await?,
-        );
+        let scan_queue =
+            Arc::new(ScanQueue::new(db_pool.clone(), config.max_concurrent_downloads).await?);
 
         let conflict_resolver = Arc::new(ConflictResolver::new(
             db_pool.clone(),
@@ -272,14 +271,14 @@ impl SyncCoordinator {
         let job_repository = Arc::new(SqliteSyncJobRepository::new(db_pool.clone()));
 
         // Initialize repositories for metadata processor
-        let track_repository = Arc::new(SqliteTrackRepository::new(db_pool.clone()))
-            as Arc<dyn TrackRepository>;
-        let artist_repository = Arc::new(SqliteArtistRepository::new(db_pool.clone()))
-            as Arc<dyn ArtistRepository>;
-        let album_repository = Arc::new(SqliteAlbumRepository::new(db_pool.clone()))
-            as Arc<dyn AlbumRepository>;
-        let artwork_repository = Arc::new(SqliteArtworkRepository::new(db_pool.clone()))
-            as Arc<dyn ArtworkRepository>;
+        let track_repository =
+            Arc::new(SqliteTrackRepository::new(db_pool.clone())) as Arc<dyn TrackRepository>;
+        let artist_repository =
+            Arc::new(SqliteArtistRepository::new(db_pool.clone())) as Arc<dyn ArtistRepository>;
+        let album_repository =
+            Arc::new(SqliteAlbumRepository::new(db_pool.clone())) as Arc<dyn AlbumRepository>;
+        let artwork_repository =
+            Arc::new(SqliteArtworkRepository::new(db_pool.clone())) as Arc<dyn ArtworkRepository>;
 
         // Initialize artwork service (if artwork extraction is enabled)
         let artwork_service = if config.extract_artwork {
@@ -356,11 +355,7 @@ impl SyncCoordinator {
     /// let provider = Arc::new(GoogleDriveConnector::new(http_client));
     /// coordinator.register_provider(ProviderKind::GoogleDrive, provider).await;
     /// ```
-    pub async fn register_provider(
-        &self,
-        kind: ProviderKind,
-        provider: Arc<dyn StorageProvider>,
-    ) {
+    pub async fn register_provider(&self, kind: ProviderKind, provider: Arc<dyn StorageProvider>) {
         let mut providers = self.providers.write().await;
         providers.insert(kind, provider);
         info!("Registered storage provider: {}", kind);
@@ -458,22 +453,22 @@ impl SyncCoordinator {
         // Check network constraints
         if self.config.wifi_only {
             if let Some(monitor) = &self.network_monitor {
-                let network_info = monitor.get_network_info().await
+                let network_info = monitor
+                    .get_network_info()
+                    .await
                     .map_err(|e| SyncError::Provider(format!("Failed to check network: {}", e)))?;
-                
+
                 if network_info.status != NetworkStatus::Connected {
-                    return Err(SyncError::Provider(
-                        "Network not available".to_string(),
-                    ));
+                    return Err(SyncError::Provider("Network not available".to_string()));
                 }
-                
+
                 // WiFi-only mode: require WiFi connection and non-metered
                 if !matches!(network_info.network_type, Some(NetworkType::WiFi)) {
                     return Err(SyncError::Provider(
                         "WiFi-only mode enabled but not connected to WiFi".to_string(),
                     ));
                 }
-                
+
                 if network_info.is_metered {
                     return Err(SyncError::Provider(
                         "WiFi-only mode enabled but network is metered".to_string(),
@@ -503,10 +498,13 @@ impl SyncCoordinator {
         // Create sync job
         let mut job = match sync_type {
             SyncType::Full => SyncJob::new(session.provider, SyncType::Full),
-            SyncType::Incremental => SyncJob::new_incremental(session.provider, cursor.ok_or_else(|| SyncError::InvalidInput {
-                field: "cursor".to_string(),
-                message: "Cursor required for incremental sync".to_string(),
-            })?),
+            SyncType::Incremental => SyncJob::new_incremental(
+                session.provider,
+                cursor.ok_or_else(|| SyncError::InvalidInput {
+                    field: "cursor".to_string(),
+                    message: "Cursor required for incremental sync".to_string(),
+                })?,
+            ),
         };
 
         // Start job
@@ -635,7 +633,8 @@ impl SyncCoordinator {
 
                 // Update job status
                 if let Ok(Some(job)) = self.job_repository.find_by_id(&job_id).await {
-                    let timeout_msg = format!("Timeout after {} seconds", self.config.sync_timeout_secs);
+                    let timeout_msg =
+                        format!("Timeout after {} seconds", self.config.sync_timeout_secs);
                     if let Ok(failed_job) = job.fail(timeout_msg.clone(), None) {
                         let _ = self.job_repository.update(&failed_job).await;
                     }
@@ -695,9 +694,10 @@ impl SyncCoordinator {
             page_count += 1;
             debug!("Fetching page {} (cursor: {:?})", page_count, cursor);
 
-            let (files, next_cursor) = provider.list_media(cursor.clone()).await.map_err(|e| {
-                SyncError::Provider(format!("Failed to list media: {}", e))
-            })?;
+            let (files, next_cursor) = provider
+                .list_media(cursor.clone())
+                .await
+                .map_err(|e| SyncError::Provider(format!("Failed to list media: {}", e)))?;
 
             all_files.extend(files);
 
@@ -760,8 +760,9 @@ impl SyncCoordinator {
 
         // Phase 3: Enqueue work items
         info!("Phase 3: Enqueueing {} work items", audio_files.len());
-        let mut file_name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        
+        let mut file_name_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
         for file in audio_files.iter() {
             if cancellation_token.is_cancelled() {
                 return Err(SyncError::Cancelled);
@@ -769,12 +770,14 @@ impl SyncCoordinator {
 
             let work_item = WorkItem::new(
                 file.id.clone(),
-                file.mime_type.clone().unwrap_or_else(|| "application/octet-stream".to_string()),
+                file.mime_type
+                    .clone()
+                    .unwrap_or_else(|| "application/octet-stream".to_string()),
             )
             .with_file_size(file.size.unwrap_or(0) as i64);
 
             self.scan_queue.enqueue(work_item).await?;
-            
+
             // Map remote_file_id -> file_name for metadata processing
             file_name_map.insert(file.id.clone(), file.name.clone());
         }
@@ -807,8 +810,9 @@ impl SyncCoordinator {
                         .get(&item.remote_file_id)
                         .map(|s| s.as_str())
                         .unwrap_or("unknown");
-                    
-                    match self.metadata_processor
+
+                    match self
+                        .metadata_processor
                         .process_work_item(&item, &provider, &provider_id, file_name)
                         .await
                     {
@@ -836,10 +840,7 @@ impl SyncCoordinator {
                             );
                         }
                         Err(e) => {
-                            error!(
-                                "Failed to process work item {}: {}",
-                                item.remote_file_id, e
-                            );
+                            error!("Failed to process work item {}: {}", item.remote_file_id, e);
                             failed += 1;
 
                             // Mark as failed in scan queue
@@ -894,15 +895,14 @@ impl SyncCoordinator {
 
         // Phase 5: Detect and resolve conflicts
         info!("Phase 5: Resolving conflicts");
-        
+
         // Build a set of provider file IDs from the audio files discovered
-        let provider_file_ids: std::collections::HashSet<String> = audio_files
-            .iter()
-            .map(|f| f.id.clone())
-            .collect();
-        
+        let provider_file_ids: std::collections::HashSet<String> =
+            audio_files.iter().map(|f| f.id.clone()).collect();
+
         // Execute conflict resolution workflow
-        let conflict_stats = self.conflict_resolution_orchestrator
+        let conflict_stats = self
+            .conflict_resolution_orchestrator
             .resolve_conflicts(&job_id, &session.provider.to_string(), &provider_file_ids)
             .await
             .unwrap_or_else(|e| {
@@ -911,7 +911,7 @@ impl SyncCoordinator {
                 // Return empty stats and continue
                 ConflictResolutionStats::default()
             });
-        
+
         info!(
             "Conflict resolution complete: {} duplicates resolved, {} renames, {} deletions ({} soft, {} hard), {} bytes reclaimed",
             conflict_stats.duplicates_resolved,
@@ -1103,12 +1103,10 @@ impl SyncCoordinator {
     ///     println!("Job {}: {:?}", job.id, job.status);
     /// }
     /// ```
-    pub async fn list_history(
-        &self,
-        provider: ProviderKind,
-        limit: usize,
-    ) -> Result<Vec<SyncJob>> {
-        self.job_repository.get_history(provider, limit.try_into().unwrap_or(u32::MAX)).await
+    pub async fn list_history(&self, provider: ProviderKind, limit: usize) -> Result<Vec<SyncJob>> {
+        self.job_repository
+            .get_history(provider, limit.try_into().unwrap_or(u32::MAX))
+            .await
     }
 
     /// Check if a sync is currently active for a profile
@@ -1174,7 +1172,7 @@ mod tests {
 
         // Create auth manager
         let event_bus = Arc::new(EventBus::new(100));
-        
+
         // Create mock secure store and settings store
         use bridge_traits::storage::{SecureStore, SettingsStore};
         use std::collections::HashMap;
@@ -1186,8 +1184,15 @@ mod tests {
 
         #[async_trait::async_trait]
         impl SecureStore for MockSecureStore {
-            async fn set_secret(&self, key: &str, value: &[u8]) -> bridge_traits::error::Result<()> {
-                self.data.lock().await.insert(key.to_string(), value.to_vec());
+            async fn set_secret(
+                &self,
+                key: &str,
+                value: &[u8],
+            ) -> bridge_traits::error::Result<()> {
+                self.data
+                    .lock()
+                    .await
+                    .insert(key.to_string(), value.to_vec());
                 Ok(())
             }
 
@@ -1214,14 +1219,18 @@ mod tests {
 
         #[async_trait::async_trait]
         impl bridge_traits::HttpClient for MockHttpClient {
-            async fn execute(&self, _request: bridge_traits::HttpRequest) -> bridge_traits::error::Result<bridge_traits::HttpResponse> {
+            async fn execute(
+                &self,
+                _request: bridge_traits::HttpRequest,
+            ) -> bridge_traits::error::Result<bridge_traits::HttpResponse> {
                 Err(BridgeError::NotAvailable("http".to_string()))
             }
 
             async fn download_stream(
                 &self,
                 _url: String,
-            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>
+            {
                 Err(BridgeError::NotAvailable("download_stream".to_string()))
             }
         }
@@ -1232,7 +1241,9 @@ mod tests {
 
         #[async_trait::async_trait]
         impl FileSystemAccess for MockFileSystemAccess {
-            async fn get_cache_directory(&self) -> bridge_traits::error::Result<std::path::PathBuf> {
+            async fn get_cache_directory(
+                &self,
+            ) -> bridge_traits::error::Result<std::path::PathBuf> {
                 Ok(self.cache_dir.clone())
             }
 
@@ -1244,49 +1255,77 @@ mod tests {
                 Ok(false)
             }
 
-            async fn metadata(&self, _path: &std::path::Path) -> bridge_traits::error::Result<bridge_traits::storage::FileMetadata> {
+            async fn metadata(
+                &self,
+                _path: &std::path::Path,
+            ) -> bridge_traits::error::Result<bridge_traits::storage::FileMetadata> {
                 Err(BridgeError::NotAvailable("metadata".to_string()))
             }
 
-            async fn create_dir_all(&self, _path: &std::path::Path) -> bridge_traits::error::Result<()> {
+            async fn create_dir_all(
+                &self,
+                _path: &std::path::Path,
+            ) -> bridge_traits::error::Result<()> {
                 Ok(())
             }
 
-            async fn read_file(&self, _path: &std::path::Path) -> bridge_traits::error::Result<bytes::Bytes> {
+            async fn read_file(
+                &self,
+                _path: &std::path::Path,
+            ) -> bridge_traits::error::Result<bytes::Bytes> {
                 Ok(bytes::Bytes::new())
             }
 
-            async fn write_file(&self, _path: &std::path::Path, _data: bytes::Bytes) -> bridge_traits::error::Result<()> {
+            async fn write_file(
+                &self,
+                _path: &std::path::Path,
+                _data: bytes::Bytes,
+            ) -> bridge_traits::error::Result<()> {
                 Ok(())
             }
 
-            async fn append_file(&self, _path: &std::path::Path, _data: bytes::Bytes) -> bridge_traits::error::Result<()> {
+            async fn append_file(
+                &self,
+                _path: &std::path::Path,
+                _data: bytes::Bytes,
+            ) -> bridge_traits::error::Result<()> {
                 Ok(())
             }
 
-            async fn delete_file(&self, _path: &std::path::Path) -> bridge_traits::error::Result<()> {
+            async fn delete_file(
+                &self,
+                _path: &std::path::Path,
+            ) -> bridge_traits::error::Result<()> {
                 Ok(())
             }
 
-            async fn delete_dir_all(&self, _path: &std::path::Path) -> bridge_traits::error::Result<()> {
+            async fn delete_dir_all(
+                &self,
+                _path: &std::path::Path,
+            ) -> bridge_traits::error::Result<()> {
                 Ok(())
             }
 
-            async fn list_directory(&self, _path: &std::path::Path) -> bridge_traits::error::Result<Vec<std::path::PathBuf>> {
+            async fn list_directory(
+                &self,
+                _path: &std::path::Path,
+            ) -> bridge_traits::error::Result<Vec<std::path::PathBuf>> {
                 Ok(Vec::new())
             }
 
             async fn open_read_stream(
                 &self,
                 _path: &std::path::Path,
-            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>
+            {
                 Err(BridgeError::NotAvailable("open_read_stream".to_string()))
             }
 
             async fn open_write_stream(
                 &self,
                 _path: &std::path::Path,
-            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>> {
+            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>
+            {
                 Err(BridgeError::NotAvailable("open_write_stream".to_string()))
             }
         }
@@ -1295,7 +1334,11 @@ mod tests {
 
         #[async_trait::async_trait]
         impl SettingsStore for MockSettingsStore {
-            async fn set_string(&self, _key: &str, _value: &str) -> bridge_traits::error::Result<()> {
+            async fn set_string(
+                &self,
+                _key: &str,
+                _value: &str,
+            ) -> bridge_traits::error::Result<()> {
                 Ok(())
             }
 
@@ -1345,7 +1388,9 @@ mod tests {
 
             async fn begin_transaction(
                 &self,
-            ) -> bridge_traits::error::Result<Box<dyn bridge_traits::storage::SettingsTransaction + Send>> {
+            ) -> bridge_traits::error::Result<
+                Box<dyn bridge_traits::storage::SettingsTransaction + Send>,
+            > {
                 Err(BridgeError::NotAvailable("transactions".to_string()))
             }
         }
@@ -1354,19 +1399,17 @@ mod tests {
             data: Arc::new(TokioMutex::new(HashMap::new())),
         });
         let http_client = Arc::new(MockHttpClient);
-        
+
         let temp_dir = std::env::temp_dir().join("mpc_test");
         let file_system = Arc::new(MockFileSystemAccess {
             cache_dir: temp_dir,
         }) as Arc<dyn FileSystemAccess>;
 
-        let auth_manager = Arc::new(
-            AuthManager::new(
-                secure_store,
-                (*event_bus).clone(),
-                http_client,
-            )
-        );
+        let auth_manager = Arc::new(AuthManager::new(
+            secure_store,
+            (*event_bus).clone(),
+            http_client,
+        ));
 
         let coordinator = SyncCoordinator::new(
             SyncConfig::default(),

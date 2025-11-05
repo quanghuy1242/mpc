@@ -285,7 +285,8 @@ impl MetadataApiConfig {
             }
             if !ua.contains('/') || !ua.contains('(') || !ua.contains(')') {
                 return Err(Error::Config(
-                    "MusicBrainz user agent must follow format: 'AppName/Version (Contact)'".to_string(),
+                    "MusicBrainz user agent must follow format: 'AppName/Version (Contact)'"
+                        .to_string(),
                 ));
             }
         }

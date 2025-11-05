@@ -52,7 +52,7 @@ use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "artwork-remote")]
 use bridge_traits::http::HttpClient;
@@ -133,10 +133,7 @@ impl ArtworkService {
     /// # Returns
     ///
     /// New ArtworkService instance
-    pub fn new(
-        repository: Arc<dyn ArtworkRepository>,
-        max_cache_size: usize,
-    ) -> Self {
+    pub fn new(repository: Arc<dyn ArtworkRepository>, max_cache_size: usize) -> Self {
         let cache_capacity = NonZeroUsize::new(100).unwrap(); // 100 items in LRU
         Self {
             repository,
@@ -176,16 +173,14 @@ impl ArtworkService {
         rate_limit_delay_ms: u64,
     ) -> Self {
         let cache_capacity = NonZeroUsize::new(100).unwrap();
-        
+
         // Create MusicBrainz client if user agent provided
-        let musicbrainz_client = musicbrainz_user_agent.map(|ua| {
-            MusicBrainzClient::new(http_client.clone(), ua, rate_limit_delay_ms)
-        });
+        let musicbrainz_client = musicbrainz_user_agent
+            .map(|ua| MusicBrainzClient::new(http_client.clone(), ua, rate_limit_delay_ms));
 
         // Create Last.fm client if API key provided
-        let lastfm_client = lastfm_api_key.map(|key| {
-            LastFmClient::new(http_client.clone(), key, rate_limit_delay_ms)
-        });
+        let lastfm_client = lastfm_api_key
+            .map(|key| LastFmClient::new(http_client.clone(), key, rate_limit_delay_ms));
 
         Self {
             repository,
@@ -326,9 +321,10 @@ impl ArtworkService {
         );
 
         // Store in database
-        self.repository.insert(&artwork).await.map_err(|e| {
-            MetadataError::Database(format!("Failed to store artwork: {}", e))
-        })?;
+        self.repository
+            .insert(&artwork)
+            .await
+            .map_err(|e| MetadataError::Database(format!("Failed to store artwork: {}", e)))?;
 
         info!(
             "Stored new artwork {} ({}x{}, {} bytes)",
@@ -460,10 +456,11 @@ impl ArtworkService {
 
         // Convert to JPEG for now (WebP encoding requires additional dependencies)
         // In production, use webp crate for better compression
-        img.write_to(&mut cursor, ImageFormat::Jpeg)
-            .map_err(|e| MetadataError::ImageProcessing {
+        img.write_to(&mut cursor, ImageFormat::Jpeg).map_err(|e| {
+            MetadataError::ImageProcessing {
                 message: format!("Failed to encode image: {}", e),
-            })?;
+            }
+        })?;
 
         Ok(buffer)
     }
@@ -537,10 +534,7 @@ impl ArtworkService {
             )
         })?;
 
-        info!(
-            "Fetching remote artwork for '{} - {}'",
-            artist, album
-        );
+        info!("Fetching remote artwork for '{} - {}'", artist, album);
 
         // Try MusicBrainz first (higher quality)
         if let Some(artwork) = self
@@ -551,17 +545,11 @@ impl ArtworkService {
         }
 
         // Fallback to Last.fm
-        if let Some(artwork) = self
-            .fetch_from_lastfm(artist, album, http_client)
-            .await?
-        {
+        if let Some(artwork) = self.fetch_from_lastfm(artist, album, http_client).await? {
             return Ok(Some(artwork));
         }
 
-        warn!(
-            "No remote artwork found for '{} - {}'",
-            artist, album
-        );
+        warn!("No remote artwork found for '{} - {}'", artist, album);
         Ok(None)
     }
 
