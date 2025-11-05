@@ -15,8 +15,10 @@
 //!
 //! - **Sync Job State Machine** (`job`): Manages sync job lifecycle with validated state transitions
 //! - **Scan Queue** (`scan_queue`): Work queue for processing discovered files with retry logic
+//! - **Conflict Resolver** (`conflict_resolver`): Handles renames, duplicates, and deletions
 //! - **Repository** (`repository`): Database persistence for sync jobs and queue items
 
+pub mod conflict_resolver;
 pub mod error;
 pub mod job;
 pub mod repository;
@@ -30,4 +32,7 @@ pub use repository::{SyncJobRepository, SqliteSyncJobRepository};
 pub use scan_queue::{
     Priority, QueueStats, ScanQueue, ScanQueueRepository, SqliteScanQueueRepository,
     WorkItem, WorkItemId, WorkItemStatus,
+};
+pub use conflict_resolver::{
+    ConflictPolicy, ConflictResolver, DuplicateSet, MetadataConflict, ResolutionResult,
 };

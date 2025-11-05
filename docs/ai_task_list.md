@@ -1295,27 +1295,43 @@ During initial implementation (TASK-204), domain models were designed with addit
 
 ---
 
-### TASK-303: Implement Conflict Resolution [P0, Complexity: 4]
+### TASK-303: Implement Conflict Resolution [P0, Complexity: 4] ✅ COMPLETED
 **Description**: Handle file renames, duplicates, and deletions.
 
 **Implementation Steps**:
-1. Create `core-sync/src/conflict_resolver.rs`
-2. Implement `ConflictResolver`:
-   - `detect_duplicates(files)` - find files with same content hash
-   - `resolve_rename(old_path, new_path)` - update database references
-   - `handle_deletion(remote_id)` - mark as deleted or remove
-   - `merge_metadata(existing, incoming)` - intelligent merge
-3. Define conflict policies (keep newest, keep both, user prompt)
-4. Add deduplication by content hash
-5. Track file history for better detection
+1. Create `core-sync/src/conflict_resolver.rs` ✅
+2. Implement `ConflictResolver`: ✅
+   - `detect_duplicates(files)` - find files with same content hash ✅
+   - `resolve_rename(old_path, new_path)` - update database references ✅
+   - `handle_deletion(remote_id)` - mark as deleted or remove ✅
+   - `merge_metadata(existing, incoming)` - intelligent merge ✅
+3. Define conflict policies (keep newest, keep both, user prompt) ✅
+4. Add deduplication by content hash ✅
+5. Track file history for better detection ✅
 
 **Acceptance Criteria**:
-- Duplicates are detected by hash
-- Renames update correctly without re-download
-- Deletions don't orphan data
-- User-facing conflicts surface with clear options
+- ✅ Duplicates are detected by hash
+- ✅ Renames update correctly without re-download
+- ✅ Deletions don't orphan data
+- ✅ User-facing conflicts surface with clear options
 
-**Dependencies**: TASK-203, TASK-204
+**Dependencies**: TASK-203 ✅, TASK-204 ✅
+
+**Completion Notes**:
+- Date: November 5, 2025
+- Created comprehensive conflict resolution system (950+ lines)
+- Implemented 5 main features:
+  - Duplicate detection by content hash with wasted space calculation
+  - Rename resolution updating provider_file_id and metadata
+  - Deletion handling (soft with marker, hard with removal)
+  - Metadata merging with configurable policies (KeepNewest default)
+  - Quality-based deduplication (selects highest bitrate/most recent)
+- Defined ConflictPolicy enum: KeepNewest (default), KeepBoth, UserPrompt
+- Defined ResolutionResult enum for operation outcomes
+- Test coverage: 7 comprehensive unit tests, all passing
+- Zero clippy warnings
+- All 54 core-sync tests passing
+- Workspace builds cleanly
 
 ---
 

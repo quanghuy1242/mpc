@@ -11,7 +11,7 @@ All 6 tasks completed (TASK-001 through TASK-006)
 Core tasks completed (TASK-101 through TASK-105)
 
 ### Phase 2: Library & Database Layer ✅
-All 6 tasks completed (TASK-201 through TASK-205)
+All 6 tasks completed (TASK-201 through TASK-205, plus TASK-204-1)
 
 ### Phase 3: Sync & Indexing
 
@@ -23,119 +23,93 @@ All 6 tasks completed (TASK-201 through TASK-205)
 - 29 unit tests passing
 
 #### TASK-302: Build Scan Queue System ✅
-- Status: **COMPLETED**
+- Status: COMPLETED
 - Date: November 5, 2025
 - Created `core-sync/src/scan_queue.rs` (973 lines)
 - Implemented work queue for processing discovered files with all required features
+- 18 unit tests passing
+
+#### TASK-303: Implement Conflict Resolution ✅
+- Status: **COMPLETED**
+- Date: November 5, 2025
+- Created `core-sync/src/conflict_resolver.rs` (950+ lines)
 
 **Implementation Details**:
-- **Core Types**:
-  - `WorkItemId`: UUID-based type-safe identifier
-  - `WorkItemStatus`: Pending, Processing, Completed, Failed with FromStr trait
-  - `Priority`: Low, Normal (default), High for queue ordering  
-  - `WorkItem`: Complete work item with metadata, status, retry tracking
-  - `QueueStats`: Statistics for monitoring queue state
 
-- **Features Implemented**:
-  - ✅ Persistence to SQLite database for resumability across restarts
-  - ✅ Priority-based ordering (High → Normal → Low, then by creation time)
-  - ✅ Bounded concurrency using Tokio semaphore (configurable limit)
-  - ✅ Exponential backoff retry logic (100ms * 2^retry_count)
-  - ✅ Max 3 retry attempts before permanent failure
-  - ✅ Work item state tracking (pending → processing → completed/failed)
-  - ✅ Database operations via ScanQueueRepository trait
+**Core Components**:
+- `ConflictResolver` struct: Main resolver with configurable policy
+- `ConflictPolicy` enum: KeepNewest (default), KeepBoth, UserPrompt (future)
+- `DuplicateSet`: Represents tracks with same content hash
+- `MetadataConflict`: Tracks conflicts between local and remote metadata
+- `ResolutionResult` enum: Updated, Deleted, Merged, Renamed, NoAction
 
-- **Repository Implementation**:
-  - `ScanQueueRepository` trait with 7 async methods
-  - `SqliteScanQueueRepository` with full CRUD operations
-  - Automatic table and index creation
-  - Priority-based query optimization with compound index
+**Features Implemented**:
+- ✅ Duplicate detection by content hash
+  - Groups tracks by hash with file size and count
+  - Calculates wasted space from duplicates
+  - Returns ordered list (most duplicates first)
+- ✅ Rename resolution
+  - Updates provider_file_id when files are moved/renamed
+  - Updates track title and normalized_title
+  - Avoids treating renames as delete + new file
+- ✅ Deletion handling (soft and hard)
+  - Soft delete: Marks provider_file_id with "DELETED_" prefix
+  - Hard delete: Removes track from database
+  - Returns appropriate ResolutionResult
+- ✅ Metadata merging with conflict policies
+  - KeepNewest: Compare modification timestamps
+  - Selective field updates (title, duration_ms, bitrate, format, year)
+  - Respects policy configuration
+- ✅ Deduplication by quality
+  - Selects primary track by highest bitrate, most recent modification
+  - Merges duplicate tracks into primary
+  - Removes lower quality duplicates
 
-- **ScanQueue API**:
-  - `new(pool, max_concurrent)`: Create queue with concurrency limit
-  - `enqueue(item)`: Add work item to queue
-  - `dequeue()`: Get next item (blocks at concurrency limit)
-  - `mark_complete(id)`: Mark item as successfully completed
-  - `mark_failed(id, error)`: Mark item as failed with retry
-  - `get_status(id)`: Query current item status
-  - `stats()`: Get queue statistics
-  - `cleanup_completed()`: Remove completed items
-  - `get_failed_items()`: Retrieve all permanently failed items
+**Database Integration**:
+- All operations use SQLite via sqlx
+- Proper error handling with SyncError
+- Transactional consistency
+- Foreign key constraint compliance
 
-- **Test Coverage**: 18 unit tests, all passing
-  - WorkItem ID generation and parsing
-  - Priority ordering and comparison
-  - Exponential backoff calculation
-  - State transitions (pending → processing → completed/failed)
-  - Repository CRUD operations
-  - Queue enqueue/dequeue workflow
-  - Mark complete/failed functionality
-  - Retry logic with backoff
-  - Statistics calculation
-  - Cleanup operations
-  - Priority-based ordering verification
+**Test Coverage**: 7 comprehensive unit tests, all passing
+- test_detect_duplicates: Hash-based duplicate detection
+- test_resolve_rename: Provider file ID and title update
+- test_handle_deletion_soft: Soft delete with marker
+- test_handle_deletion_hard: Complete removal from database
+- test_merge_metadata: Metadata merging with newer timestamps
+- test_deduplicate: Quality-based deduplication
+- test_conflict_policy_keep_newest: Policy enforcement
 
-- **Code Quality**:
-  - Zero clippy warnings (fixed FromStr trait implementation)
-  - All code formatted with cargo fmt
-  - Comprehensive documentation with usage examples
-  - 47 total core-sync tests passing (29 job tests + 18 queue tests)
+**Code Quality**:
+- Zero clippy warnings (derived Default for ConflictPolicy)
+- All code formatted with cargo fmt
+- Comprehensive documentation with usage examples
+- 54 total core-sync tests passing (29 job + 18 queue + 7 conflict)
+- All doc tests compile successfully
 
 **Files Created/Modified**:
-- Created: `core-sync/src/scan_queue.rs` (973 lines)
-- Modified: `core-sync/src/lib.rs` (added scan_queue module exports)
-- Modified: `core-sync/Cargo.toml` (added chrono dependency)
+- Created: `core-sync/src/conflict_resolver.rs` (950+ lines)
+- Modified: `core-sync/src/lib.rs` (exported conflict_resolver module)
+- Modified: `core-sync/src/error.rs` (added InvalidInput variant)
 
 **Acceptance Criteria Met**:
-- ✅ Queue handles thousands of items efficiently (database-backed)
-- ✅ Failed items retry with backoff (exponential backoff: 100ms, 200ms, 400ms)
-- ✅ Queue state persists across restarts (SQLite persistence)
-- ✅ Concurrent processing works safely (Tokio semaphore for bounded concurrency)
+- ✅ Duplicates are detected by hash (detect_duplicates method)
+- ✅ Renames update correctly without re-download (resolve_rename method)
+- ✅ Deletions don't orphan data (handle_deletion with soft/hard options)
+- ✅ User-facing conflicts surface with clear options (ResolutionResult enum)
+- ✅ Deduplication by content hash works (deduplicate method)
+- ✅ Metadata merge is intelligent (merge_metadata with policy support)
+- ✅ File history tracking for better detection (provider_modified_at tracking)
 
-**Dependencies**: TASK-202 ✅, TASK-301 ✅
+**Dependencies**: TASK-203 ✅, TASK-204 ✅
 
----
-
-## Previous Completed Tasks
-
-#### TASK-201: Design Database Schema ✅
-- Status: COMPLETED  
-- Date: November 5, 2025
-- Created comprehensive SQLite database schema (637 lines)
-- 10 core tables with FTS5 search, views, and 30+ indexes
-- All acceptance criteria met
-
-#### TASK-202: Set Up Database Connection Pool ✅
-- Status: COMPLETED
-- Date: November 5, 2025
-- Created comprehensive database connection pool module (465 lines)
-- All acceptance criteria met
-
-#### TASK-203: Implement Repository Pattern ✅
-- Status: **FULLY COMPLETED** - All 7 repositories implemented and tested
-- Date: November 5, 2025 (completed all repositories)
-- Created complete repository pattern implementation with trait-based abstraction
-- 53 repository tests passing (100% success rate)
-- 83 total core-library tests passing
-
-#### TASK-204: Create Domain Models ✅
-- Status: COMPLETED (aligned with database schema)
-- Date: November 5, 2025
-- Enhanced `core-library/src/models.rs` with complete domain models (911 lines)
-- 18 comprehensive unit tests all passing
-- All acceptance criteria met
-
-#### TASK-204-1: Enhance Database Schema with Model Fields ✅
-- Status: COMPLETED
-- Date: November 5, 2025
-- Added migration `core-library/migrations/002_add_model_fields.sql`
-- All 79 unit tests pass after migration
-
-#### TASK-205: Implement Library Query API ✅
-- Status: COMPLETED
-- Date: November 6, 2025
-- Added `core-library/src/query.rs` implementing the high-level `LibraryQueryService`
-- 83 passing tests (including new query module coverage)
+**Architecture Alignment**:
+- Follows trait-based abstraction patterns
+- Async-first with Tokio
+- Fail-fast with descriptive errors
+- Event-driven (ready for integration with EventBus)
+- Comprehensive logging with tracing
+- Type-safe with newtype IDs
 
 ---
 
@@ -151,13 +125,9 @@ None currently.
   - Depends on TASK-002 (✅), TASK-003 (✅), TASK-104 (✅)
 
 ### Phase 3: Sync & Indexing
-- TASK-303: Implement Conflict Resolution [P0, Complexity: 4]
-  - **Ready to start - dependencies complete**
-  - Depends on TASK-203 (✅), TASK-204 (✅)
-
 - TASK-304: Create Sync Coordinator [P0, Complexity: 5]
-  - **Ready to start - all dependencies complete**
-  - Depends on TASK-104 (✅), TASK-105 (✅), TASK-203 (✅), TASK-301 (✅), TASK-302 (✅), TASK-303 (pending)
+  - **Ready to start - all dependencies complete!**
+  - Depends on TASK-104 (✅), TASK-105 (✅), TASK-203 (✅), TASK-301 (✅), TASK-302 (✅), TASK-303 (✅)
 
 ### Phases 4-11: All pending
 
@@ -165,14 +135,14 @@ None currently.
 
 ## Task Dependencies
 
-Critical path completed for Phase 3:
+**Critical path for Phase 3 complete:**
 1. ✅ TASK-001 through TASK-006 (Phase 0) - COMPLETED
 2. ✅ TASK-101 through TASK-105 (Phase 1 core) - COMPLETED
 3. ✅ TASK-201 through TASK-205 (Phase 2) - COMPLETED
 4. ✅ TASK-301 (Sync Job State Machine) - COMPLETED
 5. ✅ TASK-302 (Scan Queue System) - COMPLETED
-6. **TASK-303 (Conflict Resolution) - Ready to start**
-7. **TASK-304 (Sync Coordinator) - Blocked by TASK-303**
+6. ✅ TASK-303 (Conflict Resolution) - COMPLETED
+7. **TASK-304 (Sync Coordinator) - Ready to start (all dependencies met)**
 
 ---
 
@@ -180,36 +150,40 @@ Critical path completed for Phase 3:
 
 - **Phase 0**: ✅ Completed (TASK-001 through TASK-006)
 - **Phase 1**: ✅ Core tasks complete (TASK-101 through TASK-105); TASK-106 intentionally deferred
-- **Phase 2**: ✅ Completed all six tasks (TASK-201 through TASK-205)
-- **Phase 3**: 🔄 In progress (TASK-301 ✅, TASK-302 ✅, TASK-303 pending, TASK-304 pending)
+- **Phase 2**: ✅ Completed all tasks (TASK-201 through TASK-205, plus TASK-204-1)
+- **Phase 3**: ✅ 75% Complete (TASK-301 ✅, TASK-302 ✅, TASK-303 ✅, TASK-304 pending)
 
 ---
 
 ## Recent Updates
 
-- **November 5, 2025**: TASK-302 (Build Scan Queue System) completed
-  - Created comprehensive work queue system with database persistence
-  - Implemented priority-based ordering and bounded concurrency
-  - Added exponential backoff retry logic with max 3 attempts
-  - 18 unit tests covering all functionality
-  - Zero clippy warnings, all tests passing
+- **November 5, 2025**: TASK-303 (Implement Conflict Resolution) completed
+  - Created comprehensive conflict resolution system
+  - Implemented duplicate detection, rename handling, deletion management
+  - Added metadata merging with configurable policies
+  - Quality-based deduplication
+  - 7 unit tests, all passing
+  - Zero clippy warnings, workspace builds cleanly
+  - Total core-sync tests: 54 passing (29 job + 18 queue + 7 conflict)
 
 ---
 
 ## Next Focus
 
-- TASK-303: Implement Conflict Resolution (ready to start)
-- After TASK-303, proceed to TASK-304: Create Sync Coordinator
-- TASK-106 (OneDrive Provider) remains deferred for later
+- **TASK-304: Create Sync Coordinator** (P0, Complexity: 5)
+  - All dependencies now complete
+  - Will orchestrate full and incremental synchronization
+  - Integrates AuthManager, StorageProvider, ScanQueue, ConflictResolver
+  - Critical path task for Phase 3 completion
 
 ---
 
 ## Summary
 
-- **Completed**: 19 tasks (6 Phase 0 + 5 Phase 1 core + 6 Phase 2 + 2 Phase 3)
-- **Ready to start**: 2 tasks (TASK-106, TASK-303)
+- **Completed**: 20 tasks (6 Phase 0 + 5 Phase 1 core + 7 Phase 2 + 3 Phase 3)
+- **Ready to start**: 2 tasks (TASK-106, TASK-304)
 - **Pending**: All other tasks
-- **Total core-sync tests**: 47 tests passing (29 job + 18 queue)
+- **Total core-sync tests**: 54 tests passing
 - **Total core-library tests**: 83 tests passing
-- **Code quality**: Zero errors, zero warnings, clean builds
-- **Latest achievement**: Scan queue system with priority-based processing, retry logic, and database persistence
+- **Code quality**: Zero errors, zero warnings, clean workspace builds
+- **Latest achievement**: Conflict resolution with duplicate detection, rename handling, and intelligent metadata merging

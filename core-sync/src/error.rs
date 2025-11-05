@@ -33,6 +33,12 @@ pub enum SyncError {
         reason: String,
     },
 
+    #[error("Invalid input for field '{field}': {message}")]
+    InvalidInput {
+        field: String,
+        message: String,
+    },
+
     #[error("Database error: {0}")]
     Database(String),
 }
