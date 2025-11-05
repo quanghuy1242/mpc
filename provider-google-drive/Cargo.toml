@@ -17,6 +17,8 @@ serde_json = { workspace = true }
 reqwest = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }
+chrono = { workspace = true }
+urlencoding = "2.1"
 
 [dev-dependencies]
 mockall = { workspace = true }

@@ -266,6 +266,230 @@ pub trait SettingsTransaction: Send {
     async fn rollback(self: Box<Self>) -> Result<()>;
 }
 
+/// Remote file information from cloud storage providers
+///
+/// Represents a file or folder retrieved from a cloud storage provider
+/// like Google Drive or OneDrive.
+#[derive(Debug, Clone)]
+pub struct RemoteFile {
+    /// Unique identifier for the file in the provider's system
+    pub id: String,
+
+    /// File name
+    pub name: String,
+
+    /// MIME type (e.g., "audio/mpeg", "audio/flac")
+    pub mime_type: Option<String>,
+
+    /// File size in bytes (None for folders)
+    pub size: Option<u64>,
+
+    /// Creation timestamp (Unix timestamp)
+    pub created_at: Option<i64>,
+
+    /// Modification timestamp (Unix timestamp)
+    pub modified_at: Option<i64>,
+
+    /// Whether this is a folder/directory
+    pub is_folder: bool,
+
+    /// Parent folder ID(s)
+    pub parent_ids: Vec<String>,
+
+    /// MD5 hash of file contents (if available)
+    pub md5_checksum: Option<String>,
+
+    /// Provider-specific metadata
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
+/// Cloud storage provider trait
+///
+/// Abstracts cloud storage providers (Google Drive, OneDrive, WebDAV, etc.)
+/// for listing, downloading, and syncing music files.
+///
+/// # Sync Strategy
+///
+/// Providers should support both full sync (initial indexing) and incremental
+/// sync (change detection) for efficient synchronization:
+///
+/// - **Full Sync**: Use `list_media()` to enumerate all audio files
+/// - **Incremental Sync**: Use `get_changes()` with a cursor to fetch only updates
+///
+/// # Example
+///
+/// ```ignore
+/// use bridge_traits::storage::StorageProvider;
+///
+/// async fn sync_music(provider: &dyn StorageProvider) -> Result<Vec<RemoteFile>> {
+///     let (files, next_cursor) = provider.list_media(None).await?;
+///     
+///     // Filter audio files
+///     let audio_files: Vec<RemoteFile> = files
+///         .into_iter()
+///         .filter(|f| {
+///             f.mime_type
+///                 .as_ref()
+///                 .map(|m| m.starts_with("audio/"))
+///                 .unwrap_or(false)
+///         })
+///         .collect();
+///     
+///     Ok(audio_files)
+/// }
+/// ```
+#[async_trait]
+pub trait StorageProvider: Send + Sync {
+    /// List media files from the cloud storage
+    ///
+    /// Returns a paginated list of files. Audio files should be filtered by MIME type
+    /// on the client side.
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - Optional pagination token from a previous call. Pass `None` for the first page.
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple of:
+    /// - `Vec<RemoteFile>` - List of files in this page
+    /// - `Option<String>` - Cursor for the next page, or `None` if this is the last page
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Authentication token is invalid or expired
+    /// - Network request fails
+    /// - API rate limit is exceeded
+    /// - Provider API returns an error
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let (files, next_cursor) = provider.list_media(None).await?;
+    /// println!("Found {} files", files.len());
+    /// 
+    /// if let Some(cursor) = next_cursor {
+    ///     let (more_files, _) = provider.list_media(Some(cursor)).await?;
+    ///     println!("Found {} more files", more_files.len());
+    /// }
+    /// ```
+    async fn list_media(&self, cursor: Option<String>) -> Result<(Vec<RemoteFile>, Option<String>)>;
+
+    /// Get detailed metadata for a specific file
+    ///
+    /// # Arguments
+    ///
+    /// * `file_id` - The unique file identifier from the provider
+    ///
+    /// # Returns
+    ///
+    /// Returns the `RemoteFile` with complete metadata
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - File doesn't exist
+    /// - Authentication is invalid
+    /// - Network request fails
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let file = provider.get_metadata("abc123").await?;
+    /// println!("File: {} ({})", file.name, file.mime_type.unwrap_or_default());
+    /// ```
+    async fn get_metadata(&self, file_id: &str) -> Result<RemoteFile>;
+
+    /// Download file contents as a byte stream
+    ///
+    /// Returns a streaming reader for efficient downloading of large files.
+    /// Supports optional range requests for resumable downloads.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_id` - The unique file identifier
+    /// * `range` - Optional byte range in format "bytes=start-end" (e.g., "bytes=0-1023")
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Bytes` buffer containing the file contents (or requested range)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - File doesn't exist
+    /// - File is a folder (cannot download)
+    /// - Authentication is invalid
+    /// - Network request fails
+    /// - Range request is invalid
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Full download
+    /// let data = provider.download("abc123", None).await?;
+    /// println!("Downloaded {} bytes", data.len());
+    /// 
+    /// // Range request for first 1KB
+    /// let partial = provider.download("abc123", Some("bytes=0-1023")).await?;
+    /// ```
+    async fn download(&self, file_id: &str, range: Option<&str>) -> Result<Bytes>;
+
+    /// Get incremental changes since a previous sync
+    ///
+    /// Enables efficient incremental synchronization by fetching only files that
+    /// have been created, modified, or deleted since the last sync.
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - Change token from a previous sync. Pass `None` or the token from
+    ///   `list_media()` to start tracking changes.
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple of:
+    /// - `Vec<RemoteFile>` - List of changed files (includes deleted files with special marker)
+    /// - `Option<String>` - New change token to use for the next incremental sync
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Change token is invalid or expired
+    /// - Authentication is invalid
+    /// - Network request fails
+    ///
+    /// # Notes
+    ///
+    /// - Change tokens may expire after a certain period (e.g., 7 days for Google Drive)
+    /// - If token is expired, perform a full sync with `list_media()` and get a new token
+    /// - Deleted files may be included in results (check provider-specific metadata)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Initial sync
+    /// let (files, cursor) = provider.list_media(None).await?;
+    /// store_cursor(&cursor);
+    /// 
+    /// // Later: incremental sync
+    /// let stored_cursor = load_cursor();
+    /// match provider.get_changes(stored_cursor).await {
+    ///     Ok((changes, new_cursor)) => {
+    ///         println!("Found {} changes", changes.len());
+    ///         store_cursor(&new_cursor);
+    ///     }
+    ///     Err(e) if e.to_string().contains("token expired") => {
+    ///         // Fall back to full sync
+    ///         let (files, cursor) = provider.list_media(None).await?;
+    ///         store_cursor(&cursor);
+    ///     }
+    ///     Err(e) => return Err(e),
+    /// }
+    /// ```
+    async fn get_changes(&self, cursor: Option<String>) -> Result<(Vec<RemoteFile>, Option<String>)>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +505,29 @@ mod tests {
 
         assert_eq!(metadata.size, 1024);
         assert!(!metadata.is_directory);
+    }
+
+    #[test]
+    fn test_remote_file_creation() {
+        let mut metadata_map = std::collections::HashMap::new();
+        metadata_map.insert("key".to_string(), "value".to_string());
+
+        let file = RemoteFile {
+            id: "file123".to_string(),
+            name: "song.mp3".to_string(),
+            mime_type: Some("audio/mpeg".to_string()),
+            size: Some(5242880),
+            created_at: Some(1234567890),
+            modified_at: Some(1234567900),
+            is_folder: false,
+            parent_ids: vec!["folder1".to_string()],
+            md5_checksum: Some("d41d8cd98f00b204e9800998ecf8427e".to_string()),
+            metadata: metadata_map,
+        };
+
+        assert_eq!(file.id, "file123");
+        assert_eq!(file.name, "song.mp3");
+        assert!(!file.is_folder);
+        assert_eq!(file.size, Some(5242880));
     }
 }

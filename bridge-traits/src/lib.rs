@@ -111,5 +111,5 @@ pub use error::BridgeError;
 pub use background::{BackgroundExecutor, LifecycleObserver, LifecycleState, TaskConstraints};
 pub use http::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 pub use network::{NetworkInfo, NetworkMonitor, NetworkStatus, NetworkType};
-pub use storage::{FileSystemAccess, SecureStore, SettingsStore};
+pub use storage::{FileSystemAccess, RemoteFile, SecureStore, SettingsStore, StorageProvider};
 pub use time::{Clock, LogEntry, LogLevel, LoggerSink, SystemClock};
