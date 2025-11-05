@@ -17,7 +17,9 @@
 //! - Auth state event emission
 
 pub mod error;
+pub mod oauth;
 pub mod types;
 
 pub use error::{AuthError, Result};
+pub use oauth::{OAuthConfig, OAuthFlowManager, PkceVerifier};
 pub use types::{AuthState, OAuthTokens, ProfileId, ProviderKind};

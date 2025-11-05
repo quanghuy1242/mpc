@@ -17,6 +17,15 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 reqwest = { workspace = true }
+sha2 = { workspace = true }
+bytes = { workspace = true }
+
+# URL handling
+url = "2.5"
+# Base64 encoding for PKCE
+base64 = "0.22"
+# Random generation for PKCE
+rand = "0.8"
 
 [dev-dependencies]
 mockall = { workspace = true }
