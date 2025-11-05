@@ -11,10 +11,10 @@
 //! - Lyrics fetching from external providers (optional, feature-gated)
 //! - Content hashing for deduplication
 
+pub mod artwork;
 pub mod error;
 pub mod extractor;
 
+pub use artwork::{ArtworkService, ArtworkSize, ProcessedArtwork};
 pub use error::{MetadataError, Result};
-pub use extractor::{
-    ArtworkType, ExtractedArtwork, ExtractedMetadata, MetadataExtractor,
-};
+pub use extractor::{ArtworkType, ExtractedArtwork, ExtractedMetadata, MetadataExtractor};

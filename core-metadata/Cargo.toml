@@ -23,6 +23,9 @@ lofty = { workspace = true }
 # Image processing (for artwork)
 image = { workspace = true }
 
+# LRU cache for artwork
+lru = { workspace = true }
+
 [features]
 lyrics = []
 artwork-remote = []

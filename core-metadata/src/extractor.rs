@@ -245,7 +245,7 @@ impl MetadataExtractor {
                 tag.artist().map(|s| Self::normalize_text(s.as_ref())),
                 tag.album().map(|s| Self::normalize_text(s.as_ref())),
                 tag.get_string(&ItemKey::AlbumArtist)
-                    .map(|s| Self::normalize_text(s)),
+                    .map(Self::normalize_text),
                 tag.year().map(|y| y as i32),
                 tag.track(),
                 tag.track_total(),
@@ -253,7 +253,7 @@ impl MetadataExtractor {
                 tag.disk_total(),
                 tag.genre().map(|s| Self::normalize_text(s.as_ref())),
                 tag.get_string(&ItemKey::Composer)
-                    .map(|s| Self::normalize_text(s)),
+                    .map(Self::normalize_text),
                 tag.comment().map(|s| Self::normalize_text(s.as_ref())),
             )
         } else {
@@ -335,8 +335,7 @@ impl MetadataExtractor {
     /// - Normalizes consecutive whitespace to single space
     /// - Removes null bytes and control characters
     fn normalize_text(text: &str) -> String {
-        text.trim()
-            .split_whitespace()
+          text.split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
             .chars()
