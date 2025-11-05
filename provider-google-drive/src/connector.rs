@@ -129,7 +129,7 @@ impl GoogleDriveConnector {
                     if status == 200 {
                         debug!("API request succeeded: status={}", status);
                         return Ok(response);
-                    } else if status == 429 || (status >= 500 && status < 600) {
+                    } else if status == 429 || (500..600).contains(&status) {
                         // Rate limit or server error - retry with backoff
                         attempt += 1;
                         if attempt >= max_retries {
@@ -265,7 +265,7 @@ impl StorageProvider for GoogleDriveConnector {
 
         if response.status == 200 || response.status == 206 {
             info!("Downloaded {} bytes", response.body.len());
-            Ok(Bytes::from(response.body))
+            Ok(response.body)
         } else {
             Err(GoogleDriveError::ApiError {
                 status_code: response.status,

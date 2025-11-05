@@ -334,7 +334,9 @@ mod tests {
     fn test_result_type_ok() {
         let result: Result<String> = Ok("success".to_string());
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "success");
+        if let Ok(value) = result {
+            assert_eq!(value, "success");
+        }
     }
 
     #[test]

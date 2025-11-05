@@ -543,7 +543,7 @@ This document provides a structured task breakdown for implementing the Music Pl
 
 ---
 
-### TASK-106: Implement OneDrive Provider [P1, Complexity: 5]
+### TASK-106: Implement OneDrive Provider [P1, Complexity: 5] (TODO)
 **Description**: Create OneDrive/Microsoft Graph API connector.
 
 **Implementation Steps**:
@@ -569,12 +569,12 @@ This document provides a structured task breakdown for implementing the Music Pl
 
 ## Phase 2: Library & Database Layer
 
-### TASK-201: Design Database Schema [P0, Complexity: 3]
+### TASK-201: Design Database Schema [P0, Complexity: 3] ✅ COMPLETED
 **Description**: Create SQLite schema for music library.
 
 **Implementation Steps**:
-1. Create `core-library/migrations/001_initial_schema.sql`
-2. Define tables:
+1. Create `core-library/migrations/001_initial_schema.sql` ✅
+2. Define tables: ✅
    - `providers` (id, type, display_name, sync_cursor)
    - `artists` (id, name, normalized_name)
    - `albums` (id, name, artist_id, year, artwork_id)
@@ -585,17 +585,63 @@ This document provides a structured task breakdown for implementing the Music Pl
    - `artworks` (id, hash, binary_blob, width, height, dominant_color)
    - `lyrics` (track_id, source, synced, body, last_checked_at)
    - `sync_jobs` (id, provider_id, status, started_at, completed_at, cursor)
-3. Add indexes for performance
-4. Create foreign key constraints
-5. Enable FTS5 for search
+3. Add indexes for performance ✅
+4. Create foreign key constraints ✅
+5. Enable FTS5 for search ✅
 
 **Acceptance Criteria**:
-- Schema supports all library operations
-- Indexes cover common query patterns
-- Foreign keys maintain referential integrity
-- Migration applies cleanly
+- ✅ Schema supports all library operations
+- ✅ Indexes cover common query patterns
+- ✅ Foreign keys maintain referential integrity
+- ✅ Migration applies cleanly
 
-**Dependencies**: TASK-001
+**Dependencies**: TASK-001 ✅
+
+**Completion Notes**:
+- Date: November 5, 2025
+- Created comprehensive 001_initial_schema.sql migration (637 lines)
+- Implemented 10 core tables with proper constraints:
+  - providers: Cloud storage provider configurations with sync state
+  - artists: Music artists with normalized names for searching
+  - albums: Albums with artist references and cached track counts
+  - tracks: Comprehensive track metadata with 25+ fields
+  - playlists: User and system playlists with sort options
+  - playlist_tracks: Many-to-many relationship with position tracking
+  - folders: Provider folder structure for organization
+  - artworks: Image storage with deduplication via content hash
+  - lyrics: Track lyrics with synced/plain text support
+  - sync_jobs: Synchronization history with progress tracking
+- Created FTS5 virtual tables for full-text search:
+  - tracks_fts: Search across tracks, artists, albums, genres
+  - albums_fts: Search albums with artist names
+  - artists_fts: Search artists by name
+  - Automatic triggers to keep FTS indexes in sync
+- Created helpful views:
+  - track_details: Tracks with joined artist/album information
+  - album_details: Albums with track counts and artist info
+- Comprehensive indexing strategy:
+  - 30+ indexes covering common query patterns
+  - Unique indexes for natural keys (provider_file_id, hash, etc.)
+  - Foreign key indexes for join performance
+  - Composite indexes for multi-column queries
+- Database optimization:
+  - WAL mode enabled for better concurrency
+  - Foreign keys enforced
+  - 64MB cache size for performance
+  - Incremental auto-vacuum to prevent fragmentation
+- All constraints and checks implemented:
+  - NOT NULL constraints on required fields
+  - CHECK constraints for valid values (statuses, ranges, etc.)
+  - Foreign key constraints with proper ON DELETE behavior
+  - Unique constraints for deduplication
+- Migration tested successfully:
+  - Applied to test database without errors
+  - All tables created correctly
+  - FTS5 tables and triggers functional
+  - Views properly configured
+- Zero clippy warnings
+- All workspace tests passing
+- Ready for TASK-202 (database connection pool setup)
 
 ---
 

@@ -329,6 +329,82 @@ This memory tracks the completion status of tasks from the AI task list.
   - Query: trashed=false AND (mimeType contains 'audio/' OR mimeType='application/octet-stream')
   - Page size: 100 files per request
 
+### Phase 2: Library & Database Layer
+
+#### TASK-201: Design Database Schema ✅
+- Status: COMPLETED
+- Date: November 5, 2025
+- Created comprehensive SQLite database schema migration
+- Files created:
+  - `core-library/migrations/001_initial_schema.sql` (637 lines)
+- Implementation details:
+  - **10 core tables** with comprehensive constraints:
+    - **providers**: Cloud storage provider instances (id, type, display_name, profile_id, sync_cursor, last_sync_at, created_at)
+    - **artists**: Music artists (id, name, normalized_name, sort_name, created_at, updated_at)
+    - **albums**: Albums (id, name, normalized_name, artist_id, year, artwork_id, track_count, total_duration_ms, created_at, updated_at)
+    - **tracks**: Individual tracks with 25+ fields (id, provider_id, provider_file_id, hash, title, album_id, artist_id, duration_ms, bitrate, format, lyrics_status, etc.)
+    - **playlists**: User/system playlists (id, name, description, owner_type, sort_order, track_count, total_duration_ms, artwork_id, created_at, updated_at)
+    - **playlist_tracks**: Many-to-many relationship (playlist_id, track_id, position, added_at)
+    - **folders**: Provider folder structure (id, provider_id, provider_folder_id, name, parent_id, path, created_at)
+    - **artworks**: Album/track artwork with deduplication (id, hash, binary_blob, mime_type, width, height, file_size, dominant_color, source, created_at)
+    - **lyrics**: Track lyrics (track_id, source, synced, body, language, last_checked_at, created_at)
+    - **sync_jobs**: Synchronization history (id, provider_id, status, sync_type, progress tracking, error tracking, cursor, timestamps)
+  - **FTS5 full-text search** implementation:
+    - tracks_fts: Search across track title, artist name, album name, genre
+    - albums_fts: Search albums with artist names
+    - artists_fts: Search artists by name
+    - Automatic triggers to keep FTS indexes synchronized with data changes
+  - **Helpful views**:
+    - track_details: Tracks with joined artist/album information
+    - album_details: Albums with artist info and actual track counts
+  - **Comprehensive indexing** (30+ indexes):
+    - Unique indexes for natural keys (provider_file_id, hash, normalized names)
+    - Foreign key indexes for join performance
+    - Composite indexes for multi-column queries
+    - Coverage for all common query patterns
+  - **Database optimization**:
+    - WAL mode enabled for better concurrency
+    - Foreign keys enforced
+    - 64MB cache size for performance
+    - NORMAL synchronous mode for speed
+    - Incremental auto-vacuum to prevent fragmentation
+  - **Data integrity**:
+    - NOT NULL constraints on required fields
+    - CHECK constraints for valid values (statuses, date ranges, positive numbers)
+    - Foreign key constraints with proper ON DELETE behavior (CASCADE, SET NULL)
+    - Unique constraints for deduplication (hash-based for artworks)
+- Features implemented:
+  - Support for multiple cloud providers with sync state tracking
+  - Normalized artist/album/track structure with many-to-many relationships
+  - Content-based artwork deduplication via SHA hash
+  - Synced lyrics support (LRC format) with language tracking
+  - Comprehensive sync job tracking with progress and error details
+  - Folder hierarchy support for provider organization
+  - Full-text search across all music metadata
+  - Cached aggregate counts for performance (track_count, total_duration_ms)
+  - Provider-specific metadata storage in JSON format
+- Testing:
+  - Migration applied successfully to test database
+  - All 10 tables created correctly
+  - FTS5 tables and triggers functional
+  - Views properly configured
+  - 30+ indexes created
+  - PRAGMA settings applied (WAL mode, foreign keys, cache size)
+- Documentation:
+  - Extensive inline comments explaining each table's purpose
+  - Section headers for organization
+  - Constraint explanations
+  - Index rationale
+- Zero clippy warnings
+- All workspace tests passing (151 unit tests + 72 doc tests = 223 total)
+- Acceptance criteria verified:
+  ✓ Schema supports all library operations
+  ✓ Indexes cover common query patterns
+  ✓ Foreign keys maintain referential integrity
+  ✓ Migration applies cleanly
+  ✓ FTS5 search enabled
+- Ready for TASK-202 (database connection pool setup)
+
 ## In Progress Tasks
 
 None currently.
@@ -340,7 +416,12 @@ None currently.
   - **Ready to start - all dependencies complete**
   - Depends on TASK-002 (✅ completed), TASK-003 (✅ completed), TASK-104 (✅ completed)
 
-### Phases 2-11: All pending
+### Phase 2: Library & Database Layer
+- TASK-202: Set Up Database Connection Pool [P0, Complexity: 2]
+  - **Ready to start - all dependencies complete**
+  - Depends on TASK-201 (✅ completed)
+
+### Phases 3-11: All pending
 
 ## Task Dependencies
 
@@ -351,7 +432,9 @@ Critical path for next steps:
 4. ✅ TASK-103 (Token Storage) - COMPLETED
 5. ✅ TASK-104 (Auth Manager) - COMPLETED
 6. ✅ TASK-105 (Google Drive Provider) - COMPLETED
-7. **TASK-106 (OneDrive Provider) - Ready to start**
+7. ✅ TASK-201 (Database Schema) - COMPLETED
+8. **TASK-202 (Database Connection Pool) - Ready to start**
+9. **TASK-106 (OneDrive Provider) - Ready to start**
 
 ## Phase Status
 
@@ -374,9 +457,19 @@ All Phase 0 tasks (TASK-001 through TASK-006) are complete:
 
 **Phase 1 core complete - storage provider abstraction defined, Google Drive fully implemented**
 
+### Phase 2: Library & Database Layer
+- ✅ TASK-201: Design Database Schema - COMPLETED
+- TASK-202: Set Up Database Connection Pool (ready to start)
+- TASK-203: Implement Repository Pattern (pending)
+- TASK-204: Create Domain Models (pending)
+- TASK-205: Implement Library Query API (pending)
+
+**Phase 2 started - database schema complete, ready for connection pool and repositories**
+
 ## Notes
 
-- All Phase 0 tasks and Phase 1 tasks through TASK-105 complete
+- All Phase 0 and Phase 1 core tasks complete (TASK-001 through TASK-105)
+- First Phase 2 task complete (TASK-201)
 - Code quality maintained: zero clippy warnings, all tests passing
 - Strong type safety with newtype pattern for IDs
 - Security best practices throughout:
@@ -395,6 +488,14 @@ All Phase 0 tasks (TASK-001 through TASK-006) are complete:
   - Retry logic with exponential backoff
   - Comprehensive test coverage with mocks
   - Audio file filtering and folder handling
-- Total workspace tests: 216+ passing (14 new Google Drive tests added)
+- Database schema designed for:
+  - Multi-provider music library management
+  - Full-text search across all metadata
+  - Content-based artwork deduplication
+  - Synced lyrics support
+  - Comprehensive sync job tracking
+  - Performance optimization with caching and indexes
+- Total workspace tests: 223 passing (151 unit tests + 72 doc tests)
 - Provider-google-drive module: 14 unit tests, 734+ lines across 4 files
-- Ready to implement OneDrive provider (TASK-106)
+- Core-library migrations: 1 migration file, 637 lines
+- Ready for TASK-202 (database connection pool) or TASK-106 (OneDrive provider)
