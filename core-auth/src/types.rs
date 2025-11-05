@@ -173,7 +173,7 @@ impl fmt::Display for ProviderKind {
 ///
 /// let tokens = OAuthTokens {
 ///     access_token: "ya29.a0...".to_string(),
-///     refresh_token: "1//0g...".to_string(),
+///     refresh_token: Some("1//0g...".to_string()),
 ///     expires_at: Utc::now() + Duration::hours(1),
 /// };
 ///
@@ -184,8 +184,8 @@ impl fmt::Display for ProviderKind {
 pub struct OAuthTokens {
     /// The access token used for API requests
     pub access_token: String,
-    /// The refresh token used to obtain new access tokens
-    pub refresh_token: String,
+    /// The refresh token used to obtain new access tokens (optional for some flows)
+    pub refresh_token: Option<String>,
     /// When the access token expires (UTC)
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
@@ -196,7 +196,7 @@ impl OAuthTokens {
     /// # Arguments
     ///
     /// * `access_token` - The OAuth access token
-    /// * `refresh_token` - The OAuth refresh token
+    /// * `refresh_token` - The OAuth refresh token (optional)
     /// * `expires_in` - Number of seconds until token expiration
     ///
     /// # Examples
@@ -206,16 +206,64 @@ impl OAuthTokens {
     ///
     /// let tokens = OAuthTokens::new(
     ///     "access_token".to_string(),
-    ///     "refresh_token".to_string(),
+    ///     Some("refresh_token".to_string()),
     ///     3600, // 1 hour
     /// );
     /// ```
-    pub fn new(access_token: String, refresh_token: String, expires_in: i64) -> Self {
+    pub fn new(access_token: String, refresh_token: Option<String>, expires_in: i64) -> Self {
         Self {
             access_token,
             refresh_token,
             expires_at: chrono::Utc::now() + chrono::Duration::seconds(expires_in),
         }
+    }
+
+    /// Create a token set from individual parts with explicit expiration time
+    ///
+    /// This is useful for deserializing tokens from storage where the
+    /// expiration time is stored as a Unix timestamp.
+    ///
+    /// # Arguments
+    ///
+    /// * `access_token` - The OAuth access token
+    /// * `refresh_token` - The OAuth refresh token (optional)
+    /// * `expires_at` - Unix timestamp when the token expires
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core_auth::OAuthTokens;
+    /// use chrono::Utc;
+    ///
+    /// let expires_at = Utc::now().timestamp() + 3600;
+    /// let tokens = OAuthTokens::from_parts(
+    ///     "access_token".to_string(),
+    ///     Some("refresh_token".to_string()),
+    ///     expires_at,
+    /// );
+    /// ```
+    pub fn from_parts(access_token: String, refresh_token: Option<String>, expires_at: i64) -> Self {
+        use chrono::TimeZone;
+        Self {
+            access_token,
+            refresh_token,
+            expires_at: chrono::Utc.timestamp_opt(expires_at, 0).unwrap(),
+        }
+    }
+
+    /// Get the access token
+    pub fn access_token(&self) -> &str {
+        &self.access_token
+    }
+
+    /// Get the refresh token
+    pub fn refresh_token(&self) -> Option<&str> {
+        self.refresh_token.as_deref()
+    }
+
+    /// Get the expiration time as Unix timestamp
+    pub fn expires_at(&self) -> i64 {
+        self.expires_at.timestamp()
     }
 
     /// Check if the access token is expired or will expire soon
@@ -235,7 +283,7 @@ impl OAuthTokens {
     ///
     /// let tokens = OAuthTokens {
     ///     access_token: "token".to_string(),
-    ///     refresh_token: "refresh".to_string(),
+    ///     refresh_token: Some("refresh".to_string()),
     ///     expires_at: Utc::now() + Duration::minutes(10),
     /// };
     ///
@@ -434,9 +482,9 @@ mod tests {
 
     #[test]
     fn test_oauth_tokens_new() {
-        let tokens = OAuthTokens::new("access".to_string(), "refresh".to_string(), 3600);
+        let tokens = OAuthTokens::new("access".to_string(), Some("refresh".to_string()), 3600);
         assert_eq!(tokens.access_token, "access");
-        assert_eq!(tokens.refresh_token, "refresh");
+        assert_eq!(tokens.refresh_token, Some("refresh".to_string()));
         assert!(tokens.time_until_expiry().is_some());
     }
 
@@ -444,7 +492,7 @@ mod tests {
     fn test_oauth_tokens_is_expired_fresh() {
         let tokens = OAuthTokens {
             access_token: "token".to_string(),
-            refresh_token: "refresh".to_string(),
+            refresh_token: Some("refresh".to_string()),
             expires_at: Utc::now() + Duration::hours(1),
         };
         assert!(!tokens.is_expired());
@@ -454,7 +502,7 @@ mod tests {
     fn test_oauth_tokens_is_expired_within_buffer() {
         let tokens = OAuthTokens {
             access_token: "token".to_string(),
-            refresh_token: "refresh".to_string(),
+            refresh_token: Some("refresh".to_string()),
             expires_at: Utc::now() + Duration::seconds(200), // Less than default buffer
         };
         assert!(tokens.is_expired());
@@ -464,7 +512,7 @@ mod tests {
     fn test_oauth_tokens_is_expired_past() {
         let tokens = OAuthTokens {
             access_token: "token".to_string(),
-            refresh_token: "refresh".to_string(),
+            refresh_token: Some("refresh".to_string()),
             expires_at: Utc::now() - Duration::hours(1),
         };
         assert!(tokens.is_expired());
@@ -474,7 +522,7 @@ mod tests {
     fn test_oauth_tokens_is_expired_with_buffer() {
         let tokens = OAuthTokens {
             access_token: "token".to_string(),
-            refresh_token: "refresh".to_string(),
+            refresh_token: Some("refresh".to_string()),
             expires_at: Utc::now() + Duration::minutes(10),
         };
         assert!(!tokens.is_expired_with_buffer(60)); // 1 minute buffer
@@ -485,7 +533,7 @@ mod tests {
     fn test_oauth_tokens_time_until_expiry() {
         let tokens = OAuthTokens {
             access_token: "token".to_string(),
-            refresh_token: "refresh".to_string(),
+            refresh_token: Some("refresh".to_string()),
             expires_at: Utc::now() + Duration::hours(1),
         };
         let remaining = tokens.time_until_expiry().unwrap();
@@ -496,7 +544,7 @@ mod tests {
     fn test_oauth_tokens_time_until_expiry_expired() {
         let tokens = OAuthTokens {
             access_token: "token".to_string(),
-            refresh_token: "refresh".to_string(),
+            refresh_token: Some("refresh".to_string()),
             expires_at: Utc::now() - Duration::hours(1),
         };
         assert!(tokens.time_until_expiry().is_none());
@@ -506,7 +554,7 @@ mod tests {
     fn test_oauth_tokens_debug_redacts() {
         let tokens = OAuthTokens {
             access_token: "secret_access_token".to_string(),
-            refresh_token: "secret_refresh_token".to_string(),
+            refresh_token: Some("secret_refresh_token".to_string()),
             expires_at: Utc::now(),
         };
         let debug_str = format!("{:?}", tokens);
@@ -517,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_oauth_tokens_serialization() {
-        let tokens = OAuthTokens::new("access".to_string(), "refresh".to_string(), 3600);
+        let tokens = OAuthTokens::new("access".to_string(), Some("refresh".to_string()), 3600);
         let json = serde_json::to_string(&tokens).unwrap();
         let deserialized: OAuthTokens = serde_json::from_str(&json).unwrap();
         assert_eq!(tokens.access_token, deserialized.access_token);

@@ -18,8 +18,10 @@
 
 pub mod error;
 pub mod oauth;
+pub mod token_store;
 pub mod types;
 
 pub use error::{AuthError, Result};
 pub use oauth::{OAuthConfig, OAuthFlowManager, PkceVerifier};
+pub use token_store::TokenStore;
 pub use types::{AuthState, OAuthTokens, ProfileId, ProviderKind};

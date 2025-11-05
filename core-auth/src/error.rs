@@ -118,6 +118,29 @@ pub enum AuthError {
     #[error("Bridge error: {0}")]
     BridgeError(String),
 
+    /// Token data is corrupted or invalid.
+    ///
+    /// This occurs when stored token data cannot be deserialized,
+    /// indicating corruption or incompatible format changes.
+    #[error("Token data corrupted for profile {profile_id}: {reason}")]
+    TokenCorrupted {
+        /// The profile whose tokens are corrupted
+        profile_id: crate::types::ProfileId,
+        /// Reason for corruption detection
+        reason: String,
+    },
+
+    /// Serialization/deserialization error during token storage.
+    ///
+    /// This occurs when token data cannot be serialized for storage.
+    #[error("Serialization failed ({context}): {source}")]
+    SerializationFailed {
+        /// Context where serialization failed
+        context: String,
+        /// Underlying error
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
     /// Serialization/deserialization error.
     ///
     /// This occurs when token data cannot be serialized or deserialized.

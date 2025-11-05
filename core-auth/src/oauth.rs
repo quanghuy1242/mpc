@@ -361,7 +361,7 @@ impl OAuthFlowManager {
 
         Ok(OAuthTokens::new(
             token_response.access_token,
-            token_response.refresh_token.unwrap_or_default(),
+            token_response.refresh_token,
             token_response.expires_in,
         ))
     }
@@ -450,7 +450,7 @@ impl OAuthFlowManager {
 
                 return Ok(OAuthTokens::new(
                     token_response.access_token,
-                    token_response.refresh_token.unwrap_or_else(|| refresh_token.to_string()),
+                    token_response.refresh_token.or_else(|| Some(refresh_token.to_string())),
                     token_response.expires_in,
                 ));
             }
