@@ -9,8 +9,8 @@ bridge-traits = { path = "../bridge-traits" }
 core-runtime = { path = "../core-runtime" }
 core-auth = { path = "../core-auth" }
 core-library = { path = "../core-library" }
+core-async = { path = "../core-async" }
 
-tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
@@ -33,3 +33,4 @@ offline-cache = ["aes-gcm"]
 
 [dev-dependencies]
 mockall = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

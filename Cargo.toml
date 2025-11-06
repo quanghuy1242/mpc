@@ -47,6 +47,7 @@ offline-cache = [
 [workspace]
 resolver = "2"
 members = [
+    "core-async",
     "core-runtime",
     "core-auth",
     "core-sync",
@@ -120,7 +121,9 @@ uniffi = "0.28"
 # WASM bindings
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = "0.3"
+wasm-bindgen-test = "0.3"
+web-sys = { version = "0.3", features = ["Performance", "Window"] }
+gloo-timers = "0.3"
 
 # Testing
 mockall = "0.13"

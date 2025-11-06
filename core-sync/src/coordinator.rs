@@ -71,6 +71,8 @@ use bridge_traits::{
     network::{NetworkMonitor, NetworkStatus, NetworkType},
     storage::{FileSystemAccess, RemoteFile, StorageProvider},
 };
+use core_async::sync::{Mutex, RwLock};
+use core_async::time::timeout;
 use core_auth::{AuthManager, ProfileId, ProviderKind};
 use core_library::repositories::{
     AlbumRepository, ArtistRepository, ArtworkRepository, SqliteAlbumRepository,
@@ -82,8 +84,6 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, RwLock};
-use tokio::time::timeout;
 use tracing::{debug, error, info, instrument, warn};
 
 /// Sync coordinator configuration
@@ -543,7 +543,7 @@ impl SyncCoordinator {
 
         // Spawn background task
         let coordinator = Arc::new(self.clone_for_task());
-        tokio::spawn(async move {
+        core_async::task::spawn(async move {
             let result = coordinator
                 .run_sync_task(job_id, profile_id, cancellation_token)
                 .await;
@@ -1174,11 +1174,11 @@ mod tests {
 
         // Create mock secure store and settings store
         use bridge_traits::storage::{SecureStore, SettingsStore};
+        use core_async::sync::Mutex as AsyncMutex;
         use std::collections::HashMap;
-        use tokio::sync::Mutex as TokioMutex;
 
         struct MockSecureStore {
-            data: Arc<TokioMutex<HashMap<String, Vec<u8>>>>,
+            data: Arc<AsyncMutex<HashMap<String, Vec<u8>>>>,
         }
 
         #[async_trait::async_trait]
@@ -1395,7 +1395,7 @@ mod tests {
         }
 
         let secure_store = Arc::new(MockSecureStore {
-            data: Arc::new(TokioMutex::new(HashMap::new())),
+            data: Arc::new(AsyncMutex::new(HashMap::new())),
         });
         let http_client = Arc::new(MockHttpClient);
 

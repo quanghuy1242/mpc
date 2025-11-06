@@ -367,7 +367,7 @@ impl LyricsService {
                             delay_ms = delay.as_millis(),
                             "Retrying after failure"
                         );
-                        tokio::time::sleep(delay).await;
+                        core_async::time::sleep(delay).await;
                     }
                 }
             }

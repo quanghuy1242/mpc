@@ -1,0 +1,30 @@
+[package]
+name = "core-async"
+version = "0.1.0"
+edition = "2021"
+authors = ["Music Platform Core Team"]
+description = "Runtime-agnostic async abstraction layer for MPC"
+license = "MIT"
+
+[dependencies]
+# Core async primitives - always needed
+futures = { workspace = true }
+
+# Native dependencies (tokio-based)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+
+# WASM dependencies
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+gloo-timers = { version = "0.3", features = ["futures"] }
+wasm-bindgen-test = { version = "0.3" }
+
+[dev-dependencies]
+# For testing
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

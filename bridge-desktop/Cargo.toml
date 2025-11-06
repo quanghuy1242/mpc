@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 bridge-traits = { path = "../bridge-traits" }
+core-async = { path = "../core-async" }
 
 tokio = { workspace = true, features = ["fs", "io-util"] }
 async-trait = { workspace = true }

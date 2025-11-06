@@ -85,13 +85,13 @@ pub trait FileSystemAccess: Send + Sync {
     async fn open_read_stream(
         &self,
         path: &Path,
-    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
+    ) -> Result<Box<dyn core_async::io::AsyncRead + Send + Unpin>>;
 
     /// Open a file for streaming writes
     async fn open_write_stream(
         &self,
         path: &Path,
-    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>;
+    ) -> Result<Box<dyn core_async::io::AsyncWrite + Send + Unpin>>;
 
     /// Calculate total size of a directory recursively
     async fn directory_size(&self, path: &Path) -> Result<u64> {

@@ -6,8 +6,8 @@ license.workspace = true
 
 [dependencies]
 core-runtime = { path = "../core-runtime" }
+core-async = { path = "../core-async" }
 
-tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
@@ -19,3 +19,4 @@ futures = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

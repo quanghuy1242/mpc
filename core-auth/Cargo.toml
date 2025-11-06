@@ -7,8 +7,8 @@ license.workspace = true
 [dependencies]
 bridge-traits = { path = "../bridge-traits" }
 core-runtime = { path = "../core-runtime" }
+core-async = { path = "../core-async" }
 
-tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
@@ -29,3 +29,4 @@ rand = "0.8"
 
 [dev-dependencies]
 mockall = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

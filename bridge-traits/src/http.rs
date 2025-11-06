@@ -187,7 +187,7 @@ pub trait HttpClient: Send + Sync {
     async fn download_stream(
         &self,
         url: String,
-    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
+    ) -> Result<Box<dyn core_async::io::AsyncRead + Send + Unpin>>;
 
     /// Check network connectivity
     async fn is_connected(&self) -> bool {

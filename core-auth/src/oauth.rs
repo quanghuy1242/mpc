@@ -51,6 +51,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use bridge_traits::http::{HttpClient, HttpMethod, HttpRequest};
 use bytes::Bytes;
+use core_async::time::sleep;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_urlencoded;
@@ -58,7 +59,6 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
 use tracing::{instrument, warn};
 use url::Url;
 

@@ -8,16 +8,15 @@ use bridge_traits::{
     },
     error::{BridgeError, Result},
     network::{NetworkInfo, NetworkMonitor, NetworkStatus, NetworkType},
+    time::{Clock, SystemClock},
 };
+use core_async::sync::{oneshot, RwLock};
+use core_async::task::JoinHandle;
+use core_async::time::sleep;
 use futures_util::{future::BoxFuture, FutureExt};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::{
-    sync::{oneshot, RwLock},
-    task::JoinHandle,
-    time::sleep,
-};
+use std::time::Duration;
 use tracing::{debug, warn};
 
 type TaskHandler = Arc<dyn Fn() -> BoxFuture<'static, Result<()>> + Send + Sync>;
@@ -27,28 +26,61 @@ pub struct TokioBackgroundExecutor {
     tasks: Arc<RwLock<HashMap<TaskId, TaskInfo>>>,
     handlers: Arc<RwLock<HashMap<String, TaskHandler>>>,
     network_monitor: Option<Arc<dyn NetworkMonitor>>,
+    clock: Arc<dyn Clock>,
 }
 
 struct TaskInfo {
     status: TaskStatus,
     handle: Option<JoinHandle<()>>,
     cancel: Option<oneshot::Sender<()>>,
-    last_run: Option<Instant>,
-    next_run: Option<Instant>,
+    last_run: Option<i64>,
+    next_run: Option<i64>,
 }
 
 impl TokioBackgroundExecutor {
     /// Create a new background executor with no network monitoring.
     pub fn new() -> Self {
-        Self::with_network_monitor(None)
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        Self::with_network_monitor_and_clock(None, clock)
     }
 
     /// Create a background executor with an optional network monitor.
     pub fn with_network_monitor(monitor: Option<Arc<dyn NetworkMonitor>>) -> Self {
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        Self::with_network_monitor_and_clock(monitor, clock)
+    }
+
+    /// Create a background executor with an optional network monitor and custom clock.
+    pub fn with_network_monitor_and_clock(
+        monitor: Option<Arc<dyn NetworkMonitor>>,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             tasks: Arc::new(RwLock::new(HashMap::new())),
             handlers: Arc::new(RwLock::new(HashMap::new())),
             network_monitor: monitor,
+            clock,
+        }
+    }
+
+    fn now_millis(clock: &dyn Clock) -> i64 {
+        clock.unix_timestamp_millis()
+    }
+
+    fn duration_to_millis(duration: Duration) -> i64 {
+        duration.as_millis().min(i64::MAX as u128) as i64
+    }
+
+    fn schedule_after(clock: &dyn Clock, delay: Duration) -> i64 {
+        let now = Self::now_millis(clock);
+        now.saturating_add(Self::duration_to_millis(delay))
+    }
+
+    fn millis_to_duration(millis: i64) -> Duration {
+        if millis <= 0 {
+            Duration::from_secs(0)
+        } else {
+            Duration::from_millis(millis as u64)
         }
     }
 
@@ -131,8 +163,10 @@ impl TokioBackgroundExecutor {
         constraints: TaskConstraints,
         mut cancel_rx: oneshot::Receiver<()>,
         monitor: Option<Arc<dyn NetworkMonitor>>,
+        clock: Arc<dyn Clock>,
     ) {
         let mut ticker = tokio::time::interval(period);
+        let period_millis = Self::duration_to_millis(period);
         loop {
             tokio::select! {
                 _ = &mut cancel_rx => {
@@ -148,7 +182,7 @@ impl TokioBackgroundExecutor {
                         debug!(task_id = %id.0, "Constraints not satisfied; skipping run");
                         let mut tasks = tasks.write().await;
                         if let Some(info) = tasks.get_mut(&id) {
-                            info.next_run = Some(Instant::now() + period);
+                            info.next_run = Some(Self::now_millis(clock.as_ref()).saturating_add(period_millis));
                         }
                         continue;
                     }
@@ -164,9 +198,9 @@ impl TokioBackgroundExecutor {
 
                     let mut tasks = tasks.write().await;
                     if let Some(info) = tasks.get_mut(&id) {
-                        let now = Instant::now();
+                        let now = Self::now_millis(clock.as_ref());
                         info.last_run = Some(now);
-                        info.next_run = Some(now + period);
+                        info.next_run = Some(now.saturating_add(period_millis));
                         info.status = match result {
                             Ok(()) => TaskStatus::Completed,
                             Err(err) => {
@@ -188,6 +222,7 @@ impl TokioBackgroundExecutor {
         constraints: TaskConstraints,
         mut cancel_rx: oneshot::Receiver<()>,
         monitor: Option<Arc<dyn NetworkMonitor>>,
+        clock: Arc<dyn Clock>,
     ) {
         let delay_sleep = sleep(delay);
         tokio::pin!(delay_sleep);
@@ -234,7 +269,7 @@ impl TokioBackgroundExecutor {
 
         let mut tasks = tasks.write().await;
         if let Some(info) = tasks.get_mut(&id) {
-            info.last_run = Some(Instant::now());
+            info.last_run = Some(Self::now_millis(clock.as_ref()));
             info.next_run = None;
             info.status = match result {
                 Ok(()) => TaskStatus::Completed,
@@ -281,7 +316,7 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
                 handle: None,
                 cancel: Some(cancel_tx),
                 last_run: None,
-                next_run: Some(Instant::now()),
+                next_run: Some(Self::now_millis(self.clock.as_ref())),
             },
         )
         .await;
@@ -291,6 +326,7 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
         let monitor = self.network_monitor.clone();
         let task_id_clone = TaskId::new(task_id);
         let constraints_clone = constraints.clone();
+        let clock = Arc::clone(&self.clock);
 
         let handle = tokio::spawn(async move {
             TokioBackgroundExecutor::run_recurring_task(
@@ -301,6 +337,7 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
                 constraints_clone,
                 cancel_rx,
                 monitor,
+                clock,
             )
             .await;
         });
@@ -339,7 +376,7 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
                 handle: None,
                 cancel: Some(cancel_tx),
                 last_run: None,
-                next_run: Some(Instant::now() + delay),
+                next_run: Some(Self::schedule_after(self.clock.as_ref(), delay)),
             },
         )
         .await;
@@ -349,6 +386,7 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
         let monitor = self.network_monitor.clone();
         let task_id_clone = TaskId::new(task_id);
         let constraints_clone = constraints.clone();
+        let clock = Arc::clone(&self.clock);
 
         let handle = tokio::spawn(async move {
             TokioBackgroundExecutor::run_one_time_task(
@@ -359,6 +397,7 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
                 constraints_clone,
                 cancel_rx,
                 monitor,
+                clock,
             )
             .await;
         });
@@ -411,12 +450,9 @@ impl BackgroundExecutor for TokioBackgroundExecutor {
         let tasks = self.tasks.read().await;
         if let Some(info) = tasks.get(task_id) {
             if let Some(next) = info.next_run {
-                let now = Instant::now();
-                if next <= now {
-                    Ok(Some(Duration::from_secs(0)))
-                } else {
-                    Ok(Some(next.duration_since(now)))
-                }
+                let now = Self::now_millis(self.clock.as_ref());
+                let remaining = next - now;
+                Ok(Some(Self::millis_to_duration(remaining)))
             } else {
                 Ok(None)
             }

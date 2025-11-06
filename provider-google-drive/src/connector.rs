@@ -150,7 +150,10 @@ impl GoogleDriveConnector {
                             "API request failed (attempt {}/{}): status={}, retrying in {}ms",
                             attempt, max_retries, status, backoff_ms
                         );
-                        tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                        core_async::time::sleep(core_async::time::Duration::from_millis(
+                            backoff_ms,
+                        ))
+                        .await;
                     } else {
                         // Client error - don't retry
                         warn!("API request failed: status={}", status);
@@ -173,7 +176,8 @@ impl GoogleDriveConnector {
                         "API request failed (attempt {}/{}): {}, retrying in {}ms",
                         attempt, max_retries, e, backoff_ms
                     );
-                    tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                    core_async::time::sleep(core_async::time::Duration::from_millis(backoff_ms))
+                        .await;
                 }
             }
         }

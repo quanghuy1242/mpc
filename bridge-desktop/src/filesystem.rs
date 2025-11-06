@@ -6,9 +6,9 @@ use bridge_traits::{
     storage::{FileMetadata, FileSystemAccess},
 };
 use bytes::Bytes;
+use core_async::io::AsyncWriteExt;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 use tracing::debug;
 
 /// Tokio-based file system implementation

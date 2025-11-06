@@ -43,6 +43,7 @@
 use crate::error::{MetadataError, Result};
 use crate::extractor::ExtractedArtwork;
 use bytes::Bytes;
+use core_async::sync::RwLock;
 use core_library::models::Artwork;
 use core_library::repositories::ArtworkRepository;
 use image::{DynamicImage, ImageFormat};
@@ -51,7 +52,6 @@ use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 #[cfg(feature = "artwork-remote")]

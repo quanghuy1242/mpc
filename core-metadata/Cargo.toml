@@ -8,8 +8,9 @@ license.workspace = true
 bridge-traits = { path = "../bridge-traits" }
 core-runtime = { path = "../core-runtime" }
 core-library = { path = "../core-library" }
+core-async = { path = "../core-async" }
 
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }  # For file system operations
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
@@ -39,3 +40,4 @@ with-test-fixtures = []  # Enable integration tests with real audio files
 [dev-dependencies]
 mockall = { workspace = true }
 sqlx = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

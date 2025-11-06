@@ -5,8 +5,8 @@ use bridge_traits::{
     error::Result,
     network::{NetworkChangeStream, NetworkInfo, NetworkMonitor, NetworkStatus, NetworkType},
 };
+use core_async::sync::Mutex;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::debug;
 
 /// Desktop network monitor implementation

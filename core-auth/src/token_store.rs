@@ -437,8 +437,8 @@ impl TokenStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_async::sync::Mutex;
     use std::collections::HashMap;
-    use tokio::sync::Mutex;
 
     /// Mock implementation of SecureStore for testing
     #[derive(Clone)]

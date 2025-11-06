@@ -90,14 +90,14 @@
 use crate::enrichment_service::{EnrichmentRequest, EnrichmentResponse, EnrichmentService};
 use crate::error::{MetadataError, Result};
 use bridge_traits::network::{NetworkMonitor, NetworkType};
+use core_async::sync::Semaphore;
+use core_async::time::sleep;
 use core_library::models::Track;
 use core_library::repositories::track::TrackRepository;
 use core_runtime::events::{CoreEvent, EventBus, LibraryEvent};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Semaphore;
-use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, warn};
 
 // =============================================================================
@@ -465,7 +465,7 @@ impl EnrichmentJob {
                 let track = track.clone();
                 let job = self.clone_for_task();
 
-                let handle = tokio::spawn(async move {
+                let handle = core_async::task::spawn(async move {
                     let result = job.enrich_track(&track).await;
                     drop(permit);
                     result

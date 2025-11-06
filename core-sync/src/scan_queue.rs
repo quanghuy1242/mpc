@@ -42,10 +42,10 @@
 //! ```
 
 use async_trait::async_trait;
+use core_async::sync::Semaphore;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 

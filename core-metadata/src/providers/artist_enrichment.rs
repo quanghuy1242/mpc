@@ -40,11 +40,12 @@
 
 use crate::error::{MetadataError, Result};
 use bridge_traits::http::{HttpClient, HttpMethod, HttpRequest};
+use bridge_traits::time::{Clock, SystemClock};
+use core_async::sync::Mutex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use std::time::Duration;
 use tracing::{debug, info};
 
 /// MusicBrainz API base URL
@@ -79,28 +80,33 @@ pub struct ArtistEnrichmentProvider {
 
 /// Simple rate limiter to enforce delay between requests
 struct RateLimiter {
-    last_request: Option<Instant>,
+    clock: Arc<dyn Clock>,
+    last_request_ms: Option<i64>,
     min_delay: Duration,
 }
 
 impl RateLimiter {
-    fn new(delay_ms: u64) -> Self {
+    fn new(delay_ms: u64, clock: Arc<dyn Clock>) -> Self {
         Self {
-            last_request: None,
+            clock,
+            last_request_ms: None,
             min_delay: Duration::from_millis(delay_ms),
         }
     }
 
     async fn wait_if_needed(&mut self) {
-        if let Some(last) = self.last_request {
-            let elapsed = last.elapsed();
-            if elapsed < self.min_delay {
-                let wait_time = self.min_delay - elapsed;
+        if let Some(last) = self.last_request_ms {
+            let now = self.clock.unix_timestamp_millis();
+            let elapsed_ms = now - last;
+            let required_ms = self.min_delay.as_millis() as i64;
+            if elapsed_ms < required_ms {
+                let wait_ms = (required_ms - elapsed_ms) as u64;
+                let wait_time = Duration::from_millis(wait_ms);
                 debug!("Rate limiting: waiting {:?}", wait_time);
-                tokio::time::sleep(wait_time).await;
+                core_async::time::sleep(wait_time).await;
             }
         }
-        self.last_request = Some(Instant::now());
+        self.last_request_ms = Some(self.clock.unix_timestamp_millis());
     }
 }
 
@@ -160,10 +166,20 @@ impl ArtistEnrichmentProvider {
         user_agent: String,
         rate_limit_delay_ms: u64,
     ) -> Self {
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        Self::with_clock(http_client, user_agent, rate_limit_delay_ms, clock)
+    }
+
+    pub fn with_clock(
+        http_client: Arc<dyn HttpClient>,
+        user_agent: String,
+        rate_limit_delay_ms: u64,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             http_client,
             user_agent,
-            rate_limiter: Arc::new(Mutex::new(RateLimiter::new(rate_limit_delay_ms))),
+            rate_limiter: Arc::new(Mutex::new(RateLimiter::new(rate_limit_delay_ms, clock))),
         }
     }
 

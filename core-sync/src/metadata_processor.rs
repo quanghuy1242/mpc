@@ -35,6 +35,7 @@
 use crate::error::{Result, SyncError};
 use crate::scan_queue::WorkItem;
 use bridge_traits::storage::{FileSystemAccess, StorageProvider};
+use bridge_traits::time::{Clock, SystemClock};
 use bytes::Bytes;
 use core_library::models::{Album, AlbumId, Artist, ArtistId, Track, TrackId};
 use core_library::repositories::{
@@ -112,6 +113,7 @@ pub struct MetadataProcessor {
     artwork_repository: Arc<dyn ArtworkRepository>,
     artwork_service: Option<Arc<ArtworkService>>,
     db_pool: SqlitePool,
+    clock: Arc<dyn Clock>,
 }
 
 impl MetadataProcessor {
@@ -138,6 +140,32 @@ impl MetadataProcessor {
         artwork_service: Option<Arc<ArtworkService>>,
         db_pool: SqlitePool,
     ) -> Self {
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        Self::with_clock(
+            config,
+            file_system,
+            track_repository,
+            artist_repository,
+            album_repository,
+            artwork_repository,
+            artwork_service,
+            db_pool,
+            clock,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_clock(
+        config: ProcessorConfig,
+        file_system: Arc<dyn FileSystemAccess>,
+        track_repository: Arc<dyn TrackRepository>,
+        artist_repository: Arc<dyn ArtistRepository>,
+        album_repository: Arc<dyn AlbumRepository>,
+        artwork_repository: Arc<dyn ArtworkRepository>,
+        artwork_service: Option<Arc<ArtworkService>>,
+        db_pool: SqlitePool,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         let metadata_extractor = Arc::new(MetadataExtractor::new());
 
         Self {
@@ -150,6 +178,17 @@ impl MetadataProcessor {
             artwork_repository,
             artwork_service,
             db_pool,
+            clock,
+        }
+    }
+
+    fn elapsed_since(&self, start_ms: i64) -> u64 {
+        let now = self.clock.unix_timestamp_millis();
+        let diff = now - start_ms;
+        if diff < 0 {
+            0
+        } else {
+            diff as u64
         }
     }
 
@@ -182,7 +221,7 @@ impl MetadataProcessor {
         provider_id: &str,
         file_name: &str,
     ) -> Result<ProcessingResult> {
-        let start_time = std::time::Instant::now();
+        let start_time = self.clock.unix_timestamp_millis();
 
         debug!(
             "Processing work item: {} ({})",
@@ -229,7 +268,7 @@ impl MetadataProcessor {
                 track_id: existing_track.unwrap().id,
                 artwork_processed: false,
                 bytes_downloaded,
-                processing_time_ms: start_time.elapsed().as_millis() as u64,
+                processing_time_ms: self.elapsed_since(start_time),
             });
         }
 
@@ -309,7 +348,7 @@ impl MetadataProcessor {
         // Step 10: Clean up temporary file
         self.cleanup_temp_file(&temp_path).await;
 
-        let processing_time_ms = start_time.elapsed().as_millis() as u64;
+        let processing_time_ms = self.elapsed_since(start_time);
 
         info!(
             "Successfully processed {} in {}ms (new: {}, artwork: {})",
@@ -368,8 +407,10 @@ impl MetadataProcessor {
                         "Download attempt {} failed for {}: {}. Retrying...",
                         attempt, work_item.remote_file_id, e
                     );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2u64.pow(attempt - 1)))
-                        .await;
+                    core_async::time::sleep(core_async::time::Duration::from_secs(
+                        2u64.pow(attempt - 1),
+                    ))
+                    .await;
                 }
                 Err(e) => {
                     return Err(SyncError::Provider(format!(
@@ -400,9 +441,10 @@ impl MetadataProcessor {
         file_id: &str,
         range: Option<&str>,
     ) -> Result<Bytes> {
-        let timeout_duration = tokio::time::Duration::from_secs(self.config.download_timeout_secs);
+        let timeout_duration =
+            core_async::time::Duration::from_secs(self.config.download_timeout_secs);
 
-        tokio::time::timeout(timeout_duration, provider.download(file_id, range))
+        core_async::time::timeout(timeout_duration, provider.download(file_id, range))
             .await
             .map_err(|_| SyncError::Timeout(self.config.download_timeout_secs))?
             .map_err(|e| SyncError::Provider(format!("Download failed: {}", e)))

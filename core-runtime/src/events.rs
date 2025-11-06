@@ -55,14 +55,14 @@
 //!
 //! ```rust
 //! use core_runtime::events::{EventBus, CoreEvent};
-//! use tokio::sync::broadcast::error::RecvError;
+//! use core_runtime::events::RecvError;
 //!
-//! # #[tokio::main]
+//! # #[core_async::main]
 //! # async fn main() {
 //! let event_bus = EventBus::new(100);
 //! let mut stream = event_bus.subscribe();
 //!
-//! tokio::spawn(async move {
+//! core_async::task::spawn(async move {
 //!     loop {
 //!         match stream.recv().await {
 //!             Ok(event) => println!("Received: {:?}", event),
@@ -81,7 +81,7 @@
 //! ```rust
 //! use core_runtime::events::{EventBus, CoreEvent, AuthEvent};
 //!
-//! # #[tokio::main]
+//! # #[core_async::main]
 //! # async fn main() {
 //! let event_bus = EventBus::new(100);
 //! let mut stream = event_bus.subscribe();
@@ -171,13 +171,13 @@
 //! # }
 //! ```
 
+use core_async::sync::broadcast;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use tokio::sync::broadcast;
 
 // Re-export commonly used types
-pub use tokio::sync::broadcast::error::{RecvError, SendError};
-pub use tokio::sync::broadcast::Receiver;
+pub use core_async::sync::broadcast::error::{RecvError, SendError};
+pub use core_async::sync::broadcast::Receiver;
 
 /// Default buffer size for the event bus channel.
 ///

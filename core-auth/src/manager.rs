@@ -58,11 +58,11 @@ use crate::token_store::TokenStore;
 use crate::types::OAuthTokens;
 use crate::types::{AuthState, ProfileId, ProviderKind};
 use bridge_traits::{http::HttpClient, SecureStore};
+use core_async::sync::{Mutex, RwLock};
+use core_async::time::{timeout, Duration};
 use core_runtime::events::{AuthEvent, CoreEvent, EventBus};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
-use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, instrument, warn};
 
 /// Default timeout for authentication operations (2 minutes)
@@ -819,18 +819,18 @@ mod tests {
     use bridge_traits::error::{BridgeError, Result as BridgeResult};
     use bridge_traits::http::{HttpClient, HttpRequest, HttpResponse};
     use bridge_traits::SecureStore;
+    use core_async::sync::Mutex as AsyncMutex;
     use std::collections::HashMap as StdHashMap;
-    use tokio::sync::Mutex as TokioMutex;
 
     // Mock SecureStore for testing
     struct MockSecureStore {
-        storage: Arc<TokioMutex<StdHashMap<String, Vec<u8>>>>,
+        storage: Arc<AsyncMutex<StdHashMap<String, Vec<u8>>>>,
     }
 
     impl MockSecureStore {
         fn new() -> Self {
             Self {
-                storage: Arc::new(TokioMutex::new(StdHashMap::new())),
+                storage: Arc::new(AsyncMutex::new(StdHashMap::new())),
             }
         }
     }

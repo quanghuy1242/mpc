@@ -5,10 +5,10 @@ use bridge_traits::{
     error::{BridgeError, Result},
     http::{HttpClient, HttpMethod, HttpRequest, HttpResponse, RetryPolicy},
 };
+use core_async::time::sleep;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio::time::sleep;
 use tracing::{debug, warn};
 
 /// Reqwest-based HTTP client implementation
