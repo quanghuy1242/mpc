@@ -1,5 +1,7 @@
 # Music Platform Core - AI Implementation Task List
 
+**IMPORTANT NOTE:** Critical architectural flaws and immediate bug fixes are now tracked in `docs/immediate_todo.md`. Please refer to that document for the highest priority tasks.
+
 This document provides a structured task breakdown for implementing the Music Platform Core as described in `core_architecture.md`. Tasks are organized by phase, with clear dependencies, acceptance criteria, and implementation guidance.
 
 ## Task Organization
@@ -1317,8 +1319,8 @@ During initial implementation (TASK-204), domain models were designed with addit
 
 ---
 
-### TASK-304: Create Sync Coordinator [P0, Complexity: 5] ✅ COMPLETED
-**Description**: Orchestrate full and incremental synchronization.
+### TASK-304: Create Sync Coordinator [P0, Complexity: 5] ⚠️ CRITICAL FIX REQUIRED
+**Description**: Orchestrate full and incremental synchronization. **CRITICAL FLAW: The incremental sync logic is missing. Detailed fix steps are in `docs/immediate_todo.md`.**
 
 **Implementation Steps**:
 1. Create `core-sync/src/coordinator.rs`
@@ -1341,7 +1343,7 @@ During initial implementation (TASK-204), domain models were designed with addit
 
 **Acceptance Criteria**:
 - ✅ Full sync indexes entire provider correctly
-- ✅ Incremental sync only processes changes
+- ❌ Incremental sync only processes changes
 - ✅ Sync resumes after interruption
 - ✅ Progress updates stream in real-time
 - ✅ Integration tests with mock provider complete successfully
@@ -1349,6 +1351,7 @@ During initial implementation (TASK-204), domain models were designed with addit
 **Dependencies**: TASK-104, TASK-105, TASK-203, TASK-301, TASK-302, TASK-303
 
 **Completion Notes**:
+- **Status**: Partially completed. The full sync workflow is implemented, but the incremental sync logic is missing from the `execute_sync` function.
 - Created comprehensive SyncCoordinator implementation (1220+ lines)
 - All public API methods implemented:
   - `new()` - Initialize coordinator with dependencies
@@ -1748,6 +1751,7 @@ During initial implementation (TASK-204), domain models were designed with addit
 - Feature gated behind `lyrics` feature flag
 - Zero clippy warnings
 - Documented in Serena memory: `memory_task_403_lyrics_provider.md`
+- **Future Work**: The Genius provider implementation (`TASK-403.1`) will be revisited later, as it may require web scraping.
 
 ---
 
@@ -1807,6 +1811,7 @@ During initial implementation (TASK-204), domain models were designed with addit
 5. Add error types for playback failures
 
 **Notes**:
+- These traits must be designed to support a multi-threaded producer-consumer model. The `AudioDecoder` will run in a "producer" thread, while the `PlaybackAdapter` will be called from a high-priority "consumer" thread.
 - Host bridge equivalents (`bridge-traits/src/playback.rs`) already expose these shapes for platform adapters. Reuse those definitions or ensure the core-facing traits stay aligned.
 
 **Acceptance Criteria**:
@@ -1818,52 +1823,47 @@ During initial implementation (TASK-204), domain models were designed with addit
 
 ---
 
-### TASK-502: Implement Audio Streaming Service [P0, Complexity: 4]
-**Description**: Provide streaming API for track playback.
+### TASK-502: Implement Audio Streaming Service [P0, Complexity: 4] ⚠️ CRITICAL FIX REQUIRED
+**Description**: Provide the core logic for the streaming "producer". This service is designed to be run by a host-provided background executor. **CRITICAL FLAW: The threading model needs to be implemented according to the runtime-agnostic async abstraction. Detailed fix steps are in `docs/immediate_todo.md`.**
 
 **Implementation Steps**:
-1. Create `core-playback/src/streaming.rs`
-2. Implement `StreamingService`:
-   - `stream_track(track_id)` -> `AudioSource`
-   - Check cache first via `FileSystemAccess`
-   - Download from provider if cache miss
-   - Support range requests for seeking
-   - Implement adaptive buffering
-3. Add prefetch logic for next track (gapless)
-4. Use `HttpClient` for remote streams
-5. Verify token validity via `AuthManager`
-6. Implement bandwidth monitoring and quality adjustment
+1. Create `core-playback/src/streaming.rs`.
+2. Implement the `StreamingService`'s main loop as an `async` function. This function will be called by the host platform using the `BackgroundExecutor` bridge.
+3. **Crucially, the `StreamingService` itself must not contain any thread-spawning logic (e.g., `tokio::spawn`).** It provides the `async` logic; the host provides the thread.
+4. The service's logic will:
+   - Download audio chunks using the `HttpClient` bridge.
+   - Pass the chunks to the `SymphoniaDecoder`.
+   - Place the resulting PCM samples into a shared, thread-safe ring buffer that the host's audio consumer thread can read from.
+5. Implement adaptive buffering and pre-fetching logic within this `async` loop.
 
 **Acceptance Criteria**:
-- Streams start within <150ms for cached tracks
-- Remote streams work with range requests
-- Buffering prevents stuttering
-- Next track prefetches automatically
+- The `StreamingService` is `Send + Sync` and can be safely executed from any thread.
+- The core logic is self-contained and does not depend on a specific threading implementation.
+- The service correctly populates a ring buffer with decoded PCM data.
 
 **Dependencies**: TASK-002, TASK-003, TASK-104, TASK-105, TASK-501
 
 ---
 
 ### TASK-503: Implement Core Audio Decoder [P1, Complexity: 5]
-**Description**: Audio decoding using `symphonia` crate.
+**Description**: Audio decoding using `symphonia` crate, running as part of the "producer" thread.
 
 **Implementation Steps**:
 1. Create `core-playback/src/decoder.rs`
-2. Implement `SymphoniaDecoder` for `AudioDecoder` trait:
-   - `probe(source)` -> `AudioFormat`
-   - `decode_frames()` -> stream of PCM samples
-   - `seek(position)` -> timestamp
-3. Support formats: MP3, AAC, FLAC, Vorbis, Opus, WAV, ALAC
-4. Add format detection and validation
-5. Handle codec errors gracefully
-6. Implement sample rate conversion if needed
-7. Feature-gate optional codecs for licensing
+2. Implement `SymphoniaDecoder` for the `AudioDecoder` trait.
+3. The `decode_frames()` method will be called by the `StreamingService` within the producer thread.
+4. It will take raw audio data (from the network) and decode it into PCM samples.
+5. The decoded samples will be returned to the `StreamingService` to be placed in the ring buffer.
+6. Support formats: MP3, AAC, FLAC, Vorbis, Opus, WAV, ALAC.
+7. Add format detection and validation.
+8. Handle codec errors gracefully.
+9. Feature-gate optional codecs for licensing if necessary.
 
 **Acceptance Criteria**:
 - Decodes all common audio formats
 - Seeking works accurately
 - Error handling is robust
-- Performance meets <10% CPU target
+- Performance meets <10% CPU target on a modern CPU.
 
 **Dependencies**: TASK-501
 
@@ -2231,6 +2231,24 @@ During initial implementation (TASK-204), domain models were designed with addit
 - Keystore integration works securely
 
 **Dependencies**: TASK-801
+
+---
+
+### TASK-805: Implement Wasm Build with Decoder Code-Splitting [P2, Complexity: 4]
+**Description**: Configure the WebAssembly build process to produce separate, lazy-loadable Wasm modules for each audio decoder (e.g., MP3, FLAC, AAC) to minimize initial page load size.
+
+**Implementation Steps**:
+1. Use a combination of Rust feature flags and `wasm-pack` build configurations to compile a separate Wasm file for each required `symphonia` decoder format.
+2. Ensure the main `core-wasm` bundle contains all common logic but excludes the format-specific decoders.
+3. Create a JavaScript/TypeScript wrapper that dynamically imports the correct decoder module (`import('./core_flac.wasm')`) based on the MIME type of the track being played.
+4. The main web application should only need to load the small, primary Wasm bundle on startup.
+
+**Acceptance Criteria**:
+- The build produces multiple Wasm files (e.g., `core_mp3.wasm`, `core_flac.wasm`).
+- The main Wasm bundle size is significantly smaller than a monolithic bundle containing all decoders.
+- The web app successfully lazy-loads the required decoder on-demand when a track is played.
+
+**Dependencies**: TASK-503, TASK-802
 
 ---
 

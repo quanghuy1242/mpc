@@ -1,5 +1,23 @@
 # Core Music Platform Architecture Plan
 
+## High-Level Plan: Cross-Platform Cloud Music Player
+
+The primary motivation for this project is for learning and personal use, with the goal of creating a consistent, shared audio library that runs on all platforms.
+
+### Core Philosophy
+
+- **Goal:** Create a personal, open-source music player that streams a user's own music library from a cloud drive (like OneDrive).
+- **Core Principle:** The "brains" of the app will live in a single, shared Rust core library. This ensures audio decoding and business logic are 100% consistent everywhere.
+- **Architecture:** The app will be client-side only. It will not use a backend server. This avoids cost, complexity, and the privacy/security burden of storing user access tokens.
+
+### Core Technology: Rust + symphonia
+
+The entire project is built around a central Rust library (core).
+
+- **Audio Decoding:** We will use `symphonia` as the exclusive audio decoder on all platforms (including the web). This ensures a file will decode exactly the same way on the desktop app as it does in the web app, eliminating platform-specific bugs. It also provides a single source-of-truth for supported formats like FLAC, ALAC, MP3, etc.
+
+---
+
 ## Goals
 - Provide a reusable Rust core that powers music playback apps across desktop and mobile platforms.
 - Support authentication with multiple cloud providers (Google Drive, OneDrive, future integrations).
@@ -99,7 +117,7 @@ Legend: ✅ full support, ⚠️ supported with constraints/degradation, ❌ uns
 - **Graceful Degradation**: When optional capabilities fail (lyrics fetch, artwork proxy, advanced codecs), emit events and continue core functionality without crashing.
 - **State Recovery**: Persist in-flight sync progress and playback positions so unexpected termination (app kill, power loss) can resume cleanly.
 - **Observability Hooks**: Emit structured events/metrics on error occurrences for analytics dashboards; include correlation IDs to trace multi-module flows.
-- **User Messaging**: Provide APIs (`CoreService::get_health()`) to expose actionable status summaries (e.g., “Google Drive token expired”, “Lyrics provider unavailable”).
+- **User Messaging**: Provide APIs (`CoreService::get_health()`) to expose actionable status summaries (e.g., "Google Drive token expired", "Lyrics provider unavailable").
 
 ## Performance & Resource Management
 - **Profiling Targets**: Establish budgets (e.g., <1s core bootstrap, <150ms track start latency with cached data, <20% CPU during metadata extraction).
@@ -165,6 +183,9 @@ Legend: ✅ full support, ⚠️ supported with constraints/degradation, ❌ uns
 - Uses host-supplied `HttpClient` implementation (or default desktop shim) via `ProviderHttpClient` wrapper to centralize OAuth middleware and rate limiting policies.
 - Persists temporary download chunks through `FileSystemAccess` to avoid loading whole tracks into memory, falling back to streaming buffers when hosts expose only transient storage (iOS, web).
 
+#### The "Google Drive Problem" and Solution
+Google blocks all new public apps from using "sensitive scopes" (like `.../auth/drive`) until they pass a long, manual verification process. Since this is a personal/learning project, we will not set our app to `Production`. We will keep the Google Cloud project in `Testing` mode forever and add trusted users (up to 100) to the `Test users` list. This allows our "test users" to bypass the "This app is blocked" screen, solving the problem without requiring official verification.
+
 ### 3. Sync & Indexing Module
 - Drives initial scan and incremental updates using `SyncCoordinator`.
 - Workflow:
@@ -178,6 +199,14 @@ Legend: ✅ full support, ⚠️ supported with constraints/degradation, ❌ uns
   - `ConflictResolver` for duplicates, renames, deleted files.
 - Events: `SyncProgress`, `SyncCompleted`, `SyncError`.
 - Supports resumable sync via stored cursors (Drive change tokens).
+
+#### Sync Strategy to Avoid Rate Limiting
+The primary technical challenge is the API's rate limit (e.g., `403 / 429` errors). This is a "flood protection" measure that causes stutters if we make too many requests. Our entire sync strategy is built to defeat this. We will never scan all 10,000 files at once. We will use a hybrid approach.
+
+1.  **"Lazy Load"**: On first launch, sync filenames only (e.g., `list_folder` is 1 API call for 100 files). App is usable in seconds.
+2.  **"JIT Scan"**: When a user clicks a folder, only then do we fetch metadata for those ~20 songs. This balances speed and API limits.
+3.  **"Background Sync"**: A new, low-priority thread starts after launch. It slowly (e.g., 1 request/sec) scans the entire library using Range requests (`bytes=0-8192`) to get just the ID3 tags. This builds the full cache over time without being rate-limited, though it may take hours/days for the initial fill.
+4.  **"Delta Sync"**: On all future app launches, we use the API's delta query. The API tells us what's new/deleted. This is 1-2 API calls instead of 10,000 and is the permanent sync solution.
 
 ### 4. Library Management Module
 - Owns the canonical database (SQLite via `sqlx` or `sea-orm`).
@@ -208,12 +237,22 @@ Legend: ✅ full support, ⚠️ supported with constraints/degradation, ❌ uns
   - Retries and caching based on track fingerprint (AcoustID) or metadata.
 
 ### 6. Playback & Streaming Module
-- Provides streaming API returning `AudioSource` (local path or remote reader).
-- Integrates with host audio engine via `PlaybackAdapter` trait and uses `FileSystemAccess` for buffered segments/offline caches.
-- Supports pluggable decoding paths: host-managed decoding via `PlaybackAdapter` or core-managed decoding via `AudioDecoder` trait (default implementation using `symphonia` for formats not handled natively).
-- Supports adaptive buffering, prefetch, and gapless track transitions.
-- Enforces access controls (only signed-in providers, ensures tokens valid).
-- Optional offline download manager storing encrypted files with license checks (future).
+To prevent "stuttering" (buffer underruns), we must use a robust, multi-threaded "producer-consumer" model.
+
+#### A. The "Golden Path" on the Web
+The web app will use a 3-thread model to ensure the UI never freezes and playback is never interrupted.
+
+- **Main Thread:** Handles UI only (buttons, sliders). It does no heavy lifting.
+- **Web Worker (The "Producer"):** The symphonia Wasm module runs here. Its only job is to download chunks of the audio file (using Range requests) and decode them into raw PCM samples.
+- **AudioWorklet (The "Consumer"):** This is a high-priority, real-time thread. Its only job is to feed the PCM samples to the speaker.
+- **The "Bridge":** A `SharedArrayBuffer` (implemented as a "Ring Buffer") is used to pass the decoded audio from the Worker to the AudioWorklet. This is a "zero-copy" operation that bypasses the main thread completely.
+
+#### B. The Desktop Architecture
+The desktop app uses the same conceptual model, but with native OS threads.
+
+- **Network Thread:** Downloads the file (ideally in large chunks) into a buffer or temp file.
+- **Decoder Thread (The "Producer"):** Runs symphonia to decode data from the network buffer and places it into a second, smaller PCM ring buffer.
+- **Playback Thread (The "Consumer"):** The OS's high-priority audio thread (e.g., Core Audio, WASAPI) reads from the PCM buffer and plays the sound.
 
 ### 7. Audio Decoding & Analysis Module
 - `AudioDecoder` trait exposes `probe`, `decode_frames`, and `seek` operations, allowing multiple decoding backends (core `symphonia`, platform codecs, hardware-accelerated decoders).
