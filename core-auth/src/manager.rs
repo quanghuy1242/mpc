@@ -34,7 +34,7 @@
 //! #     async fn clear_all(&self) -> BridgeResult<()> { Ok(()) }
 //! # }
 //!
-//! # #[tokio::main]
+//! # #[core_async::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! # let http_client: Arc<dyn HttpClient> = todo!();
 //! let event_bus = EventBus::new(100);
@@ -277,7 +277,7 @@ impl AuthManager {
     /// #     async fn list_keys(&self) -> BridgeResult<Vec<String>> { Ok(vec![]) }
     /// #     async fn clear_all(&self) -> BridgeResult<()> { Ok(()) }
     /// # }
-    /// # #[tokio::main]
+    /// # #[core_async::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let http_client: Arc<dyn HttpClient> = todo!();
     /// # let event_bus = EventBus::new(100);
@@ -375,7 +375,7 @@ impl AuthManager {
     /// #     async fn list_keys(&self) -> BridgeResult<Vec<String>> { Ok(vec![]) }
     /// #     async fn clear_all(&self) -> BridgeResult<()> { Ok(()) }
     /// # }
-    /// # #[tokio::main]
+    /// # #[core_async::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
@@ -524,7 +524,7 @@ impl AuthManager {
     /// #     async fn list_keys(&self) -> BridgeResult<Vec<String>> { Ok(vec![]) }
     /// #     async fn clear_all(&self) -> BridgeResult<()> { Ok(()) }
     /// # }
-    /// # #[tokio::main]
+    /// # #[core_async::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
@@ -607,7 +607,7 @@ impl AuthManager {
     /// #     async fn list_keys(&self) -> BridgeResult<Vec<String>> { Ok(vec![]) }
     /// #     async fn clear_all(&self) -> BridgeResult<()> { Ok(()) }
     /// # }
-    /// # #[tokio::main]
+    /// # #[core_async::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
@@ -755,7 +755,7 @@ impl AuthManager {
     /// #     async fn list_keys(&self) -> BridgeResult<Vec<String>> { Ok(vec![]) }
     /// #     async fn clear_all(&self) -> BridgeResult<()> { Ok(()) }
     /// # }
-    /// # #[tokio::main]
+    /// # #[core_async::main]
     /// # async fn main() {
     /// # let event_bus = EventBus::new(100);
     /// # let secure_store = Arc::new(MockSecureStore);
@@ -819,6 +819,7 @@ mod tests {
     use bridge_traits::error::{BridgeError, Result as BridgeResult};
     use bridge_traits::http::{HttpClient, HttpRequest, HttpResponse};
     use bridge_traits::SecureStore;
+    use core_async::io::AsyncRead;
     use core_async::sync::Mutex as AsyncMutex;
     use std::collections::HashMap as StdHashMap;
 
@@ -880,7 +881,7 @@ mod tests {
         async fn download_stream(
             &self,
             _url: String,
-        ) -> BridgeResult<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+        ) -> BridgeResult<Box<dyn AsyncRead + Send + Unpin>> {
             Err(BridgeError::OperationFailed(
                 "HTTP client not mocked for AuthManager tests".to_string(),
             ))
@@ -903,7 +904,7 @@ mod tests {
         assert!(providers.iter().any(|p| p.kind == ProviderKind::OneDrive));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_list_providers() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
@@ -928,7 +929,7 @@ mod tests {
         assert!(!onedrive.scopes.is_empty());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_sign_in_initiates_flow() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
@@ -957,7 +958,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_concurrent_sign_in_prevented() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
@@ -977,7 +978,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_cancel_sign_in() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
@@ -1001,7 +1002,7 @@ mod tests {
         assert!(result2.is_ok());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_sign_out() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
@@ -1047,7 +1048,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_current_session_none_initially() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
@@ -1058,7 +1059,7 @@ mod tests {
         assert!(session.is_none());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_get_valid_token_no_profile() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());
@@ -1075,7 +1076,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_provider_info_completeness() {
         let event_bus = EventBus::new(100);
         let secure_store = Arc::new(MockSecureStore::new());

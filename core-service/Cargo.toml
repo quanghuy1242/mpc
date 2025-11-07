@@ -40,4 +40,3 @@ offline-cache = ["core-playback/offline-cache"]
 
 [dev-dependencies]
 mockall = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }

@@ -56,6 +56,13 @@ This document lists critical architectural flaws and bugs found in the *already 
 4.  **Use the `Clock` Abstraction for Time:**
     *   The `bridge-traits` crate already defines a `Clock` trait. Enforce its usage for obtaining the current time system-wide to improve testability, instead of calling `Instant::now()` directly. The `SystemClock` implementation can be provided by `bridge-traits`.
 
+5.  **Finalize Refactoring by Updating Tests and Dependencies (Cleanup):**
+    *   **Problem:** The refactoring was incomplete. While the library source code was updated, the integration and unit tests were not. They still use `#[tokio::test]`, which forces each crate to retain a `dev-dependency` on the full `tokio` runtime.
+    *   **Solution:**
+        1.  Globally search for and replace all instances of the `#[tokio::test]` attribute with `#[core_async::test]`.
+        2.  In every `core-*` and `provider-*` crate, remove `tokio` from the `[dev-dependencies]` section in their respective `Cargo.toml` files.
+        3.  Ensure that `core-async` is listed as a `dev-dependency` where needed.
+        4.  Remove any other lingering `tokio` dependencies from `[dependencies]` (like in `core-metadata`) that are no longer used by the source code.
 ---
 
 ### 2. Implement Incremental Sync Logic (Critical)
@@ -167,3 +174,43 @@ This document lists critical architectural flaws and bugs found in the *already 
             self.events.send(SyncEvent::Completed(job.summary()));
         }
         ```
+
+---
+
+### 4. Ensure Wasm Compatibility for Core Components
+
+**Issue:** Several core components rely on native-only dependencies and APIs, preventing the project from compiling to WebAssembly (`wasm32-unknown-unknown`). This includes the database (`sqlx-sqlite`), filesystem access (`std::fs`), and potentially the HTTP client (`reqwest`).
+
+**Required Task & Scope:** Abstract all platform-specific functionalities behind traits and provide Wasm-compatible implementations for each. This ensures the core logic remains platform-agnostic.
+
+**Sub-tasks:**
+
+1.  **Abstract the Database Layer:**
+    *   **Problem:** `core-library` uses `sqlx` with the native `sqlx-sqlite` driver and `runtime-tokio`, which will not compile for Wasm.
+    *   **Solution:**
+        1.  Define a `DatabaseAdapter` trait in `bridge-traits` that abstracts all query methods (e.g., `find_track_by_id`, `create_album`, etc.).
+        2.  In `core-library`, provide a native `SqliteAdapter` that implements this trait using the existing `sqlx-sqlite` connection pool. This implementation will be compiled for `#[cfg(not(target_arch = "wasm32"))]`.
+        3.  Create a new `bridge-wasm` crate for Wasm-specific implementations.
+        4.  In `bridge-wasm`, implement a `WasmDbAdapter` using `sqlx` with the `sqlx-sqljs` driver, which is compatible with Wasm and interacts with the browser's environment. This will be compiled for `#[cfg(target_arch = "wasm32")]`.
+        5.  Refactor `core-library` to depend on a generic `T: DatabaseAdapter` trait, removing the direct dependency on `sqlx` connection pools. The application's composition root will be responsible for injecting the correct adapter implementation at compile time.
+
+2.  **Implement Wasm-Compatible Filesystem:**
+    *   **Problem:** Code in `bridge-desktop` or other native modules likely uses `std::fs`, which is unavailable in the browser's sandbox. A `FileSystemAccess` trait already exists, but it needs a Wasm implementation.
+    *   **Solution:**
+        1.  In the `bridge-wasm` crate, create a `WasmFileSystem` struct.
+        2.  Implement the `FileSystemAccess` trait for `WasmFileSystem`. This implementation will use browser APIs like `IndexedDB` (via `gloo-storage` or a similar crate) to simulate a persistent, private file system.
+        3.  The application's startup logic will conditionally compile and provide either the native `NativeFileSystem` or the new `WasmFileSystem` based on the target architecture.
+
+3.  **Verify HTTP Client Configuration:**
+    *   **Problem:** `reqwest` requires specific features to work correctly on Wasm. The default configuration is for native targets and will fail to compile for Wasm.
+    *   **Solution:**
+        1.  Audit the workspace's root `Cargo.toml` to manage the `reqwest` dependency centrally.
+        2.  Ensure the dependency is configured with `default-features = false`.
+        3.  For native targets (`x86_64`, etc.), enable features like `rustls-tls`.
+        4.  For the Wasm target (`wasm32`), enable the `wasm-bindgen` feature of `reqwest`.
+
+4.  **Abstract Metadata Extraction IO:**
+    *   **Problem:** The metadata extraction logic in `core-metadata` might read directly from file paths.
+    *   **Solution:**
+        1.  Refactor all extractor functions (e.g., in `core-metadata/src/extractor.rs`) to accept a byte slice (`&[u8]`) or a `std::io::Read` object instead of a file path string.
+        2.  The calling code (e.g., the `SyncCoordinator`) will become responsible for using the `FileSystemAccess` trait to read the file's bytes and pass them to the extractor. This decouples the extraction logic from the file's location. 

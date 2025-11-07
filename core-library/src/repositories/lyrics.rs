@@ -324,7 +324,7 @@ mod tests {
         track
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_insert_and_find_lyrics() {
         let pool = setup_test_pool().await;
         let repo = SqliteLyricsRepository::new(pool.clone());
@@ -348,7 +348,7 @@ mod tests {
         assert_eq!(found.updated_at, lyrics.updated_at);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_update_lyrics() {
         let pool = setup_test_pool().await;
         let repo = SqliteLyricsRepository::new(pool.clone());
@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(found.updated_at, lyrics.updated_at);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_delete_lyrics() {
         let pool = setup_test_pool().await;
         let repo = SqliteLyricsRepository::new(pool.clone());
@@ -399,7 +399,7 @@ mod tests {
         assert!(found.is_none());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_query_synced() {
         let pool = setup_test_pool().await;
         let repo = SqliteLyricsRepository::new(pool.clone());
@@ -431,7 +431,7 @@ mod tests {
         assert_eq!(page.items[0].synced, 1); // 1 = true (synced/LRC lyrics)
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_query_by_source() {
         let pool = setup_test_pool().await;
         let repo = SqliteLyricsRepository::new(pool.clone());
@@ -466,7 +466,7 @@ mod tests {
         assert_eq!(page.items[0].source, "lrclib");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_count_lyrics() {
         let pool = setup_test_pool().await;
         let repo = SqliteLyricsRepository::new(pool.clone());
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(synced_count, 1);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_lyrics_validation() {
         let pool = setup_test_pool().await;
         let repo = SqliteLyricsRepository::new(pool.clone());

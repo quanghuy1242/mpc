@@ -224,7 +224,7 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_insert_and_find_artwork() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtworkRepository::new(pool);
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(found.height, 100);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_find_by_hash() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtworkRepository::new(pool);
@@ -257,7 +257,7 @@ mod tests {
         assert_eq!(found.unwrap().id, artwork.id);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_deduplication_by_hash() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtworkRepository::new(pool);
@@ -274,7 +274,7 @@ mod tests {
         // This demonstrates how deduplication would work
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_count_and_total_size() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtworkRepository::new(pool);
@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(size, 15);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_artwork_validation() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtworkRepository::new(pool);

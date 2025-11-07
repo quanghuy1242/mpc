@@ -557,6 +557,7 @@ mod tests {
     use super::*;
     use bridge_traits::error::{BridgeError, Result as BridgeResult};
     use bridge_traits::http::{HttpClient, HttpRequest, HttpResponse};
+    use core_async::io::AsyncRead;
     use std::sync::Arc;
 
     #[derive(Default)]
@@ -573,7 +574,7 @@ mod tests {
         async fn download_stream(
             &self,
             _url: String,
-        ) -> BridgeResult<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+        ) -> BridgeResult<Box<dyn AsyncRead + Send + Unpin>> {
             Err(BridgeError::OperationFailed(
                 "HTTP client not mocked for unit test".to_string(),
             ))

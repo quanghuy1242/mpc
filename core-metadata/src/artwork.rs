@@ -763,7 +763,7 @@ mod tests {
         buffer
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_artwork_service_creation() {
         let mock_repo = Arc::new(MockArtworkRepo::new());
         let service = ArtworkService::new(mock_repo, 100 * 1024 * 1024);
@@ -773,7 +773,7 @@ mod tests {
         assert_eq!(size, 0);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_calculate_hash() {
         let mock_repo = Arc::new(MockArtworkRepo::new());
         let service = ArtworkService::new(mock_repo, 100 * 1024 * 1024);
@@ -788,7 +788,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_extract_dominant_color() {
         let mock_repo = Arc::new(MockArtworkRepo::new());
         let service = ArtworkService::new(mock_repo, 100 * 1024 * 1024);
@@ -804,7 +804,7 @@ mod tests {
         assert_eq!(color, "#FF0000"); // Should be red
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_resize_image() {
         let mock_repo = Arc::new(MockArtworkRepo::new());
         let service = ArtworkService::new(mock_repo, 100 * 1024 * 1024);
@@ -827,7 +827,7 @@ mod tests {
         assert_eq!(original.height(), 1000);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_cache_eviction() {
         let mock_repo = Arc::new(MockArtworkRepo::new());
         let max_cache_size = 1000; // Small cache for testing
@@ -849,7 +849,7 @@ mod tests {
         assert_eq!(size, 600);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_clear_cache() {
         let mock_repo = Arc::new(MockArtworkRepo::new());
         let service = ArtworkService::new(mock_repo, 100 * 1024 * 1024);
@@ -867,7 +867,7 @@ mod tests {
         assert_eq!(size, 0);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_artwork_size_dimensions() {
         assert_eq!(ArtworkSize::Thumbnail.dimension(), Some(300));
         assert_eq!(ArtworkSize::Full.dimension(), Some(1200));

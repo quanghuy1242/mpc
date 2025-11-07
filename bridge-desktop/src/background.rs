@@ -510,13 +510,13 @@ mod tests {
     use bridge_traits::network::NetworkChangeStream;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_background_executor_creation() {
         let executor = TokioBackgroundExecutor::new();
         assert!(executor.is_available().await);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_schedule_task_runs_handler() {
         let executor = TokioBackgroundExecutor::new();
         let counter = Arc::new(AtomicUsize::new(0));
@@ -550,7 +550,7 @@ mod tests {
         executor.cancel_task(&task_id).await.unwrap();
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_schedule_once_executes() {
         let executor = TokioBackgroundExecutor::new();
         let flag = Arc::new(AtomicBool::new(false));
@@ -585,7 +585,7 @@ mod tests {
         assert!(flag.load(Ordering::SeqCst));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_cancel_task() {
         let executor = TokioBackgroundExecutor::new();
         executor
@@ -602,7 +602,7 @@ mod tests {
         assert!(executor.get_task_status(&task_id).await.is_err());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_network_constraints() {
         let connected = Arc::new(AtomicBool::new(false));
         let monitor =
@@ -645,7 +645,7 @@ mod tests {
         executor.cancel_task(&task_id).await.unwrap();
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_lifecycle_observer() {
         let observer = DesktopLifecycleObserver::new();
         assert_eq!(

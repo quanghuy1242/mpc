@@ -66,7 +66,7 @@ async fn create_enrichment_service_without_artist() -> (EnrichmentService, sqlx:
     (service, pool)
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_artist_enrichment_without_provider() {
     let (service, pool) = create_enrichment_service_without_artist().await;
     let artist_repo = SqliteArtistRepository::new(pool.clone());
@@ -87,7 +87,7 @@ async fn test_artist_enrichment_without_provider() {
     );
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_batch_enrichment_without_provider() {
     let (service, pool) = create_enrichment_service_without_artist().await;
     let artist_repo = SqliteArtistRepository::new(pool.clone());

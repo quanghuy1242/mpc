@@ -86,7 +86,7 @@
 //! let event_bus = EventBus::new(100);
 //! let mut stream = event_bus.subscribe();
 //!
-//! tokio::spawn(async move {
+//! core_async::task::spawn(async move {
 //!     loop {
 //!         if let Ok(event) = stream.recv().await {
 //!             // Filter for auth events only
@@ -160,12 +160,12 @@
 //! use std::sync::Arc;
 //! use core_runtime::events::EventBus;
 //!
-//! # #[tokio::main]
+//! # #[core_async::main]
 //! # async fn main() {
 //! let event_bus = Arc::new(EventBus::new(100));
 //! let bus_clone = Arc::clone(&event_bus);
 //!
-//! tokio::spawn(async move {
+//! core_async::task::spawn(async move {
 //!     // Use bus_clone in spawned task
 //! });
 //! # }
@@ -543,25 +543,27 @@ impl PlaybackEvent {
 ///
 /// ```rust
 /// use core_runtime::events::{EventBus, CoreEvent, AuthEvent};
+/// use core_async::runtime;
 ///
-/// # #[tokio::main]
-/// # async fn main() {
-/// let event_bus = EventBus::new(100);
+/// runtime::block_on(async {
+///     let event_bus = EventBus::new(100);
 ///
-/// // Subscribe to events
-/// let mut subscriber1 = event_bus.subscribe();
-/// let mut subscriber2 = event_bus.subscribe();
+///    // Subscribe to events
+///     let mut subscriber1 = event_bus.subscribe();
+///     let mut subscriber2 = event_bus.subscribe();
 ///
-/// // Emit an event
-/// let event = CoreEvent::Auth(AuthEvent::SignedIn {
-///     profile_id: "user-123".to_string(),
-///     provider: "GoogleDrive".to_string(),
+///     // Emit an event
+///     let event = CoreEvent::Auth(AuthEvent::SignedIn {
+///         profile_id: "user-123".to_string(),
+///         provider: "GoogleDrive".to_string(),
+///     });
+///     event_bus.emit(event).ok();
+///
+///     // Both subscribers receive the event (wait briefly for delivery)
+///     core_async::time::sleep(core_async::time::Duration::from_millis(10)).await;
+///     let _ = subscriber1.recv().await;
+///     let _ = subscriber2.recv().await;
 /// });
-/// event_bus.emit(event).ok();
-///
-/// // Both subscribers receive the event
-/// # tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-/// # }
 /// ```
 #[derive(Clone)]
 pub struct EventBus {
@@ -637,18 +639,18 @@ impl EventBus {
     ///
     /// ```no_run
     /// use core_runtime::events::EventBus;
+    /// use core_async::runtime;
     ///
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// let event_bus = EventBus::new(100);
-    /// let mut subscriber = event_bus.subscribe();
+    /// runtime::block_on(async {
+    ///     let event_bus = EventBus::new(100);
+    ///     let mut subscriber = event_bus.subscribe();
     ///
-    /// tokio::spawn(async move {
-    ///     while let Ok(event) = subscriber.recv().await {
-    ///         println!("Received: {:?}", event);
-    ///     }
+    ///     core_async::task::spawn(async move {
+    ///         while let Ok(event) = subscriber.recv().await {
+    ///             println!("Received: {:?}", event);
+    ///         }
+    ///     });
     /// });
-    /// # }
     /// ```
     pub fn subscribe(&self) -> Receiver<CoreEvent> {
         self.sender.subscribe()
@@ -695,18 +697,25 @@ type EventFilter = Box<dyn Fn(&CoreEvent) -> bool + Send + Sync>;
 /// # Example
 ///
 /// ```rust
-/// use core_runtime::events::{EventBus, EventStream, CoreEvent};
+/// use core_runtime::events::{AuthEvent, CoreEvent, EventBus, EventStream};
+/// use core_async::runtime;
 ///
-/// # #[tokio::main]
-/// # async fn main() {
-/// let event_bus = EventBus::new(100);
-/// let stream = EventStream::new(event_bus.subscribe());
+/// runtime::block_on(async {
+///     let event_bus = EventBus::new(100);
+///     let mut stream = EventStream::new(event_bus.subscribe())
+///         .filter(|event| matches!(event, CoreEvent::Auth(_)));
 ///
-/// // Filter for auth events only
-/// let mut auth_stream = stream.filter(|event| {
-///     matches!(event, CoreEvent::Auth(_))
+///     event_bus
+///         .emit(CoreEvent::Auth(AuthEvent::SignedIn {
+///             profile_id: "user-123".into(),
+///             provider: "GoogleDrive".into(),
+///         }))
+///         .ok();
+///
+///     // Only auth events pass the filter
+///     let event = stream.recv().await.unwrap();
+///     assert!(matches!(event, CoreEvent::Auth(_)));
 /// });
-/// # }
 /// ```
 pub struct EventStream {
     receiver: Receiver<CoreEvent>,
@@ -817,13 +826,13 @@ impl fmt::Debug for EventStream {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_event_bus_creation() {
         let bus = EventBus::new(10);
         assert_eq!(bus.subscriber_count(), 0);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_event_bus_subscription() {
         let bus = EventBus::new(10);
         let _sub1 = bus.subscribe();
@@ -831,7 +840,7 @@ mod tests {
         assert_eq!(bus.subscriber_count(), 2);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_event_emission_no_subscribers() {
         let bus = EventBus::new(10);
         let event = CoreEvent::Auth(AuthEvent::SignedOut {
@@ -842,7 +851,7 @@ mod tests {
         assert!(bus.emit(event).is_err());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_event_emission_with_subscribers() {
         let bus = EventBus::new(10);
         let mut sub = bus.subscribe();
@@ -862,7 +871,7 @@ mod tests {
         assert_eq!(received, event);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_multiple_subscribers_receive_same_event() {
         let bus = EventBus::new(10);
         let mut sub1 = bus.subscribe();
@@ -885,7 +894,7 @@ mod tests {
         assert_eq!(received2, event);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_event_stream_without_filter() {
         let bus = EventBus::new(10);
         let mut stream = EventStream::new(bus.subscribe());
@@ -903,7 +912,7 @@ mod tests {
         assert_eq!(received, event);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_event_stream_with_filter() {
         let bus = EventBus::new(10);
         let mut stream =
@@ -932,7 +941,7 @@ mod tests {
         assert_eq!(received, auth_event);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_lagged_subscriber() {
         let bus = EventBus::new(2); // Very small buffer
         let mut sub = bus.subscribe();
@@ -951,7 +960,7 @@ mod tests {
         assert!(matches!(result, Err(RecvError::Lagged(_))));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_event_severity() {
         let error_event = CoreEvent::Auth(AuthEvent::AuthError {
             profile_id: None,
@@ -978,7 +987,7 @@ mod tests {
         assert_eq!(debug_event.severity(), EventSeverity::Debug);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_event_description() {
         let event = CoreEvent::Auth(AuthEvent::SignedIn {
             profile_id: "profile-1".to_string(),
@@ -987,7 +996,7 @@ mod tests {
         assert_eq!(event.description(), "User signed in successfully");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_concurrent_publishers() {
         let bus = EventBus::new(100);
         let mut sub = bus.subscribe();
@@ -996,7 +1005,7 @@ mod tests {
         let bus2 = bus.clone();
 
         // Spawn two concurrent publishers
-        let handle1 = tokio::spawn(async move {
+        let handle1 = core_async::task::spawn(async move {
             for i in 0..10 {
                 let event = CoreEvent::Auth(AuthEvent::TokenRefreshed {
                     profile_id: format!("profile-{}", i),
@@ -1006,7 +1015,7 @@ mod tests {
             }
         });
 
-        let handle2 = tokio::spawn(async move {
+        let handle2 = core_async::task::spawn(async move {
             for i in 0..10 {
                 let event = CoreEvent::Sync(SyncEvent::Progress {
                     job_id: "job-1".to_string(),
@@ -1031,7 +1040,7 @@ mod tests {
         assert_eq!(count, 20);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_event_serialization() {
         let event = CoreEvent::Sync(SyncEvent::Progress {
             job_id: "job-123".to_string(),
@@ -1061,7 +1070,7 @@ mod tests {
         assert_eq!(event, cloned);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_try_recv_empty() {
         let bus = EventBus::new(10);
         let mut stream = EventStream::new(bus.subscribe());
@@ -1070,7 +1079,7 @@ mod tests {
         assert!(stream.try_recv().is_none());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_try_recv_with_event() {
         let bus = EventBus::new(10);
         let mut stream = EventStream::new(bus.subscribe());
@@ -1083,7 +1092,7 @@ mod tests {
         bus.emit(event.clone()).ok();
 
         // Give time for event to propagate
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        core_async::time::sleep(core_async::time::Duration::from_millis(10)).await;
 
         // Should receive the event
         let result = stream.try_recv();

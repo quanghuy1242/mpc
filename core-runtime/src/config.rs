@@ -427,8 +427,8 @@ fn provide_default_settings_store(
     cache_dir: &Path,
 ) -> Result<Arc<dyn SettingsStore>> {
     use bridge_desktop::SqliteSettingsStore;
+    use core_async::runtime::{Handle, Runtime};
     use std::thread;
-    use tokio::runtime::{Handle, Runtime};
 
     // Prefer placing settings.db in the cache directory for better reliability
     let candidate = if cache_dir.exists() || cache_dir.parent().map(|p| p.exists()).unwrap_or(false)
@@ -589,12 +589,15 @@ impl CoreConfigBuilder {
     /// ```no_run
     /// use core_runtime::config::CoreConfig;
     /// use std::sync::Arc;
-    /// # use bridge_traits::HttpClient;
+    /// # use async_trait::async_trait;
+    /// # use bridge_traits::error::BridgeError;
+    /// # use bridge_traits::http::{HttpClient, HttpRequest, HttpResponse};
+    /// # use core_async::io::AsyncRead;
     /// # struct MyHttpClient;
-    /// # #[async_trait::async_trait]
+    /// # #[async_trait]
     /// # impl HttpClient for MyHttpClient {
-    /// #     async fn execute(&self, request: bridge_traits::HttpRequest) -> Result<bridge_traits::HttpResponse, bridge_traits::BridgeError> { unimplemented!() }
-    /// #     async fn download_stream(&self, url: String) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, bridge_traits::BridgeError> { unimplemented!() }
+    /// #     async fn execute(&self, _request: HttpRequest) -> Result<HttpResponse, BridgeError> { unimplemented!() }
+    /// #     async fn download_stream(&self, _url: String) -> Result<Box<dyn AsyncRead + Send + Unpin>, BridgeError> { unimplemented!() }
     /// # }
     ///
     /// let builder = CoreConfig::builder()
@@ -887,7 +890,7 @@ mod tests {
     use std::sync::Arc;
 
     #[cfg(feature = "desktop-shims")]
-    use tokio::runtime::Runtime;
+    use core_async::runtime::Runtime;
     #[cfg(feature = "desktop-shims")]
     use uuid::Uuid;
 
@@ -1061,7 +1064,7 @@ mod tests {
     }
 
     #[cfg(feature = "desktop-shims")]
-    #[tokio::test]
+    #[core_async::test]
     // TODO(#TASK-005): Re-enable once desktop keyring support is available in CI
     #[ignore = "TODO: Enable once desktop environment is available"]
     async fn test_build_with_desktop_defaults_inside_runtime() {
@@ -1087,7 +1090,7 @@ mod tests {
         }
 
         drop(config);
-        let _ = tokio::fs::remove_dir_all(&base_dir).await;
+        let _ = core_async::fs::remove_dir_all(&base_dir).await;
     }
 
     #[test]

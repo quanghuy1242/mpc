@@ -9,10 +9,12 @@ license = "MIT"
 [dependencies]
 # Core async primitives - always needed
 futures = { workspace = true }
+core-async-macros = { path = "../core-async-macros" }
 
 # Native dependencies (tokio-based)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 
 # WASM dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -23,8 +25,5 @@ wasm-bindgen-test = { version = "0.3" }
 
 [dev-dependencies]
 # For testing
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
-
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

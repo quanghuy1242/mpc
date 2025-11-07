@@ -709,6 +709,7 @@ mod tests {
         use crate::artwork::ArtworkService;
         use crate::enrichment_service::EnrichmentService;
         use crate::lyrics::LyricsService;
+        use core_async::runtime::Runtime;
         use core_library::db::create_test_pool;
         use core_library::repositories::album::SqliteAlbumRepository;
         use core_library::repositories::artist::SqliteArtistRepository;
@@ -724,7 +725,7 @@ mod tests {
         });
 
         // Create in-memory database for testing
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rt = Runtime::new().unwrap();
         let pool = rt.block_on(create_test_pool()).unwrap();
 
         let artist_repo = Arc::new(SqliteArtistRepository::new(pool.clone()));

@@ -43,6 +43,9 @@ pub use tokio::sync::{
     RwLockWriteGuard, Semaphore, SemaphorePermit,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use tokio_util::sync::CancellationToken;
+
 // ============================================================================
 // WASM Implementation
 // ============================================================================
@@ -51,12 +54,38 @@ pub use tokio::sync::{
 pub use futures::channel::{mpsc, oneshot};
 
 #[cfg(target_arch = "wasm32")]
+use std::{cell::Cell, rc::Rc};
+
+#[cfg(target_arch = "wasm32")]
 /// An async mutex for protecting shared data.
 ///
 /// On WASM, this is single-threaded and doesn't need actual locking,
 /// but provides the same API as the native version.
 pub struct Mutex<T> {
     inner: futures::lock::Mutex<T>,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Rc<Cell<bool>>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self {
+            cancelled: Rc::new(Cell::new(false)),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.set(true);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.get()
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

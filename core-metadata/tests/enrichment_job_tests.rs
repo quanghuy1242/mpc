@@ -54,7 +54,7 @@ fn create_test_track(id: &str, title: &str, artwork_id: Option<String>) -> Track
     }
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrichment_config_builder() {
     let config = EnrichmentConfig::builder()
         .with_batch_size(100)
@@ -76,7 +76,7 @@ async fn test_enrichment_config_builder() {
     assert_eq!(config.operation_timeout_secs, 60);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_query_tracks_missing_artwork() {
     let pool = create_test_pool()
         .await
@@ -130,7 +130,7 @@ async fn test_query_tracks_missing_artwork() {
     assert!(!tracks.iter().any(|t| t.id == "track-2"));
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_query_tracks_by_lyrics_status() {
     let pool = create_test_pool()
         .await
@@ -183,7 +183,7 @@ async fn test_query_tracks_by_lyrics_status() {
     assert!(tracks.iter().any(|t| t.id == "track-2"));
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrichment_job_initialization() {
     let pool = create_test_pool()
         .await
@@ -216,7 +216,7 @@ async fn test_enrichment_job_initialization() {
     // Job created successfully
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrichment_progress_calculation() {
     use core_metadata::enrichment_job::EnrichmentProgress;
 
@@ -246,7 +246,7 @@ async fn test_enrichment_progress_calculation() {
     assert_eq!(progress.percent_complete, 100);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrichment_config_defaults() {
     let config = EnrichmentConfig::default();
 

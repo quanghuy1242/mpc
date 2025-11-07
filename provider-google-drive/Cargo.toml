@@ -22,4 +22,3 @@ urlencoding = "2.1"
 
 [dev-dependencies]
 mockall = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }

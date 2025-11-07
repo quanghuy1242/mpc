@@ -238,7 +238,7 @@ mod tests {
         create_test_pool().await.unwrap()
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_insert_and_find_artist() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtistRepository::new(pool);
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(found.country.as_deref(), Some("US"));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_update_artist() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtistRepository::new(pool);
@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(found.country.as_deref(), Some("GB"));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_delete_artist() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtistRepository::new(pool);
@@ -305,7 +305,7 @@ mod tests {
         assert!(found.is_none());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_query_with_pagination() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtistRepository::new(pool);
@@ -330,7 +330,7 @@ mod tests {
         assert_eq!(page.total_pages, 2);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_find_by_name() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtistRepository::new(pool);
@@ -349,7 +349,7 @@ mod tests {
         assert!(found.is_some());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_count_artists() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtistRepository::new(pool);
@@ -369,7 +369,7 @@ mod tests {
         assert_eq!(count, 3);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_artist_validation() {
         let pool = setup_test_pool().await;
         let repo = SqliteArtistRepository::new(pool);

@@ -261,7 +261,7 @@ pub async fn create_pool(config: DatabaseConfig) -> Result<Pool<Sqlite>> {
 /// # Examples
 ///
 /// ```rust,ignore
-/// #[tokio::test]
+/// #[core_async::test]
 /// async fn test_something() {
 ///     let pool = create_test_pool().await.unwrap();
 ///     // Use pool for testing
@@ -327,27 +327,27 @@ async fn health_check(pool: &Pool<Sqlite>) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_create_in_memory_pool() {
         let config = DatabaseConfig::in_memory();
         let pool = create_pool(config).await;
         assert!(pool.is_ok(), "Should create in-memory pool successfully");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_create_test_pool() {
         let pool = create_test_pool().await;
         assert!(pool.is_ok(), "Should create test pool successfully");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_health_check() {
         let pool = create_test_pool().await.unwrap();
         let result = health_check(&pool).await;
         assert!(result.is_ok(), "Health check should pass");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_database_config_builder() {
         let config = DatabaseConfig::in_memory()
             .min_connections(2)
@@ -361,7 +361,7 @@ mod tests {
         assert_eq!(config.statement_cache_capacity, 200);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_concurrent_queries() {
         let pool = create_test_pool().await.unwrap();
 
@@ -369,7 +369,7 @@ mod tests {
         let handles: Vec<_> = (0..5)
             .map(|_| {
                 let pool = pool.clone();
-                tokio::spawn(async move {
+                core_async::task::spawn(async move {
                     sqlx::query("SELECT 1").fetch_one(&pool).await.unwrap();
                 })
             })
@@ -381,7 +381,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_foreign_keys_enabled() {
         let pool = create_test_pool().await.unwrap();
 
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(result.0, 1, "Foreign keys should be enabled");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_wal_mode_enabled() {
         let pool = create_test_pool().await.unwrap();
 
@@ -413,7 +413,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_migrations_create_tables() {
         let pool = create_test_pool().await.unwrap();
 

@@ -139,13 +139,13 @@ impl NetworkChangeStream for DesktopNetworkChangeStream {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_network_monitor_creation() {
         let _monitor = DesktopNetworkMonitor::new();
         // Just verify it constructs
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_get_network_info() {
         let monitor = DesktopNetworkMonitor::new();
         let info = monitor.get_network_info().await.unwrap();
@@ -157,7 +157,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_is_connected() {
         let monitor = DesktopNetworkMonitor::new();
         // Just verify it doesn't panic

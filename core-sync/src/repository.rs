@@ -429,6 +429,7 @@ impl SyncJobRepository for SqliteSyncJobRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core_async::time::{sleep, Duration};
     use sqlx::SqlitePool;
 
     async fn create_test_pool() -> SqlitePool {
@@ -470,7 +471,7 @@ mod tests {
         pool
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_insert_and_find_by_id() {
         let pool = create_test_pool().await;
         let repo = SqliteSyncJobRepository::new(pool);
@@ -489,7 +490,7 @@ mod tests {
         assert_eq!(found_job.status, SyncStatus::Pending);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_update_job() {
         let pool = create_test_pool().await;
         let repo = SqliteSyncJobRepository::new(pool);
@@ -510,7 +511,7 @@ mod tests {
         assert_eq!(found.progress.items_discovered, 100);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_find_by_provider() {
         let pool = create_test_pool().await;
         let repo = SqliteSyncJobRepository::new(pool);
@@ -534,7 +535,7 @@ mod tests {
         assert_eq!(onedrive_jobs.len(), 1);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_find_by_status() {
         let pool = create_test_pool().await;
         let repo = SqliteSyncJobRepository::new(pool);
@@ -553,7 +554,7 @@ mod tests {
         assert_eq!(running.len(), 1);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_has_active_sync() {
         let pool = create_test_pool().await;
         let repo = SqliteSyncJobRepository::new(pool);
@@ -585,7 +586,7 @@ mod tests {
             .unwrap());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_get_history() {
         let pool = create_test_pool().await;
         let repo = SqliteSyncJobRepository::new(pool);
@@ -595,7 +596,7 @@ mod tests {
             let job = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
             repo.insert(&job).await.unwrap();
             // Small delay to ensure different created_at times
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            sleep(Duration::from_millis(10)).await;
         }
 
         let history = repo
@@ -610,7 +611,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_delete_job() {
         let pool = create_test_pool().await;
         let repo = SqliteSyncJobRepository::new(pool);
@@ -625,7 +626,7 @@ mod tests {
         assert!(repo.find_by_id(&job_id).await.unwrap().is_none());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_complete_job_with_stats() {
         let pool = create_test_pool().await;
         let repo = SqliteSyncJobRepository::new(pool);

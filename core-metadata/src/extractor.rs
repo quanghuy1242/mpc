@@ -29,6 +29,7 @@
 //! ```
 
 use bytes::Bytes;
+use core_async::fs;
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::MimeType;
@@ -198,7 +199,7 @@ impl MetadataExtractor {
         debug!("Extracting metadata from: {}", path.display());
 
         // Read file and calculate hash
-        let file_data = tokio::fs::read(path)
+        let file_data = fs::read(path)
             .await
             .map_err(|e| MetadataError::ExtractionFailed(format!("Failed to read file: {}", e)))?;
 

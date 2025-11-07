@@ -22,7 +22,7 @@
 //! use bridge_traits::time::{LogLevel, ConsoleLogger};
 //! use std::sync::Arc;
 //!
-//! #[tokio::main]
+//! #[core_async::main]
 //! async fn main() {
 //!     let config = LoggingConfig::default()
 //!         .with_format(LogFormat::Pretty)
@@ -55,7 +55,7 @@
 
 use crate::error::{Error, Result};
 use bridge_traits::time::{LogEntry, LogLevel, LoggerSink};
-use futures::executor;
+use core_async::runtime;
 use std::collections::HashMap;
 use std::fmt;
 use std::io;
@@ -398,13 +398,21 @@ where
 
         let sink = Arc::clone(sink);
 
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                if let Err(err) = sink.log(entry).await {
-                    eprintln!("LoggerSink error: {}", err);
-                }
-            });
-        } else if let Err(err) = executor::block_on(sink.log(entry)) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Ok(handle) = runtime::Handle::try_current() {
+                let sink_clone = Arc::clone(&sink);
+                let entry_clone = entry.clone();
+                handle.spawn(async move {
+                    if let Err(err) = sink_clone.log(entry_clone).await {
+                        eprintln!("LoggerSink error: {}", err);
+                    }
+                });
+                return;
+            }
+        }
+
+        if let Err(err) = runtime::block_on(async move { sink.log(entry).await }) {
             eprintln!("LoggerSink error: {}", err);
         }
     }

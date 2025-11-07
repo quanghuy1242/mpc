@@ -147,19 +147,19 @@ mod base64 {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_secure_store_creation() {
         let store = KeyringSecureStore::new();
         assert_eq!(store.service_name, "music-platform-core");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_custom_service_name() {
         let store = KeyringSecureStore::with_service_name("test-service");
         assert_eq!(store.service_name, "test-service");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_set_and_get_secret() {
         // Note: This test might fail if keyring is not available (e.g., headless systems, CI)
         let store = KeyringSecureStore::with_service_name("test-music-platform-core");

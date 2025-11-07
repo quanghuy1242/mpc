@@ -19,4 +19,4 @@ futures = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+core-async = { path = "../core-async" }

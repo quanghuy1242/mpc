@@ -244,13 +244,13 @@ impl HttpClient for ReqwestHttpClient {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_http_client_creation() {
         let _client = ReqwestHttpClient::new();
         // Just verify it constructs
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_method_conversion() {
         assert_eq!(
             ReqwestHttpClient::convert_method(HttpMethod::Get),

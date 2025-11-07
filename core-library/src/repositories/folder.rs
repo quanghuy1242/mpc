@@ -326,7 +326,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_insert_and_find_folder() {
         let pool = setup_test_pool().await;
         let repo = SqliteFolderRepository::new(pool.clone());
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(found.updated_at, 1699200000);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_query_by_provider() {
         let pool = setup_test_pool().await;
         let repo = SqliteFolderRepository::new(pool.clone());
@@ -374,7 +374,7 @@ mod tests {
         assert!(page.items.iter().all(|f| f.provider_id == "provider1"));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_query_children() {
         let pool = setup_test_pool().await;
         let repo = SqliteFolderRepository::new(pool.clone());
@@ -406,7 +406,7 @@ mod tests {
             .all(|f| f.parent_id == Some(parent.id.clone())));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_find_by_path() {
         let pool = setup_test_pool().await;
         let repo = SqliteFolderRepository::new(pool.clone());
@@ -424,7 +424,7 @@ mod tests {
         assert_eq!(found.unwrap().id, folder.id);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_folder_validation() {
         let pool = setup_test_pool().await;
         let repo = SqliteFolderRepository::new(pool);

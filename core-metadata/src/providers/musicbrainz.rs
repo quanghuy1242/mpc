@@ -45,6 +45,7 @@ use bridge_traits::http::{HttpClient, HttpMethod, HttpRequest};
 use bridge_traits::time::{Clock, SystemClock};
 use bytes::Bytes;
 use core_async::sync::Mutex;
+use core_async::time::sleep;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -97,7 +98,7 @@ impl RateLimiter {
                 let wait_ms = (required_ms - elapsed_ms) as u64;
                 let wait_time = Duration::from_millis(wait_ms);
                 debug!("Rate limiting: waiting {:?}", wait_time);
-                tokio::time::sleep(wait_time).await;
+                sleep(wait_time).await;
             }
         }
         self.last_request_ms = Some(self.clock.unix_timestamp_millis());

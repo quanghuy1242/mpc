@@ -33,4 +33,4 @@ offline-cache = ["aes-gcm"]
 
 [dev-dependencies]
 mockall = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+

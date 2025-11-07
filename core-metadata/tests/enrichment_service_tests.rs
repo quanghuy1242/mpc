@@ -151,7 +151,7 @@ async fn create_test_track(
     track
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrichment_service_creation() {
     let (service, _pool) = create_enrichment_service().await;
 
@@ -160,7 +160,7 @@ async fn test_enrichment_service_creation() {
     drop(service);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrich_track_missing_artist() {
     let (service, pool) = create_enrichment_service().await;
 
@@ -191,7 +191,7 @@ async fn test_enrich_track_missing_artist() {
     );
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrich_track_missing_album_for_artwork() {
     let (service, pool) = create_enrichment_service().await;
 
@@ -219,7 +219,7 @@ async fn test_enrich_track_missing_album_for_artwork() {
     );
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrich_track_no_enrichment_requested() {
     let (service, pool) = create_enrichment_service().await;
 
@@ -244,7 +244,7 @@ async fn test_enrich_track_no_enrichment_requested() {
     assert!(!response.lyrics_fetched);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrich_track_artist_not_in_database() {
     let (service, _pool) = create_enrichment_service().await;
 
@@ -296,7 +296,7 @@ async fn test_enrich_track_artist_not_in_database() {
     );
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrich_track_album_not_in_database() {
     let (service, pool) = create_enrichment_service().await;
 
@@ -351,7 +351,7 @@ async fn test_enrich_track_album_not_in_database() {
     );
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrich_track_lyrics_only_without_album() {
     let (service, pool) = create_enrichment_service().await;
 
@@ -383,7 +383,7 @@ async fn test_enrich_track_lyrics_only_without_album() {
     }
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrich_track_with_complete_metadata() {
     let (service, pool) = create_enrichment_service().await;
 
@@ -420,7 +420,7 @@ async fn test_enrich_track_with_complete_metadata() {
     }
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrichment_request_structure() {
     let track = Track {
         id: "test_track".to_string(),
@@ -461,7 +461,7 @@ async fn test_enrichment_request_structure() {
     assert!(!request.fetch_lyrics);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_enrichment_response_structure() {
     let (service, pool) = create_enrichment_service().await;
 
@@ -487,7 +487,7 @@ async fn test_enrichment_response_structure() {
     assert!(!response.lyrics_fetched); // No real provider, so not fetched
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_multiple_tracks_enrichment() {
     let (service, pool) = create_enrichment_service().await;
 

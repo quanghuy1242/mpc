@@ -34,16 +34,19 @@
 //! }
 //! ```
 
-// Re-export the main and test macros for application entry points
-// These are only needed for executables, not for WASM libraries
-#[cfg(not(target_arch = "wasm32"))]
-pub use tokio::{main, test};
+// Re-export the async entry-point/test macros so downstream crates never need
+// direct Tokio dependencies.
+pub use core_async_macros::{main, test};
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm_bindgen_test::wasm_bindgen_test as test;
+pub mod test_support {
+    pub use wasm_bindgen_test::wasm_bindgen_test;
+}
 
 // Core modules
+pub mod fs;
 pub mod io;
+pub mod runtime;
 pub mod sync;
 pub mod task;
 pub mod time;

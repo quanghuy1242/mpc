@@ -824,14 +824,14 @@ mod tests {
         assert_eq!(item2.status, WorkItemStatus::Failed); // Permanently failed
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_scan_queue_repository_init() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let repo = SqliteScanQueueRepository::new(pool);
         repo.initialize().await.unwrap();
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_scan_queue_insert_and_find() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let repo = SqliteScanQueueRepository::new(pool);
@@ -849,7 +849,7 @@ mod tests {
         assert_eq!(found.remote_file_id, "file123");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_scan_queue_priority_ordering() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let repo = SqliteScanQueueRepository::new(pool);
@@ -875,7 +875,7 @@ mod tests {
         assert_eq!(next.priority, Priority::High);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_scan_queue_enqueue_dequeue() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let queue = ScanQueue::new(pool, 2).await.unwrap();
@@ -890,7 +890,7 @@ mod tests {
         assert_eq!(dequeued.status, WorkItemStatus::Processing);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_scan_queue_mark_complete() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let queue = ScanQueue::new(pool, 2).await.unwrap();
@@ -905,7 +905,7 @@ mod tests {
         assert_eq!(status.status, WorkItemStatus::Completed);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_scan_queue_mark_failed_with_retry() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let queue = ScanQueue::new(pool, 2).await.unwrap();
@@ -924,7 +924,7 @@ mod tests {
         assert_eq!(status.retry_count, 1);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_scan_queue_stats() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let queue = ScanQueue::new(pool, 2).await.unwrap();
@@ -941,7 +941,7 @@ mod tests {
         assert_eq!(stats.max_concurrent, 2);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_scan_queue_cleanup() {
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         let queue = ScanQueue::new(pool, 2).await.unwrap();

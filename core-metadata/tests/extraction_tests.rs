@@ -14,7 +14,7 @@ fn fixtures_dir() -> PathBuf {
         .join("fixtures")
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_extract_missing_file() {
     let fixtures = fixtures_dir();
     let missing_path = fixtures.join("nonexistent.mp3");
@@ -29,7 +29,7 @@ async fn test_extract_missing_file() {
         .contains("Failed to read file"));
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_extract_corrupted_file() {
     let fixtures = fixtures_dir();
     let corrupt_path = fixtures.join("corrupt.mp3");
@@ -49,7 +49,7 @@ async fn test_extract_corrupted_file() {
     assert!(result.is_err(), "Should fail for corrupted file");
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_extractor_creation() {
     let _extractor1 = MetadataExtractor::new();
     let _extractor2 = MetadataExtractor::default();
@@ -65,7 +65,7 @@ async fn test_extractor_creation() {
 mod with_fixtures {
     use super::*;
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_extract_mp3_metadata() {
         let fixtures = fixtures_dir();
         let mp3_path = fixtures.join("sample.mp3");
@@ -124,7 +124,7 @@ mod with_fixtures {
         assert_eq!(metadata.content_hash.len(), 64);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_extract_flac_metadata() {
         let fixtures = fixtures_dir();
         let flac_path = fixtures.join("sample.flac");
@@ -149,7 +149,7 @@ mod with_fixtures {
         assert!(!metadata.content_hash.is_empty());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_normalize_metadata() {
         let fixtures = fixtures_dir();
         let mp3_path = fixtures.join("sample_whitespace.mp3");
@@ -173,7 +173,7 @@ mod with_fixtures {
         }
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_performance_requirement() {
         use std::time::Instant;
 

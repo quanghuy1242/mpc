@@ -10,7 +10,7 @@ desktop-shims = ["bridge-desktop"]
 
 [dependencies]
 core-async = { path = "../core-async" }
-tokio = { workspace = true, features = ["rt"] }  # For runtime::Handle in logging
+
 tokio-util = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }
@@ -27,4 +27,4 @@ bridge-desktop = { path = "../bridge-desktop", optional = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt"] }
+core-async = { path = "../core-async" }

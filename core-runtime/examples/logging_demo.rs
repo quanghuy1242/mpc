@@ -18,13 +18,14 @@
 //! ```
 
 use bridge_traits::time::LogLevel;
+use core_async::time::{sleep, Duration};
 use core_runtime::logging::{
     init_logging, redact_if_sensitive, strip_path, LogFormat, LoggingConfig,
 };
 use std::env;
 use tracing::{debug, error, info, instrument, span, trace, warn, Level};
 
-#[tokio::main]
+#[core_async::main]
 async fn main() {
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
@@ -120,7 +121,7 @@ async fn demo_spans() {
         let _inner = inner_span.enter();
 
         debug!(count = 150, "Listed files from provider");
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(10)).await;
     }
 
     {
@@ -128,7 +129,7 @@ async fn demo_spans() {
         let _inner = inner_span.enter();
 
         debug!(processed = 50, total = 150, "Downloading metadata");
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(10)).await;
     }
 
     info!(files_synced = 150, "Sync operation completed");
@@ -177,5 +178,5 @@ async fn process_items(items: &[&str]) {
 #[instrument(fields(item_id = idx))]
 async fn process_item(idx: usize, item: &str) {
     trace!(item = %item, "Processing individual item");
-    tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+    sleep(Duration::from_millis(5)).await;
 }

@@ -71,7 +71,7 @@ use bridge_traits::{
     network::{NetworkMonitor, NetworkStatus, NetworkType},
     storage::{FileSystemAccess, RemoteFile, StorageProvider},
 };
-use core_async::sync::{Mutex, RwLock};
+use core_async::sync::{CancellationToken, Mutex, RwLock};
 use core_async::time::timeout;
 use core_auth::{AuthManager, ProfileId, ProviderKind};
 use core_library::repositories::{
@@ -181,7 +181,7 @@ struct ActiveSync {
     job_id: SyncJobId,
     #[allow(dead_code)]
     profile_id: ProfileId,
-    cancellation_token: tokio_util::sync::CancellationToken,
+    cancellation_token: CancellationToken,
 }
 
 /// Sync coordinator for orchestrating synchronization
@@ -516,7 +516,7 @@ impl SyncCoordinator {
         self.job_repository.insert(&job).await?;
 
         // Create cancellation token
-        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let cancellation_token = CancellationToken::new();
 
         // Track active sync
         {
@@ -592,7 +592,7 @@ impl SyncCoordinator {
         &self,
         job_id: SyncJobId,
         profile_id: ProfileId,
-        cancellation_token: tokio_util::sync::CancellationToken,
+        cancellation_token: CancellationToken,
     ) -> Result<()> {
         // Wrap in timeout
         let sync_future = self.execute_sync(job_id, profile_id, cancellation_token);
@@ -652,7 +652,7 @@ impl SyncCoordinator {
         &self,
         job_id: SyncJobId,
         profile_id: ProfileId,
-        cancellation_token: tokio_util::sync::CancellationToken,
+        cancellation_token: CancellationToken,
     ) -> Result<()> {
         // Get current session
         let session = self
@@ -1173,7 +1173,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new(100));
 
         // Create mock secure store and settings store
-        use bridge_traits::storage::{SecureStore, SettingsStore};
+        use bridge_traits::storage::SecureStore;
         use core_async::sync::Mutex as AsyncMutex;
         use std::collections::HashMap;
 
@@ -1228,7 +1228,7 @@ mod tests {
             async fn download_stream(
                 &self,
                 _url: String,
-            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>
+            ) -> bridge_traits::error::Result<Box<dyn core_async::io::AsyncRead + Send + Unpin>>
             {
                 Err(BridgeError::NotAvailable("download_stream".to_string()))
             }
@@ -1315,7 +1315,7 @@ mod tests {
             async fn open_read_stream(
                 &self,
                 _path: &std::path::Path,
-            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>
+            ) -> bridge_traits::error::Result<Box<dyn core_async::io::AsyncRead + Send + Unpin>>
             {
                 Err(BridgeError::NotAvailable("open_read_stream".to_string()))
             }
@@ -1323,74 +1323,9 @@ mod tests {
             async fn open_write_stream(
                 &self,
                 _path: &std::path::Path,
-            ) -> bridge_traits::error::Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>
+            ) -> bridge_traits::error::Result<Box<dyn core_async::io::AsyncWrite + Send + Unpin>>
             {
                 Err(BridgeError::NotAvailable("open_write_stream".to_string()))
-            }
-        }
-
-        struct MockSettingsStore;
-
-        #[async_trait::async_trait]
-        impl SettingsStore for MockSettingsStore {
-            async fn set_string(
-                &self,
-                _key: &str,
-                _value: &str,
-            ) -> bridge_traits::error::Result<()> {
-                Ok(())
-            }
-
-            async fn get_string(&self, _key: &str) -> bridge_traits::error::Result<Option<String>> {
-                Ok(None)
-            }
-
-            async fn set_bool(&self, _key: &str, _value: bool) -> bridge_traits::error::Result<()> {
-                Ok(())
-            }
-
-            async fn get_bool(&self, _key: &str) -> bridge_traits::error::Result<Option<bool>> {
-                Ok(None)
-            }
-
-            async fn set_i64(&self, _key: &str, _value: i64) -> bridge_traits::error::Result<()> {
-                Ok(())
-            }
-
-            async fn get_i64(&self, _key: &str) -> bridge_traits::error::Result<Option<i64>> {
-                Ok(None)
-            }
-
-            async fn set_f64(&self, _key: &str, _value: f64) -> bridge_traits::error::Result<()> {
-                Ok(())
-            }
-
-            async fn get_f64(&self, _key: &str) -> bridge_traits::error::Result<Option<f64>> {
-                Ok(None)
-            }
-
-            async fn delete(&self, _key: &str) -> bridge_traits::error::Result<()> {
-                Ok(())
-            }
-
-            async fn has_key(&self, _key: &str) -> bridge_traits::error::Result<bool> {
-                Ok(false)
-            }
-
-            async fn list_keys(&self) -> bridge_traits::error::Result<Vec<String>> {
-                Ok(Vec::new())
-            }
-
-            async fn clear_all(&self) -> bridge_traits::error::Result<()> {
-                Ok(())
-            }
-
-            async fn begin_transaction(
-                &self,
-            ) -> bridge_traits::error::Result<
-                Box<dyn bridge_traits::storage::SettingsTransaction + Send>,
-            > {
-                Err(BridgeError::NotAvailable("transactions".to_string()))
             }
         }
 
@@ -1424,7 +1359,7 @@ mod tests {
         (coordinator, auth_manager, db_pool)
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_filter_audio_files() {
         let (coordinator, _, _) = setup_test_coordinator().await;
 
@@ -1485,7 +1420,7 @@ mod tests {
         assert_eq!(audio_files[1].id, "3");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_register_provider() {
         let (coordinator, _, _) = setup_test_coordinator().await;
 

@@ -5,14 +5,14 @@
 use core_async::{sync, task, time};
 use std::sync::Arc;
 
-#[tokio::test]
+#[core_async::test]
 async fn test_task_spawn() {
     let handle = task::spawn(async { 42 });
     let result = handle.await.unwrap();
     assert_eq!(result, 42);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_task_spawn_blocking() {
     let handle = task::spawn_blocking(|| {
         // Simulate CPU-intensive work
@@ -23,7 +23,7 @@ async fn test_task_spawn_blocking() {
     assert_eq!(result, 100);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_sleep() {
     let start = time::Instant::now();
     time::sleep(time::Duration::from_millis(50)).await;
@@ -32,7 +32,7 @@ async fn test_sleep() {
     assert!(elapsed < time::Duration::from_millis(150)); // Allow some slack
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_timeout_success() {
     let result = time::timeout(time::Duration::from_millis(100), async {
         time::sleep(time::Duration::from_millis(10)).await;
@@ -44,7 +44,7 @@ async fn test_timeout_success() {
     assert_eq!(result.unwrap(), 42);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_timeout_failure() {
     let result = time::timeout(time::Duration::from_millis(10), async {
         time::sleep(time::Duration::from_millis(100)).await;
@@ -55,7 +55,7 @@ async fn test_timeout_failure() {
     assert!(result.is_err());
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_instant_elapsed() {
     let start = time::Instant::now();
     time::sleep(time::Duration::from_millis(50)).await;
@@ -63,7 +63,7 @@ async fn test_instant_elapsed() {
     assert!(elapsed >= time::Duration::from_millis(50));
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_mutex() {
     let mutex = Arc::new(sync::Mutex::new(0));
     let mutex_clone = mutex.clone();
@@ -79,7 +79,7 @@ async fn test_mutex() {
     assert_eq!(*guard, 1);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_rwlock() {
     let rwlock = Arc::new(sync::RwLock::new(vec![1, 2, 3]));
 
@@ -109,7 +109,7 @@ async fn test_rwlock() {
     assert_eq!(guard.len(), 4);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_mpsc_channel() {
     let (tx, mut rx) = sync::mpsc::channel(10);
 
@@ -130,7 +130,7 @@ async fn test_mpsc_channel() {
     assert_eq!(sum, 10); // 0 + 1 + 2 + 3 + 4 = 10
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_oneshot_channel() {
     let (tx, rx) = sync::oneshot::channel();
 
@@ -143,7 +143,7 @@ async fn test_oneshot_channel() {
     assert_eq!(result, 42);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_notify() {
     let notify = Arc::new(sync::Notify::new());
     let notify_clone = notify.clone();
@@ -160,7 +160,7 @@ async fn test_notify() {
     assert_eq!(result, "notified");
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_interval() {
     let mut interval = time::interval(time::Duration::from_millis(10));
 
@@ -179,13 +179,13 @@ async fn test_interval() {
     assert!(elapsed >= time::Duration::from_millis(30));
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_yield_now() {
     // Just verify it compiles and runs
     task::yield_now().await;
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_concurrent_task_execution() {
     let counter = Arc::new(sync::Mutex::new(0));
     let mut handles = vec![];
@@ -207,7 +207,7 @@ async fn test_concurrent_task_execution() {
     assert_eq!(final_count, 10);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_time_utilities() {
     let now_millis = time::now_millis();
     let now_secs = time::now_secs();
@@ -217,7 +217,7 @@ async fn test_time_utilities() {
     assert!(now_millis / 1000 >= now_secs - 1); // Allow 1 second of slack
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_broadcast_channel() {
     let (tx, mut rx1) = sync::broadcast::channel(10);
     let mut rx2 = tx.subscribe();
@@ -240,7 +240,7 @@ async fn test_broadcast_channel() {
     assert_eq!(values2, vec![0, 1, 2, 3, 4]);
 }
 
-#[tokio::test]
+#[core_async::test]
 async fn test_watch_channel() {
     let (tx, mut rx) = sync::watch::channel(0);
 

@@ -228,13 +228,13 @@ mod tests {
     use super::*;
     use std::env;
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_filesystem_creation() {
         let _fs = TokioFileSystem::new();
         // Just verify it constructs
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_custom_directories() {
         let cache = env::temp_dir().join("test-cache");
         let data = env::temp_dir().join("test-data");
@@ -244,7 +244,7 @@ mod tests {
         assert_eq!(cache_dir, cache);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_write_and_read() {
         let fs = TokioFileSystem::new();
         let test_file = env::temp_dir().join("test-file.txt");

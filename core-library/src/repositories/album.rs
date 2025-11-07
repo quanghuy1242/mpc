@@ -290,7 +290,7 @@ mod tests {
         create_test_pool().await.unwrap()
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_insert_and_find_album() {
         let pool = setup_test_pool().await;
         let artist_repo = SqliteArtistRepository::new(pool.clone());
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(found.genre.as_deref(), Some("Rock"));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_update_album() {
         let pool = setup_test_pool().await;
         let artist_repo = SqliteArtistRepository::new(pool.clone());
@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(found.genre.as_deref(), Some("Indie"));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_delete_album() {
         let pool = setup_test_pool().await;
         let artist_repo = SqliteArtistRepository::new(pool.clone());
@@ -364,7 +364,7 @@ mod tests {
         assert!(found.is_none());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_query_with_pagination() {
         let pool = setup_test_pool().await;
         let artist_repo = SqliteArtistRepository::new(pool.clone());
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(page.total_pages, 2);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_query_by_artist() {
         let pool = setup_test_pool().await;
         let artist_repo = SqliteArtistRepository::new(pool.clone());
@@ -428,7 +428,7 @@ mod tests {
             .all(|a| a.artist_id == Some(artist1.id.clone())));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_count_albums() {
         let pool = setup_test_pool().await;
         let artist_repo = SqliteArtistRepository::new(pool.clone());
@@ -453,7 +453,7 @@ mod tests {
         assert_eq!(count, 3);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_album_validation() {
         let pool = setup_test_pool().await;
         let repo = SqliteAlbumRepository::new(pool);

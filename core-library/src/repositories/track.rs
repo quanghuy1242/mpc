@@ -473,7 +473,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_insert_and_find_track() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -491,7 +491,7 @@ mod tests {
         assert_eq!(found.title, "Test Track");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_update_track() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -511,7 +511,7 @@ mod tests {
         assert_eq!(found.title, "Updated Track");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_delete_track() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -530,7 +530,7 @@ mod tests {
         assert!(found.is_none());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_query_with_pagination() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -557,7 +557,7 @@ mod tests {
         assert!(page.has_previous());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_find_by_provider_file() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -576,7 +576,7 @@ mod tests {
         assert_eq!(found.unwrap().id, "track-4");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_search_tracks() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -599,7 +599,7 @@ mod tests {
         assert_eq!(results.items[0].title, "Rock Song");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_count_tracks() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -616,7 +616,7 @@ mod tests {
         assert_eq!(count, 3);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_track_validation() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;

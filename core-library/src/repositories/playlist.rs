@@ -300,7 +300,7 @@ mod tests {
         create_test_pool().await.unwrap()
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_insert_and_find_playlist() {
         let pool = setup_test_pool().await;
         let repo = SqlitePlaylistRepository::new(pool);
@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(found.description.as_deref(), Some("Workout mix"));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_update_playlist() {
         let pool = setup_test_pool().await;
         let repo = SqlitePlaylistRepository::new(pool);
@@ -342,7 +342,7 @@ mod tests {
         assert_eq!(found.is_public, 1);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_delete_playlist() {
         let pool = setup_test_pool().await;
         let repo = SqlitePlaylistRepository::new(pool);
@@ -360,7 +360,7 @@ mod tests {
         assert!(found.is_none());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_query_by_owner_type() {
         let pool = setup_test_pool().await;
         let repo = SqlitePlaylistRepository::new(pool);
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(page.items[0].owner_type, "user");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_count_playlists() {
         let pool = setup_test_pool().await;
         let repo = SqlitePlaylistRepository::new(pool);
@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(count, 3);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_playlist_validation() {
         let pool = setup_test_pool().await;
         let repo = SqlitePlaylistRepository::new(pool);

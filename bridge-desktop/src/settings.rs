@@ -313,13 +313,13 @@ impl SettingsTransaction for SqliteSettingsTransaction {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_settings_store_creation() {
         let _store = SqliteSettingsStore::in_memory().await.unwrap();
         // Just verify it constructs
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_string_operations() {
         let store = SqliteSettingsStore::in_memory().await.unwrap();
 
@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(value, None);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_typed_operations() {
         let store = SqliteSettingsStore::in_memory().await.unwrap();
 
@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(store.get_f64("f64_key").await.unwrap(), Some(2.5));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_list_keys() {
         let store = SqliteSettingsStore::in_memory().await.unwrap();
 

@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(entry.span_id, Some("trace-456".to_string()));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_console_logger() {
         let logger = ConsoleLogger::default();
         let entry = LogEntry::new(LogLevel::Info, "test", "Test log");

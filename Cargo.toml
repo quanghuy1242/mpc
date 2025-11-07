@@ -59,6 +59,7 @@ members = [
     "bridge-traits",
     "bridge-desktop",
     "core-service",
+    "core-async-macros",
 ]
 
 [workspace.package]

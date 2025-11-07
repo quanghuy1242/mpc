@@ -739,7 +739,7 @@ mod tests {
         track_id
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_detect_duplicates() {
         let pool = create_test_pool().await;
         let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
@@ -760,7 +760,7 @@ mod tests {
         assert_eq!(duplicates[0].track_ids.len(), 3);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_resolve_rename() {
         let pool = create_test_pool().await;
         let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
@@ -822,7 +822,7 @@ mod tests {
         assert_eq!(new_title, "New Title");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_handle_deletion_soft() {
         let pool = create_test_pool().await;
         let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
@@ -839,6 +839,7 @@ mod tests {
         match result {
             ResolutionResult::Deleted {
                 track_id: deleted_id,
+                ..
             } => {
                 assert_eq!(deleted_id, track_id);
             }
@@ -856,7 +857,7 @@ mod tests {
         assert!(provider_file_id_value.starts_with("DELETED_"));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_handle_deletion_hard() {
         let pool = create_test_pool().await;
         let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
@@ -873,6 +874,7 @@ mod tests {
         match result {
             ResolutionResult::Deleted {
                 track_id: deleted_id,
+                ..
             } => {
                 assert_eq!(deleted_id, track_id);
             }
@@ -890,7 +892,7 @@ mod tests {
         assert_eq!(count, 0);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_merge_metadata() {
         let pool = create_test_pool().await;
         let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
@@ -940,7 +942,7 @@ mod tests {
         assert_eq!(year, Some(2024));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_deduplicate() {
         let pool = create_test_pool().await;
         let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
@@ -1004,7 +1006,7 @@ mod tests {
         assert_eq!(bitrate, Some(320000));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_conflict_policy_keep_newest() {
         let pool = create_test_pool().await;
         let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);

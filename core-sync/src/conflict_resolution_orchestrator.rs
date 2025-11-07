@@ -533,7 +533,7 @@ mod tests {
         track_id
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_deletion_tracking_soft() {
         let pool = create_test_pool().await;
         let resolver = Arc::new(ConflictResolver::new(
@@ -582,7 +582,7 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_deletion_tracking_hard() {
         let pool = create_test_pool().await;
         let resolver = Arc::new(ConflictResolver::new(
@@ -629,7 +629,7 @@ mod tests {
         assert_eq!(count, 1); // Only file_1 remains
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_duplicate_resolution() {
         let pool = create_test_pool().await;
         let resolver = Arc::new(ConflictResolver::new(
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_no_conflicts() {
         let pool = create_test_pool().await;
         let resolver = Arc::new(ConflictResolver::new(

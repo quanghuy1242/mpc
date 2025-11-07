@@ -490,7 +490,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_store_and_retrieve_tokens() {
         let secure_store = Arc::new(MockSecureStore::new());
         let token_store = TokenStore::new(secure_store);
@@ -519,7 +519,7 @@ mod tests {
         assert_eq!(retrieved.refresh_token(), tokens.refresh_token());
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_retrieve_nonexistent_tokens() {
         let secure_store = Arc::new(MockSecureStore::new());
         let token_store = TokenStore::new(secure_store);
@@ -534,7 +534,7 @@ mod tests {
         assert!(result.is_none(), "Expected no tokens to be found");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_delete_tokens() {
         let secure_store = Arc::new(MockSecureStore::new());
         let token_store = TokenStore::new(secure_store);
@@ -573,7 +573,7 @@ mod tests {
         assert!(!has_tokens, "Tokens should be deleted");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_delete_nonexistent_tokens() {
         let secure_store = Arc::new(MockSecureStore::new());
         let token_store = TokenStore::new(secure_store);
@@ -587,7 +587,7 @@ mod tests {
             .expect("Delete should succeed for nonexistent tokens");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_has_tokens() {
         let secure_store = Arc::new(MockSecureStore::new());
         let token_store = TokenStore::new(secure_store);
@@ -620,7 +620,7 @@ mod tests {
         assert!(has_tokens, "Should have tokens after storing");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_list_profiles() {
         let secure_store = Arc::new(MockSecureStore::new());
         let token_store = TokenStore::new(secure_store);
@@ -675,7 +675,7 @@ mod tests {
         assert!(profiles.contains(&profile_id2));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_rotate_tokens() {
         let secure_store = Arc::new(MockSecureStore::new());
         let token_store = TokenStore::new(secure_store);
@@ -726,7 +726,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_overwrite_tokens() {
         let secure_store = Arc::new(MockSecureStore::new());
         let token_store = TokenStore::new(secure_store);
@@ -774,7 +774,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_tokens_without_refresh_token() {
         let secure_store = Arc::new(MockSecureStore::new());
         let token_store = TokenStore::new(secure_store);

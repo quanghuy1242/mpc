@@ -24,4 +24,3 @@ bytes = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "time"] }

@@ -918,7 +918,7 @@ mod tests {
         assert_eq!(config.backoff_duration(10).as_millis(), 10000); // Capped at 10s
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_lyrics_service_creation() {
         let pool = create_test_pool().await.unwrap();
         let repository = Arc::new(SqliteLyricsRepository::new(pool));
@@ -927,7 +927,7 @@ mod tests {
         assert_eq!(service.providers.len(), 0);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_lyrics_service_stats() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -954,7 +954,7 @@ mod tests {
         assert_eq!(stats.plain_count, 0);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_lyrics_service_fetch_cached() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -985,7 +985,7 @@ mod tests {
         assert_eq!(fetched.source, "lrclib");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_lyrics_service_update() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -1017,7 +1017,7 @@ mod tests {
         assert_eq!(fetched.body, "Updated");
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_lyrics_service_delete() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;

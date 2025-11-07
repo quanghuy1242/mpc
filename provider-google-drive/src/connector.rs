@@ -374,11 +374,11 @@ mod tests {
         #[async_trait]
         impl HttpClient for HttpClient {
             async fn execute(&self, request: bridge_traits::http::HttpRequest) -> Result<bridge_traits::http::HttpResponse>;
-            async fn download_stream(&self, url: String) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>>;
+            async fn download_stream(&self, url: String) -> Result<Box<dyn core_async::io::AsyncRead + Send + Unpin>>;
         }
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_convert_file() {
         let http_client = Arc::new(MockHttpClient::new());
         let connector = GoogleDriveConnector::new(http_client, "test_token".to_string());
@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(remote_file.md5_checksum, Some("abc123".to_string()));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_convert_folder() {
         let http_client = Arc::new(MockHttpClient::new());
         let connector = GoogleDriveConnector::new(http_client, "test_token".to_string());
@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(remote_file.size, None);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_list_media_success() {
         let mut mock_http = MockHttpClient::new();
 
@@ -466,7 +466,7 @@ mod tests {
         assert_eq!(cursor, Some("next_page".to_string()));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_get_metadata_success() {
         let mut mock_http = MockHttpClient::new();
 
@@ -498,7 +498,7 @@ mod tests {
         assert_eq!(file.mime_type, Some("audio/mpeg".to_string()));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_download_success() {
         let mut mock_http = MockHttpClient::new();
 
@@ -521,7 +521,7 @@ mod tests {
         assert_eq!(&data[..], &[1, 2, 3, 4, 5]);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_download_with_range() {
         let mut mock_http = MockHttpClient::new();
 
@@ -545,7 +545,7 @@ mod tests {
         assert_eq!(data.len(), 3);
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_get_changes_with_token() {
         let mut mock_http = MockHttpClient::new();
 
@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(cursor, Some("token456".to_string()));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_get_changes_removed_file() {
         let mut mock_http = MockHttpClient::new();
 
@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(files[0].metadata.get("removed"), Some(&"true".to_string()));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn test_api_error_handling() {
         let mut mock_http = MockHttpClient::new();
 

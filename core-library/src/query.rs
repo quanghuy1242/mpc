@@ -931,7 +931,7 @@ mod tests {
         playlist
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn query_tracks_supports_filters_and_relations() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -977,7 +977,7 @@ mod tests {
         assert_eq!(item.artist_name.as_deref(), Some(artist.name.as_str()));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn query_albums_returns_aggregated_counts() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -1020,7 +1020,7 @@ mod tests {
         assert_eq!(item.artist_name.as_deref(), Some(artist.name.as_str()));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn search_returns_results_across_entities() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
@@ -1053,7 +1053,7 @@ mod tests {
             .any(|item| item.artist.id == artist.id));
     }
 
-    #[tokio::test]
+    #[core_async::test]
     async fn get_track_details_eager_loads_relations() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
