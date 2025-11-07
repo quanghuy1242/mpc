@@ -35,9 +35,12 @@
 //! ```
 
 use crate::{LibraryError, Result};
+#[cfg(not(target_arch = "wasm32"))]
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+#[cfg(not(target_arch = "wasm32"))]
 use sqlx::{Pool, Sqlite};
 use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -270,6 +273,38 @@ pub async fn create_pool(config: DatabaseConfig) -> Result<Pool<Sqlite>> {
 pub async fn create_test_pool() -> Result<Pool<Sqlite>> {
     let config = DatabaseConfig::in_memory();
     create_pool(config).await
+}
+
+/// Insert a test provider into the database (for testing only)
+///
+/// This helper function inserts a default test provider into the database
+/// to satisfy foreign key constraints when testing tracks and other entities.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// #[core_async::test]
+/// async fn test_something() {
+///     let pool = create_test_pool().await.unwrap();
+///     insert_test_provider(&pool).await;
+///     // Now you can create tracks with provider_id = "test-provider"
+/// }
+/// ```
+pub async fn insert_test_provider(pool: &Pool<Sqlite>) {
+    // Insert test provider if it doesn't already exist
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO providers (id, type, display_name, profile_id, created_at)
+        VALUES ('test-provider', 'GoogleDrive', 'Test Provider', 'test-profile', 0)
+        "#,
+    )
+    .execute(pool)
+    .await
+    .expect("Failed to insert test provider");
 }
 
 /// Run database migrations

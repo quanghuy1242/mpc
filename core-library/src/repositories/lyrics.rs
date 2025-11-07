@@ -3,12 +3,17 @@
 use crate::error::{LibraryError, Result};
 use crate::models::Lyrics;
 use crate::repositories::{Page, PageRequest};
-use async_trait::async_trait;
-use sqlx::{query, query_as, SqlitePool};
+use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
+use bridge_traits::error::BridgeError;
+use bridge_traits::platform::PlatformSendSync;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use sqlx::SqlitePool;
+use std::sync::Arc;
 
 /// Lyrics repository interface for data access operations
-#[async_trait]
-pub trait LyricsRepository: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait LyricsRepository: PlatformSendSync {
     /// Find lyrics by track ID
     ///
     /// # Returns
@@ -77,25 +82,119 @@ pub trait LyricsRepository: Send + Sync {
 
 /// SQLite implementation of LyricsRepository
 pub struct SqliteLyricsRepository {
-    pool: SqlitePool,
+    adapter: Arc<dyn DatabaseAdapter>,
 }
 
 impl SqliteLyricsRepository {
-    /// Create a new SqliteLyricsRepository
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Create a new lyrics repository with the given database adapter
+    pub fn new(adapter: Arc<dyn DatabaseAdapter>) -> Self {
+        Self { adapter }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Create a new lyrics repository from a SQLite connection pool (native only)
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        use crate::adapters::SqliteAdapter;
+        Self::new(Arc::new(SqliteAdapter::from_pool(pool)))
+    }
+
+    // Helper functions for extracting values from QueryRow
+    fn get_string(row: &QueryRow, col: &str) -> Result<String> {
+        row.get(col)
+            .and_then(|v| match v {
+                QueryValue::Text(s) => Some(s.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| Self::missing_column(col))
+    }
+
+    fn get_optional_string(row: &QueryRow, col: &str) -> Option<String> {
+        row.get(col).and_then(|v| match v {
+            QueryValue::Text(s) => Some(s.clone()),
+            QueryValue::Null => None,
+            _ => None,
+        })
+    }
+
+    fn get_i64(row: &QueryRow, col: &str) -> Result<i64> {
+        row.get(col)
+            .and_then(|v| match v {
+                QueryValue::Integer(i) => Some(*i),
+                _ => None,
+            })
+            .ok_or_else(|| Self::missing_column(col))
+    }
+
+    fn missing_column(col: &str) -> LibraryError {
+        LibraryError::Bridge(BridgeError::DatabaseError(format!(
+            "Missing or invalid column: {}",
+            col
+        )))
+    }
+
+    // Helper to build an optional text parameter
+    fn opt_text(value: &Option<String>) -> QueryValue {
+        match value {
+            Some(v) => QueryValue::Text(v.clone()),
+            None => QueryValue::Null,
+        }
+    }
+
+    // Helper to convert a QueryRow into Lyrics
+    fn row_to_lyrics(row: QueryRow) -> Result<Lyrics> {
+        Ok(Lyrics {
+            track_id: Self::get_string(&row, "track_id")?,
+            source: Self::get_string(&row, "source")?,
+            synced: Self::get_i64(&row, "synced")?,
+            body: Self::get_string(&row, "body")?,
+            language: Self::get_optional_string(&row, "language"),
+            last_checked_at: Self::get_i64(&row, "last_checked_at")?,
+            created_at: Self::get_i64(&row, "created_at")?,
+            updated_at: Self::get_i64(&row, "updated_at")?,
+        })
+    }
+
+    // Helper to build insert parameters
+    fn insert_params(lyrics: &Lyrics) -> Vec<QueryValue> {
+        vec![
+            QueryValue::Text(lyrics.track_id.clone()),
+            QueryValue::Text(lyrics.source.clone()),
+            QueryValue::Integer(lyrics.synced),
+            QueryValue::Text(lyrics.body.clone()),
+            Self::opt_text(&lyrics.language),
+            QueryValue::Integer(lyrics.last_checked_at),
+            QueryValue::Integer(lyrics.created_at),
+            QueryValue::Integer(lyrics.updated_at),
+        ]
+    }
+
+    // Helper to build update parameters
+    fn update_params(lyrics: &Lyrics) -> Vec<QueryValue> {
+        let mut params = vec![
+            QueryValue::Text(lyrics.source.clone()),
+            QueryValue::Integer(lyrics.synced),
+            QueryValue::Text(lyrics.body.clone()),
+            Self::opt_text(&lyrics.language),
+            QueryValue::Integer(lyrics.last_checked_at),
+            QueryValue::Integer(lyrics.updated_at),
+        ];
+        // Add track_id for WHERE clause
+        params.push(QueryValue::Text(lyrics.track_id.clone()));
+        params
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl LyricsRepository for SqliteLyricsRepository {
     async fn find_by_track_id(&self, track_id: &str) -> Result<Option<Lyrics>> {
-        let lyrics = query_as::<_, Lyrics>("SELECT * FROM lyrics WHERE track_id = ?")
-            .bind(track_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let sql = "SELECT * FROM lyrics WHERE track_id = ?";
+        let params = vec![QueryValue::Text(track_id.to_string())];
 
-        Ok(lyrics)
+        match self.adapter.query_one_optional(sql, &params).await? {
+            Some(row) => Ok(Some(Self::row_to_lyrics(row)?)),
+            None => Ok(None),
+        }
     }
 
     async fn insert(&self, lyrics: &Lyrics) -> Result<()> {
@@ -105,25 +204,16 @@ impl LyricsRepository for SqliteLyricsRepository {
             message: e,
         })?;
 
-        query(
-            r#"
+        let sql = r#"
             INSERT INTO lyrics (
                 track_id, source, synced, body, language,
                 last_checked_at, created_at, updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&lyrics.track_id)
-        .bind(&lyrics.source)
-        .bind(lyrics.synced)
-        .bind(&lyrics.body)
-        .bind(&lyrics.language)
-        .bind(lyrics.last_checked_at)
-        .bind(lyrics.created_at)
-        .bind(lyrics.updated_at)
-        .execute(&self.pool)
-        .await?;
+        "#;
+
+        let params = Self::insert_params(lyrics);
+        self.adapter.execute(sql, &params).await?;
 
         Ok(())
     }
@@ -135,25 +225,17 @@ impl LyricsRepository for SqliteLyricsRepository {
             message: e,
         })?;
 
-        let result = query(
-            r#"
+        let sql = r#"
             UPDATE lyrics
             SET source = ?, synced = ?, body = ?, language = ?,
                 last_checked_at = ?, updated_at = ?
             WHERE track_id = ?
-            "#,
-        )
-        .bind(&lyrics.source)
-        .bind(lyrics.synced)
-        .bind(&lyrics.body)
-        .bind(&lyrics.language)
-        .bind(lyrics.last_checked_at)
-        .bind(lyrics.updated_at)
-        .bind(&lyrics.track_id)
-        .execute(&self.pool)
-        .await?;
+        "#;
 
-        if result.rows_affected() == 0 {
+        let params = Self::update_params(lyrics);
+        let rows_affected = self.adapter.execute(sql, &params).await?;
+
+        if rows_affected == 0 {
             return Err(LibraryError::NotFound {
                 entity_type: "Lyrics".to_string(),
                 id: lyrics.track_id.clone(),
@@ -164,23 +246,29 @@ impl LyricsRepository for SqliteLyricsRepository {
     }
 
     async fn delete(&self, track_id: &str) -> Result<bool> {
-        let result = query("DELETE FROM lyrics WHERE track_id = ?")
-            .bind(track_id)
-            .execute(&self.pool)
-            .await?;
+        let sql = "DELETE FROM lyrics WHERE track_id = ?";
+        let params = vec![QueryValue::Text(track_id.to_string())];
 
-        Ok(result.rows_affected() > 0)
+        let rows_affected = self.adapter.execute(sql, &params).await?;
+
+        Ok(rows_affected > 0)
     }
 
     async fn query(&self, page_request: PageRequest) -> Result<Page<Lyrics>> {
         let total = self.count().await?;
 
-        let lyrics =
-            query_as::<_, Lyrics>("SELECT * FROM lyrics ORDER BY created_at DESC LIMIT ? OFFSET ?")
-                .bind(page_request.limit())
-                .bind(page_request.offset())
-                .fetch_all(&self.pool)
-                .await?;
+        let sql = "SELECT * FROM lyrics ORDER BY created_at DESC LIMIT ? OFFSET ?";
+        let params = vec![
+            QueryValue::Integer(page_request.limit() as i64),
+            QueryValue::Integer(page_request.offset() as i64),
+        ];
+
+        let rows = self.adapter.query(sql, &params).await?;
+
+        let lyrics = rows
+            .into_iter()
+            .map(Self::row_to_lyrics)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Page::new(lyrics, total as u64, page_request))
     }
@@ -188,13 +276,18 @@ impl LyricsRepository for SqliteLyricsRepository {
     async fn query_synced(&self, page_request: PageRequest) -> Result<Page<Lyrics>> {
         let total = self.count_synced().await?;
 
-        let lyrics = query_as::<_, Lyrics>(
-            "SELECT * FROM lyrics WHERE synced = 1 ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await?;
+        let sql = "SELECT * FROM lyrics WHERE synced = 1 ORDER BY created_at DESC LIMIT ? OFFSET ?";
+        let params = vec![
+            QueryValue::Integer(page_request.limit() as i64),
+            QueryValue::Integer(page_request.offset() as i64),
+        ];
+
+        let rows = self.adapter.query(sql, &params).await?;
+
+        let lyrics = rows
+            .into_iter()
+            .map(Self::row_to_lyrics)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Page::new(lyrics, total as u64, page_request))
     }
@@ -204,40 +297,42 @@ impl LyricsRepository for SqliteLyricsRepository {
         source: &str,
         page_request: PageRequest,
     ) -> Result<Page<Lyrics>> {
-        let total: i64 = query_as("SELECT COUNT(*) as count FROM lyrics WHERE source = ?")
-            .bind(source)
-            .fetch_one(&self.pool)
-            .await
-            .map(|row: (i64,)| row.0)?;
+        let sql_count = "SELECT COUNT(*) as count FROM lyrics WHERE source = ?";
+        let params_count = vec![QueryValue::Text(source.to_string())];
 
-        let lyrics = query_as::<_, Lyrics>(
-            "SELECT * FROM lyrics WHERE source = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(source)
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await?;
+        let row = self.adapter.query_one(sql_count, &params_count).await?;
+
+        let total = Self::get_i64(&row, "count")?;
+
+        let sql = "SELECT * FROM lyrics WHERE source = ? ORDER BY created_at DESC LIMIT ? OFFSET ?";
+        let params = vec![
+            QueryValue::Text(source.to_string()),
+            QueryValue::Integer(page_request.limit() as i64),
+            QueryValue::Integer(page_request.offset() as i64),
+        ];
+
+        let rows = self.adapter.query(sql, &params).await?;
+
+        let lyrics = rows
+            .into_iter()
+            .map(Self::row_to_lyrics)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Page::new(lyrics, total as u64, page_request))
     }
 
     async fn count(&self) -> Result<i64> {
-        let count: i64 = query_as("SELECT COUNT(*) as count FROM lyrics")
-            .fetch_one(&self.pool)
-            .await
-            .map(|row: (i64,)| row.0)?;
+        let sql = "SELECT COUNT(*) as count FROM lyrics";
+        let row = self.adapter.query_one(sql, &[]).await?;
 
-        Ok(count)
+        Self::get_i64(&row, "count")
     }
 
     async fn count_synced(&self) -> Result<i64> {
-        let count: i64 = query_as("SELECT COUNT(*) as count FROM lyrics WHERE synced = 1")
-            .fetch_one(&self.pool)
-            .await
-            .map(|row: (i64,)| row.0)?;
+        let sql = "SELECT COUNT(*) as count FROM lyrics WHERE synced = 1";
+        let row = self.adapter.query_one(sql, &[]).await?;
 
-        Ok(count)
+        Self::get_i64(&row, "count")
     }
 }
 
@@ -272,8 +367,8 @@ mod tests {
         .await
         .unwrap();
 
-        let artist_repo = SqliteArtistRepository::new(pool.clone());
-        let track_repo = SqliteTrackRepository::new(pool.clone());
+        let artist_repo = SqliteArtistRepository::from_pool(pool.clone());
+        let track_repo = SqliteTrackRepository::from_pool(pool.clone());
 
         // Create artist with unique ID and name
         let artist_id = format!("artist-{}", uuid::Uuid::new_v4());
@@ -327,7 +422,7 @@ mod tests {
     #[core_async::test]
     async fn test_insert_and_find_lyrics() {
         let pool = setup_test_pool().await;
-        let repo = SqliteLyricsRepository::new(pool.clone());
+        let repo = SqliteLyricsRepository::from_pool(pool.clone());
         let track = create_test_track(&pool).await;
 
         // Create and insert lyrics
@@ -351,7 +446,7 @@ mod tests {
     #[core_async::test]
     async fn test_update_lyrics() {
         let pool = setup_test_pool().await;
-        let repo = SqliteLyricsRepository::new(pool.clone());
+        let repo = SqliteLyricsRepository::from_pool(pool.clone());
         let track = create_test_track(&pool).await;
 
         // Create and insert lyrics
@@ -378,7 +473,7 @@ mod tests {
     #[core_async::test]
     async fn test_delete_lyrics() {
         let pool = setup_test_pool().await;
-        let repo = SqliteLyricsRepository::new(pool.clone());
+        let repo = SqliteLyricsRepository::from_pool(pool.clone());
         let track = create_test_track(&pool).await;
 
         // Create and insert lyrics
@@ -402,7 +497,7 @@ mod tests {
     #[core_async::test]
     async fn test_query_synced() {
         let pool = setup_test_pool().await;
-        let repo = SqliteLyricsRepository::new(pool.clone());
+        let repo = SqliteLyricsRepository::from_pool(pool.clone());
 
         // Create tracks and lyrics
         let track1 = create_test_track(&pool).await;
@@ -434,7 +529,7 @@ mod tests {
     #[core_async::test]
     async fn test_query_by_source() {
         let pool = setup_test_pool().await;
-        let repo = SqliteLyricsRepository::new(pool.clone());
+        let repo = SqliteLyricsRepository::from_pool(pool.clone());
 
         // Create tracks and lyrics from different sources
         let track1 = create_test_track(&pool).await;
@@ -469,7 +564,7 @@ mod tests {
     #[core_async::test]
     async fn test_count_lyrics() {
         let pool = setup_test_pool().await;
-        let repo = SqliteLyricsRepository::new(pool.clone());
+        let repo = SqliteLyricsRepository::from_pool(pool.clone());
 
         // Initially should be 0
         let count = repo.count().await.unwrap();
@@ -500,7 +595,7 @@ mod tests {
     #[core_async::test]
     async fn test_lyrics_validation() {
         let pool = setup_test_pool().await;
-        let repo = SqliteLyricsRepository::new(pool.clone());
+        let repo = SqliteLyricsRepository::from_pool(pool.clone());
         let track = create_test_track(&pool).await;
 
         // Create lyrics with empty body

@@ -34,6 +34,7 @@
 
 use crate::error::{Result, SyncError};
 use crate::scan_queue::WorkItem;
+use bridge_traits::database::DatabaseAdapter;
 use bridge_traits::storage::{FileSystemAccess, StorageProvider};
 use bridge_traits::time::{Clock, SystemClock};
 use bytes::Bytes;
@@ -43,7 +44,6 @@ use core_library::repositories::{
 };
 use core_metadata::artwork::ArtworkService;
 use core_metadata::extractor::{ExtractedMetadata, MetadataExtractor};
-use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -112,7 +112,7 @@ pub struct MetadataProcessor {
     #[allow(dead_code)]
     artwork_repository: Arc<dyn ArtworkRepository>,
     artwork_service: Option<Arc<ArtworkService>>,
-    db_pool: SqlitePool,
+    db: Arc<dyn DatabaseAdapter>,
     clock: Arc<dyn Clock>,
 }
 
@@ -128,7 +128,7 @@ impl MetadataProcessor {
     /// * `album_repository` - Album data access layer
     /// * `artwork_repository` - Artwork data access layer
     /// * `artwork_service` - Optional artwork processing service
-    /// * `db_pool` - Database connection pool for transactions
+    /// * `db` - Database adapter for transactions
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: ProcessorConfig,
@@ -138,7 +138,7 @@ impl MetadataProcessor {
         album_repository: Arc<dyn AlbumRepository>,
         artwork_repository: Arc<dyn ArtworkRepository>,
         artwork_service: Option<Arc<ArtworkService>>,
-        db_pool: SqlitePool,
+        db: Arc<dyn DatabaseAdapter>,
     ) -> Self {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         Self::with_clock(
@@ -149,7 +149,7 @@ impl MetadataProcessor {
             album_repository,
             artwork_repository,
             artwork_service,
-            db_pool,
+            db,
             clock,
         )
     }
@@ -163,7 +163,7 @@ impl MetadataProcessor {
         album_repository: Arc<dyn AlbumRepository>,
         artwork_repository: Arc<dyn ArtworkRepository>,
         artwork_service: Option<Arc<ArtworkService>>,
-        db_pool: SqlitePool,
+        db: Arc<dyn DatabaseAdapter>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         let metadata_extractor = Arc::new(MetadataExtractor::new());
@@ -177,7 +177,7 @@ impl MetadataProcessor {
             album_repository,
             artwork_repository,
             artwork_service,
-            db_pool,
+            db,
             clock,
         }
     }
@@ -273,15 +273,15 @@ impl MetadataProcessor {
         }
 
         // Step 4: Begin database transaction for atomicity
-        let mut tx = self
-            .db_pool
-            .begin()
+        let tx_id = self
+            .db
+            .begin_transaction()
             .await
             .map_err(|e| SyncError::Internal(format!("Failed to begin transaction: {}", e)))?;
 
         // Step 5: Resolve or create artist
         let artist_id = self
-            .resolve_or_create_artist(&metadata, &mut tx)
+            .resolve_or_create_artist(&metadata, tx_id)
             .await
             .map_err(|e| {
                 error!("Failed to resolve artist: {}", e);
@@ -290,7 +290,7 @@ impl MetadataProcessor {
 
         // Step 6: Resolve or create album
         let album_id = self
-            .resolve_or_create_album(&metadata, artist_id.as_ref(), &mut tx)
+            .resolve_or_create_album(&metadata, artist_id.as_ref(), tx_id)
             .await
             .map_err(|e| {
                 error!("Failed to resolve album: {}", e);
@@ -324,7 +324,7 @@ impl MetadataProcessor {
                 artist_id,
                 album_id,
                 artwork_id,
-                &mut tx,
+                tx_id,
                 file_name,
             )
             .await?
@@ -335,13 +335,14 @@ impl MetadataProcessor {
                 artist_id,
                 album_id,
                 artwork_id,
-                &mut tx,
+                tx_id,
             )
             .await?
         };
 
         // Step 9: Commit transaction
-        tx.commit()
+        self.db
+            .commit_transaction(tx_id)
             .await
             .map_err(|e| SyncError::Internal(format!("Failed to commit transaction: {}", e)))?;
 
@@ -452,8 +453,14 @@ impl MetadataProcessor {
 
     /// Extract metadata from file
     async fn extract_metadata(&self, path: &Path) -> Result<ExtractedMetadata> {
+        let file_data = self
+            .file_system
+            .read_file(path)
+            .await
+            .map_err(|e| SyncError::Provider(format!("Failed to read temp file: {}", e)))?;
+
         self.metadata_extractor
-            .extract_from_file(path)
+            .extract_from_bytes(file_data.as_ref(), path)
             .await
             .map_err(|e| SyncError::Internal(format!("Metadata extraction failed: {}", e)))
     }
@@ -462,7 +469,7 @@ impl MetadataProcessor {
     async fn resolve_or_create_artist(
         &self,
         metadata: &ExtractedMetadata,
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx_id: bridge_traits::database::TransactionId,
     ) -> Result<Option<ArtistId>> {
         let artist_name = match &metadata.artist {
             Some(name) if !name.trim().is_empty() => name.trim(),
@@ -472,15 +479,24 @@ impl MetadataProcessor {
         // Try to find existing artist by normalized name
         let normalized_name = normalize_name(artist_name);
 
-        // Query within transaction using runtime query
-        let existing =
-            sqlx::query_as::<_, (String,)>("SELECT id FROM artists WHERE normalized_name = ?")
-                .bind(&normalized_name)
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(|e| SyncError::Internal(format!("Failed to query artist: {}", e)))?;
+        // Query within transaction
+        let rows = self
+            .db
+            .query_in_transaction(
+                tx_id,
+                "SELECT id FROM artists WHERE normalized_name = ?",
+                &[bridge_traits::database::QueryValue::Text(
+                    normalized_name.clone(),
+                )],
+            )
+            .await
+            .map_err(|e| SyncError::Internal(format!("Failed to query artist: {}", e)))?;
 
-        if let Some((id,)) = existing {
+        if !rows.is_empty() {
+            let id = rows[0]
+                .get("id")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing id field".to_string()))?;
             let artist_id = ArtistId::from_string(&id)
                 .map_err(|e| SyncError::Internal(format!("Invalid artist ID: {}", e)))?;
             return Ok(Some(artist_id));
@@ -498,18 +514,20 @@ impl MetadataProcessor {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        sqlx::query(
-            "INSERT INTO artists (id, name, normalized_name, sort_name, bio, country, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        self.db.execute_in_transaction(
+            tx_id,
+            "INSERT INTO artists (id, name, normalized_name, sort_name, bio, country, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            &[
+                bridge_traits::database::QueryValue::Text(artist.id.clone()),
+                bridge_traits::database::QueryValue::Text(artist.name.clone()),
+                bridge_traits::database::QueryValue::Text(artist.normalized_name),
+                bridge_traits::database::QueryValue::Null,
+                bridge_traits::database::QueryValue::Null,
+                bridge_traits::database::QueryValue::Null,
+                bridge_traits::database::QueryValue::Integer(artist.created_at),
+                bridge_traits::database::QueryValue::Integer(artist.updated_at),
+            ],
         )
-        .bind(&artist.id)
-        .bind(&artist.name)
-        .bind(&artist.normalized_name)
-        .bind(&artist.sort_name)
-        .bind(&artist.bio)
-        .bind(&artist.country)
-        .bind(artist.created_at)
-        .bind(artist.updated_at)
-        .execute(&mut **tx)
         .await
         .map_err(|e| SyncError::Internal(format!("Failed to insert artist: {}", e)))?;
 
@@ -525,7 +543,7 @@ impl MetadataProcessor {
         &self,
         metadata: &ExtractedMetadata,
         artist_id: Option<&ArtistId>,
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx_id: bridge_traits::database::TransactionId,
     ) -> Result<Option<AlbumId>> {
         let album_name = match &metadata.album {
             Some(name) if !name.trim().is_empty() => name.trim(),
@@ -535,26 +553,36 @@ impl MetadataProcessor {
         let normalized_name = normalize_name(album_name);
         let artist_id_str = artist_id.map(|id| id.to_string());
 
-        // Try to find existing album by normalized name and artist using runtime query
-        let existing = if let Some(ref aid) = artist_id_str {
-            sqlx::query_as::<_, (String,)>(
-                "SELECT id FROM albums WHERE normalized_name = ? AND artist_id = ?",
-            )
-            .bind(&normalized_name)
-            .bind(aid)
-            .fetch_optional(&mut **tx)
-            .await
+        // Try to find existing album by normalized name and artist
+        let rows = if let Some(ref aid) = artist_id_str {
+            self.db
+                .query_in_transaction(
+                    tx_id,
+                    "SELECT id FROM albums WHERE normalized_name = ? AND artist_id = ?",
+                    &[
+                        bridge_traits::database::QueryValue::Text(normalized_name.clone()),
+                        bridge_traits::database::QueryValue::Text(aid.clone()),
+                    ],
+                )
+                .await
         } else {
-            sqlx::query_as::<_, (String,)>(
-                "SELECT id FROM albums WHERE normalized_name = ? AND artist_id IS NULL",
-            )
-            .bind(&normalized_name)
-            .fetch_optional(&mut **tx)
-            .await
+            self.db
+                .query_in_transaction(
+                    tx_id,
+                    "SELECT id FROM albums WHERE normalized_name = ? AND artist_id IS NULL",
+                    &[bridge_traits::database::QueryValue::Text(
+                        normalized_name.clone(),
+                    )],
+                )
+                .await
         }
         .map_err(|e| SyncError::Internal(format!("Failed to query album: {}", e)))?;
 
-        if let Some((id,)) = existing {
+        if !rows.is_empty() {
+            let id = rows[0]
+                .get("id")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing id field".to_string()))?;
             let album_id = AlbumId::from_string(&id)
                 .map_err(|e| SyncError::Internal(format!("Invalid album ID: {}", e)))?;
             return Ok(Some(album_id));
@@ -575,21 +603,23 @@ impl MetadataProcessor {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        sqlx::query(
-            "INSERT INTO albums (id, name, normalized_name, artist_id, year, genre, artwork_id, track_count, total_duration_ms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        self.db.execute_in_transaction(
+            tx_id,
+            "INSERT INTO albums (id, name, normalized_name, artist_id, year, genre, artwork_id, track_count, total_duration_ms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            &[
+                bridge_traits::database::QueryValue::Text(album.id.clone()),
+                bridge_traits::database::QueryValue::Text(album.name.clone()),
+                bridge_traits::database::QueryValue::Text(album.normalized_name),
+                album.artist_id.as_ref().map(|s| bridge_traits::database::QueryValue::Text(s.clone())).unwrap_or(bridge_traits::database::QueryValue::Null),
+                album.year.map(|y| bridge_traits::database::QueryValue::Integer(y as i64)).unwrap_or(bridge_traits::database::QueryValue::Null),
+                album.genre.as_ref().map(|g| bridge_traits::database::QueryValue::Text(g.clone())).unwrap_or(bridge_traits::database::QueryValue::Null),
+                bridge_traits::database::QueryValue::Null,
+                bridge_traits::database::QueryValue::Integer(album.track_count as i64),
+                bridge_traits::database::QueryValue::Integer(album.total_duration_ms as i64),
+                bridge_traits::database::QueryValue::Integer(album.created_at),
+                bridge_traits::database::QueryValue::Integer(album.updated_at),
+            ],
         )
-        .bind(&album.id)
-        .bind(&album.name)
-        .bind(&album.normalized_name)
-        .bind(&album.artist_id)
-        .bind(album.year)
-        .bind(&album.genre)
-        .bind(&album.artwork_id)
-        .bind(album.track_count)
-        .bind(album.total_duration_ms)
-        .bind(album.created_at)
-        .bind(album.updated_at)
-        .execute(&mut **tx)
         .await
         .map_err(|e| SyncError::Internal(format!("Failed to insert album: {}", e)))?;
 
@@ -635,7 +665,7 @@ impl MetadataProcessor {
         artist_id: Option<ArtistId>,
         album_id: Option<AlbumId>,
         artwork_id: Option<String>,
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx_id: bridge_traits::database::TransactionId,
         file_name: &str,
     ) -> Result<String> {
         let track_id = TrackId::new().to_string();
@@ -648,9 +678,12 @@ impl MetadataProcessor {
         });
 
         let normalized_title = normalize_name(&title);
+        let now = chrono::Utc::now().timestamp();
 
-        sqlx::query(
-            r#"
+        self.db
+            .execute_in_transaction(
+                tx_id,
+                r#"
             INSERT INTO tracks (
                 id, provider_id, provider_file_id, hash,
                 title, normalized_title, album_id, artist_id, album_artist_id,
@@ -659,36 +692,92 @@ impl MetadataProcessor {
                 year, genre, composer, comment, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
-        )
-        .bind(&track_id)
-        .bind(provider_id)
-        .bind(&work_item.remote_file_id)
-        .bind(&metadata.content_hash)
-        .bind(&title)
-        .bind(&normalized_title)
-        .bind(album_id.as_ref().map(|id| id.to_string()))
-        .bind(artist_id.as_ref().map(|id| id.to_string()))
-        .bind(artist_id.as_ref().map(|id| id.to_string())) // album_artist_id same as artist_id for now
-        .bind(metadata.track_number.map(|n| n as i32))
-        .bind(metadata.disc_number.map(|n| n as i32))
-        .bind(metadata.duration_ms as i64)
-        .bind(metadata.bitrate.map(|b| b as i32))
-        .bind(metadata.sample_rate.map(|sr| sr as i32))
-        .bind(metadata.channels.map(|c| c as i32))
-        .bind(&metadata.format)
-        .bind(&metadata.mime_type)
-        .bind(metadata.file_size as i64)
-        .bind(&artwork_id)
-        .bind("not_fetched") // lyrics_status
-        .bind(metadata.year)
-        .bind(&metadata.genre)
-        .bind(&metadata.composer)
-        .bind(&metadata.comment)
-        .bind(chrono::Utc::now().timestamp())
-        .bind(chrono::Utc::now().timestamp())
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| SyncError::Internal(format!("Failed to insert track: {}", e)))?;
+                &[
+                    bridge_traits::database::QueryValue::Text(track_id.clone()),
+                    bridge_traits::database::QueryValue::Text(provider_id.to_string()),
+                    bridge_traits::database::QueryValue::Text(work_item.remote_file_id.clone()),
+                    bridge_traits::database::QueryValue::Text(metadata.content_hash.clone()),
+                    bridge_traits::database::QueryValue::Text(title.clone()),
+                    bridge_traits::database::QueryValue::Text(normalized_title),
+                    album_id
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |id| {
+                            bridge_traits::database::QueryValue::Text(id.to_string())
+                        }),
+                    artist_id
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |id| {
+                            bridge_traits::database::QueryValue::Text(id.to_string())
+                        }),
+                    artist_id
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |id| {
+                            bridge_traits::database::QueryValue::Text(id.to_string())
+                        }),
+                    metadata
+                        .track_number
+                        .map_or(bridge_traits::database::QueryValue::Null, |n| {
+                            bridge_traits::database::QueryValue::Integer(n as i64)
+                        }),
+                    metadata
+                        .disc_number
+                        .map_or(bridge_traits::database::QueryValue::Null, |n| {
+                            bridge_traits::database::QueryValue::Integer(n as i64)
+                        }),
+                    bridge_traits::database::QueryValue::Integer(metadata.duration_ms as i64),
+                    metadata
+                        .bitrate
+                        .map_or(bridge_traits::database::QueryValue::Null, |b| {
+                            bridge_traits::database::QueryValue::Integer(b as i64)
+                        }),
+                    metadata
+                        .sample_rate
+                        .map_or(bridge_traits::database::QueryValue::Null, |sr| {
+                            bridge_traits::database::QueryValue::Integer(sr as i64)
+                        }),
+                    metadata
+                        .channels
+                        .map_or(bridge_traits::database::QueryValue::Null, |c| {
+                            bridge_traits::database::QueryValue::Integer(c as i64)
+                        }),
+                    bridge_traits::database::QueryValue::Text(metadata.format.clone()),
+                    bridge_traits::database::QueryValue::Text(metadata.mime_type.clone()),
+                    bridge_traits::database::QueryValue::Integer(metadata.file_size as i64),
+                    artwork_id
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |aid| {
+                            bridge_traits::database::QueryValue::Text(aid.clone())
+                        }),
+                    bridge_traits::database::QueryValue::Text("not_fetched".to_string()),
+                    metadata
+                        .year
+                        .map_or(bridge_traits::database::QueryValue::Null, |y| {
+                            bridge_traits::database::QueryValue::Integer(y as i64)
+                        }),
+                    metadata
+                        .genre
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |g| {
+                            bridge_traits::database::QueryValue::Text(g.clone())
+                        }),
+                    metadata
+                        .composer
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |c| {
+                            bridge_traits::database::QueryValue::Text(c.clone())
+                        }),
+                    metadata
+                        .comment
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |c| {
+                            bridge_traits::database::QueryValue::Text(c.clone())
+                        }),
+                    bridge_traits::database::QueryValue::Integer(now),
+                    bridge_traits::database::QueryValue::Integer(now),
+                ],
+            )
+            .await
+            .map_err(|e| SyncError::Internal(format!("Failed to insert track: {}", e)))?;
 
         debug!("Created new track: {} ({})", title, track_id);
 
@@ -704,7 +793,7 @@ impl MetadataProcessor {
         artist_id: Option<ArtistId>,
         album_id: Option<AlbumId>,
         artwork_id: Option<String>,
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx_id: bridge_traits::database::TransactionId,
     ) -> Result<String> {
         let title = metadata
             .title
@@ -713,8 +802,10 @@ impl MetadataProcessor {
         let normalized_title = normalize_name(&title);
 
         // Use COALESCE for artwork_id to preserve existing value if new one is None
-        sqlx::query(
-            r#"
+        self.db
+            .execute_in_transaction(
+                tx_id,
+                r#"
             UPDATE tracks SET
                 hash = ?, title = ?, normalized_title = ?, album_id = ?, artist_id = ?,
                 track_number = ?, disc_number = ?, duration_ms = ?, bitrate = ?,
@@ -723,31 +814,83 @@ impl MetadataProcessor {
                 composer = ?, comment = ?, updated_at = ?
             WHERE id = ?
             "#,
-        )
-        .bind(&metadata.content_hash)
-        .bind(&title)
-        .bind(&normalized_title)
-        .bind(album_id.as_ref().map(|id| id.to_string()))
-        .bind(artist_id.as_ref().map(|id| id.to_string()))
-        .bind(metadata.track_number.map(|n| n as i32))
-        .bind(metadata.disc_number.map(|n| n as i32))
-        .bind(metadata.duration_ms as i64)
-        .bind(metadata.bitrate.map(|b| b as i32))
-        .bind(metadata.sample_rate.map(|sr| sr as i32))
-        .bind(metadata.channels.map(|c| c as i32))
-        .bind(&metadata.format)
-        .bind(&metadata.mime_type)
-        .bind(metadata.file_size as i64)
-        .bind(&artwork_id)
-        .bind(metadata.year)
-        .bind(&metadata.genre)
-        .bind(&metadata.composer)
-        .bind(&metadata.comment)
-        .bind(chrono::Utc::now().timestamp())
-        .bind(&existing_track.id)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| SyncError::Internal(format!("Failed to update track: {}", e)))?;
+                &[
+                    bridge_traits::database::QueryValue::Text(metadata.content_hash.clone()),
+                    bridge_traits::database::QueryValue::Text(title.clone()),
+                    bridge_traits::database::QueryValue::Text(normalized_title),
+                    album_id
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |id| {
+                            bridge_traits::database::QueryValue::Text(id.to_string())
+                        }),
+                    artist_id
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |id| {
+                            bridge_traits::database::QueryValue::Text(id.to_string())
+                        }),
+                    metadata
+                        .track_number
+                        .map_or(bridge_traits::database::QueryValue::Null, |n| {
+                            bridge_traits::database::QueryValue::Integer(n as i64)
+                        }),
+                    metadata
+                        .disc_number
+                        .map_or(bridge_traits::database::QueryValue::Null, |n| {
+                            bridge_traits::database::QueryValue::Integer(n as i64)
+                        }),
+                    bridge_traits::database::QueryValue::Integer(metadata.duration_ms as i64),
+                    metadata
+                        .bitrate
+                        .map_or(bridge_traits::database::QueryValue::Null, |b| {
+                            bridge_traits::database::QueryValue::Integer(b as i64)
+                        }),
+                    metadata
+                        .sample_rate
+                        .map_or(bridge_traits::database::QueryValue::Null, |sr| {
+                            bridge_traits::database::QueryValue::Integer(sr as i64)
+                        }),
+                    metadata
+                        .channels
+                        .map_or(bridge_traits::database::QueryValue::Null, |c| {
+                            bridge_traits::database::QueryValue::Integer(c as i64)
+                        }),
+                    bridge_traits::database::QueryValue::Text(metadata.format.clone()),
+                    bridge_traits::database::QueryValue::Text(metadata.mime_type.clone()),
+                    bridge_traits::database::QueryValue::Integer(metadata.file_size as i64),
+                    artwork_id
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |aid| {
+                            bridge_traits::database::QueryValue::Text(aid.clone())
+                        }),
+                    metadata
+                        .year
+                        .map_or(bridge_traits::database::QueryValue::Null, |y| {
+                            bridge_traits::database::QueryValue::Integer(y as i64)
+                        }),
+                    metadata
+                        .genre
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |g| {
+                            bridge_traits::database::QueryValue::Text(g.clone())
+                        }),
+                    metadata
+                        .composer
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |c| {
+                            bridge_traits::database::QueryValue::Text(c.clone())
+                        }),
+                    metadata
+                        .comment
+                        .as_ref()
+                        .map_or(bridge_traits::database::QueryValue::Null, |c| {
+                            bridge_traits::database::QueryValue::Text(c.clone())
+                        }),
+                    bridge_traits::database::QueryValue::Integer(chrono::Utc::now().timestamp()),
+                    bridge_traits::database::QueryValue::Text(existing_track.id.clone()),
+                ],
+            )
+            .await
+            .map_err(|e| SyncError::Internal(format!("Failed to update track: {}", e)))?;
 
         debug!("Updated track: {} ({})", title, existing_track.id);
 

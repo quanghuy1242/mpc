@@ -75,7 +75,8 @@ mod with_fixtures {
         }
 
         let extractor = MetadataExtractor::new();
-        let result = extractor.extract_from_file(&mp3_path).await;
+        let file_data = fs::read(&mp3_path).expect("Failed to read sample.mp3");
+        let result = extractor.extract_from_bytes(&file_data, &mp3_path).await;
 
         assert!(
             result.is_ok(),
@@ -135,7 +136,8 @@ mod with_fixtures {
         }
 
         let extractor = MetadataExtractor::new();
-        let result = extractor.extract_from_file(&flac_path).await;
+        let file_data = fs::read(&flac_path).expect("Failed to read sample.flac");
+        let result = extractor.extract_from_bytes(&file_data, &flac_path).await;
 
         assert!(
             result.is_ok(),
@@ -160,7 +162,8 @@ mod with_fixtures {
         }
 
         let extractor = MetadataExtractor::new();
-        let result = extractor.extract_from_file(&mp3_path).await;
+        let file_data = fs::read(&mp3_path).expect("Failed to read sample_whitespace.mp3");
+        let result = extractor.extract_from_bytes(&file_data, &mp3_path).await;
 
         assert!(result.is_ok());
         let metadata = result.unwrap();
@@ -188,7 +191,8 @@ mod with_fixtures {
         let extractor = MetadataExtractor::new();
 
         let start = Instant::now();
-        let result = extractor.extract_from_file(&mp3_path).await;
+        let file_data = fs::read(&mp3_path).expect("Failed to read sample.mp3");
+        let result = extractor.extract_from_bytes(&file_data, &mp3_path).await;
         let duration = start.elapsed();
 
         assert!(result.is_ok());

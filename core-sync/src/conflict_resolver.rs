@@ -21,10 +21,11 @@
 //!
 //! ```no_run
 //! use core_sync::conflict_resolver::{ConflictResolver, ConflictPolicy};
-//! use sqlx::SqlitePool;
+//! use bridge_traits::database::DatabaseAdapter;
+//! use std::sync::Arc;
 //!
-//! # async fn example(pool: SqlitePool) -> Result<(), Box<dyn std::error::Error>> {
-//! let resolver = ConflictResolver::new(pool, ConflictPolicy::KeepNewest);
+//! # async fn example(db: Arc<dyn DatabaseAdapter>) -> Result<(), Box<dyn std::error::Error>> {
+//! let resolver = ConflictResolver::new(db, ConflictPolicy::KeepNewest);
 //!
 //! // Detect duplicates by content hash
 //! let duplicates = resolver.detect_duplicates().await?;
@@ -44,9 +45,10 @@
 //! ```
 
 use crate::error::{Result, SyncError};
+use bridge_traits::database::{DatabaseAdapter, QueryValue};
 use core_library::models::{Track, TrackId};
-use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
 
 /// Conflict resolution policy
@@ -120,7 +122,7 @@ pub enum ResolutionResult {
 
 /// Conflict resolver for sync operations
 pub struct ConflictResolver {
-    pool: SqlitePool,
+    db: Arc<dyn DatabaseAdapter>,
     policy: ConflictPolicy,
 }
 
@@ -129,10 +131,10 @@ impl ConflictResolver {
     ///
     /// # Arguments
     ///
-    /// * `pool` - Database connection pool
+    /// * `db` - Database adapter
     /// * `policy` - Conflict resolution policy to use
-    pub fn new(pool: SqlitePool, policy: ConflictPolicy) -> Self {
-        Self { pool, policy }
+    pub fn new(db: Arc<dyn DatabaseAdapter>, policy: ConflictPolicy) -> Self {
+        Self { db, policy }
     }
 
     /// Detect duplicate files by content hash
@@ -162,8 +164,10 @@ impl ConflictResolver {
         debug!("Detecting duplicate tracks by content hash");
 
         // Query for tracks grouped by hash with count > 1
-        let rows = sqlx::query(
-            r#"
+        let rows = self
+            .db
+            .query(
+                r#"
             SELECT hash, GROUP_CONCAT(id) as track_ids, file_size, COUNT(*) as count
             FROM tracks
             WHERE hash IS NOT NULL
@@ -171,26 +175,30 @@ impl ConflictResolver {
             HAVING count > 1
             ORDER BY count DESC, file_size DESC
             "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
         let mut duplicate_sets = Vec::new();
 
         for row in rows {
-            let hash: String = row
-                .try_get("hash")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
-            let track_ids_str: String = row
-                .try_get("track_ids")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
-            let file_size: i64 = row
-                .try_get("file_size")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
-            let count: i64 = row
-                .try_get("count")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
+            let hash = row
+                .get("hash")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing hash field".to_string()))?;
+            let track_ids_str = row
+                .get("track_ids")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing track_ids field".to_string()))?;
+            let file_size = row
+                .get("file_size")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| SyncError::Database("Missing file_size field".to_string()))?;
+            let count = row
+                .get("count")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| SyncError::Database("Missing count field".to_string()))?;
 
             // Parse track IDs
             let track_ids: Result<Vec<TrackId>> = track_ids_str
@@ -266,23 +274,27 @@ impl ConflictResolver {
         );
 
         // Find track with old provider file ID
-        let track_row = sqlx::query("SELECT id FROM tracks WHERE provider_file_id = ?")
-            .bind(old_provider_file_id)
-            .fetch_optional(&self.pool)
+        let rows = self
+            .db
+            .query(
+                "SELECT id FROM tracks WHERE provider_file_id = ?",
+                &[QueryValue::Text(old_provider_file_id.to_string())],
+            )
             .await
             .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        let Some(track_row) = track_row else {
+        if rows.is_empty() {
             debug!(
                 "No track found with provider_file_id: {}",
                 old_provider_file_id
             );
             return Ok(ResolutionResult::NoAction);
-        };
+        }
 
-        let track_id_str: String = track_row
-            .try_get("id")
-            .map_err(|e| SyncError::Database(e.to_string()))?;
+        let track_id_str = rows[0]
+            .get("id")
+            .and_then(|v| v.as_string())
+            .ok_or_else(|| SyncError::Database("Missing id field".to_string()))?;
         let track_id =
             TrackId::from_string(&track_id_str).map_err(|e| SyncError::InvalidInput {
                 field: "track_id".to_string(),
@@ -291,8 +303,9 @@ impl ConflictResolver {
 
         // Update provider file ID and title
         let now = chrono::Utc::now().timestamp();
-        sqlx::query(
-            r#"
+        self.db
+            .execute(
+                r#"
             UPDATE tracks 
             SET provider_file_id = ?, 
                 title = ?,
@@ -300,15 +313,16 @@ impl ConflictResolver {
                 updated_at = ?
             WHERE id = ?
             "#,
-        )
-        .bind(new_provider_file_id)
-        .bind(new_name)
-        .bind(new_name)
-        .bind(now)
-        .bind(track_id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[
+                    QueryValue::Text(new_provider_file_id.to_string()),
+                    QueryValue::Text(new_name.to_string()),
+                    QueryValue::Text(new_name.to_string()),
+                    QueryValue::Integer(now),
+                    QueryValue::Text(track_id.to_string()),
+                ],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
         info!(
             "Renamed track {}: {} -> {}",
@@ -363,20 +377,24 @@ impl ConflictResolver {
         );
 
         // Find track with this provider file ID
-        let track_row = sqlx::query("SELECT id FROM tracks WHERE provider_file_id = ?")
-            .bind(provider_file_id)
-            .fetch_optional(&self.pool)
+        let rows = self
+            .db
+            .query(
+                "SELECT id FROM tracks WHERE provider_file_id = ?",
+                &[QueryValue::Text(provider_file_id.to_string())],
+            )
             .await
             .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        let Some(track_row) = track_row else {
+        if rows.is_empty() {
             debug!("No track found with provider_file_id: {}", provider_file_id);
             return Ok(ResolutionResult::NoAction);
-        };
+        }
 
-        let track_id_str: String = track_row
-            .try_get("id")
-            .map_err(|e| SyncError::Database(e.to_string()))?;
+        let track_id_str = rows[0]
+            .get("id")
+            .and_then(|v| v.as_string())
+            .ok_or_else(|| SyncError::Database("Missing id field".to_string()))?;
         let track_id =
             TrackId::from_string(&track_id_str).map_err(|e| SyncError::InvalidInput {
                 field: "track_id".to_string(),
@@ -385,9 +403,11 @@ impl ConflictResolver {
 
         if hard_delete {
             // Delete track from database
-            sqlx::query("DELETE FROM tracks WHERE id = ?")
-                .bind(track_id.to_string())
-                .execute(&self.pool)
+            self.db
+                .execute(
+                    "DELETE FROM tracks WHERE id = ?",
+                    &[QueryValue::Text(track_id.to_string())],
+                )
                 .await
                 .map_err(|e| SyncError::Database(e.to_string()))?;
 
@@ -396,11 +416,15 @@ impl ConflictResolver {
             // Soft delete: mark as unavailable by setting a special marker in provider_file_id
             // Since provider_file_id is NOT NULL, we use a marker like "DELETED_<original_id>"
             let marker = format!("DELETED_{}", provider_file_id);
-            sqlx::query("UPDATE tracks SET provider_file_id = ?, updated_at = ? WHERE id = ?")
-                .bind(marker)
-                .bind(chrono::Utc::now().timestamp())
-                .bind(track_id.to_string())
-                .execute(&self.pool)
+            self.db
+                .execute(
+                    "UPDATE tracks SET provider_file_id = ?, updated_at = ? WHERE id = ?",
+                    &[
+                        QueryValue::Text(marker),
+                        QueryValue::Integer(chrono::Utc::now().timestamp()),
+                        QueryValue::Text(track_id.to_string()),
+                    ],
+                )
                 .await
                 .map_err(|e| SyncError::Database(e.to_string()))?;
 
@@ -454,24 +478,25 @@ impl ConflictResolver {
         debug!("Merging metadata for track {}", track_id);
 
         // Fetch current track
-        let track_row =
-            sqlx::query("SELECT provider_modified_at, updated_at FROM tracks WHERE id = ?")
-                .bind(track_id.to_string())
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| SyncError::Database(e.to_string()))?;
+        let rows = self
+            .db
+            .query(
+                "SELECT provider_modified_at, updated_at FROM tracks WHERE id = ?",
+                &[QueryValue::Text(track_id.to_string())],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        let Some(track_row) = track_row else {
+        if rows.is_empty() {
             warn!("Track {} not found", track_id);
             return Ok(ResolutionResult::NoAction);
-        };
+        }
 
-        let local_provider_modified: Option<i64> = track_row
-            .try_get("provider_modified_at")
-            .map_err(|e| SyncError::Database(e.to_string()))?;
-        let _local_updated: i64 = track_row
-            .try_get("updated_at")
-            .map_err(|e| SyncError::Database(e.to_string()))?;
+        let local_provider_modified = rows[0].get("provider_modified_at").and_then(|v| v.as_i64());
+        let _local_updated = rows[0]
+            .get("updated_at")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| SyncError::Database("Missing updated_at field".to_string()))?;
 
         // Decide whether to update based on policy
         let should_update = match self.policy {
@@ -503,31 +528,37 @@ impl ConflictResolver {
 
         // Build UPDATE query based on provided metadata fields
         let mut updates = Vec::new();
-        let mut values: Vec<String> = Vec::new();
+        let mut values: Vec<QueryValue> = Vec::new();
 
         for (key, value) in remote_metadata {
             match key.as_str() {
                 "title" => {
                     updates.push("title = ?");
                     updates.push("normalized_title = LOWER(TRIM(?))");
-                    values.push(value.clone());
-                    values.push(value);
+                    values.push(QueryValue::Text(value.clone()));
+                    values.push(QueryValue::Text(value));
                 }
                 "duration_ms" => {
                     updates.push("duration_ms = ?");
-                    values.push(value);
+                    if let Ok(v) = value.parse::<i64>() {
+                        values.push(QueryValue::Integer(v));
+                    }
                 }
                 "bitrate" => {
                     updates.push("bitrate = ?");
-                    values.push(value);
+                    if let Ok(v) = value.parse::<i64>() {
+                        values.push(QueryValue::Integer(v));
+                    }
                 }
                 "format" => {
                     updates.push("format = ?");
-                    values.push(value);
+                    values.push(QueryValue::Text(value));
                 }
                 "year" => {
                     updates.push("year = ?");
-                    values.push(value);
+                    if let Ok(v) = value.parse::<i64>() {
+                        values.push(QueryValue::Integer(v));
+                    }
                 }
                 _ => {
                     // Ignore unknown fields
@@ -544,20 +575,17 @@ impl ConflictResolver {
         // Add standard fields
         updates.push("provider_modified_at = ?");
         updates.push("updated_at = ?");
-        values.push(remote_modified_at.to_string());
-        values.push(chrono::Utc::now().timestamp().to_string());
+        values.push(QueryValue::Integer(remote_modified_at));
+        values.push(QueryValue::Integer(chrono::Utc::now().timestamp()));
+
+        // Add track_id for WHERE clause
+        values.push(QueryValue::Text(track_id.to_string()));
 
         // Build and execute query
         let query_str = format!("UPDATE tracks SET {} WHERE id = ?", updates.join(", "));
 
-        let mut query = sqlx::query(&query_str);
-        for value in values {
-            query = query.bind(value);
-        }
-        query = query.bind(track_id.to_string());
-
-        query
-            .execute(&self.pool)
+        self.db
+            .execute(&query_str, &values)
             .await
             .map_err(|e| SyncError::Database(e.to_string()))?;
 
@@ -624,8 +652,9 @@ impl ConflictResolver {
             track_ids_str.join(",")
         );
 
-        let rows = sqlx::query(&query)
-            .fetch_all(&self.pool)
+        let rows = self
+            .db
+            .query(&query, &[])
             .await
             .map_err(|e| SyncError::Database(e.to_string()))?;
 
@@ -634,9 +663,10 @@ impl ConflictResolver {
         }
 
         // First row is the primary (highest quality, most recent)
-        let primary_id_str: String = rows[0]
-            .try_get("id")
-            .map_err(|e| SyncError::Database(e.to_string()))?;
+        let primary_id_str = rows[0]
+            .get("id")
+            .and_then(|v| v.as_string())
+            .ok_or_else(|| SyncError::Database("Missing id field".to_string()))?;
         let primary_id =
             TrackId::from_string(&primary_id_str).map_err(|e| SyncError::InvalidInput {
                 field: "track_id".to_string(),
@@ -648,9 +678,10 @@ impl ConflictResolver {
         // Delete all other tracks in the set
         let mut results = Vec::new();
         for row in rows.iter().skip(1) {
-            let dup_id_str: String = row
-                .try_get("id")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
+            let dup_id_str = row
+                .get("id")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing id field".to_string()))?;
             let dup_id =
                 TrackId::from_string(&dup_id_str).map_err(|e| SyncError::InvalidInput {
                     field: "track_id".to_string(),
@@ -660,9 +691,11 @@ impl ConflictResolver {
             // TODO: Update playlist references to point to primary track
             // before deleting duplicate
 
-            sqlx::query("DELETE FROM tracks WHERE id = ?")
-                .bind(dup_id.to_string())
-                .execute(&self.pool)
+            self.db
+                .execute(
+                    "DELETE FROM tracks WHERE id = ?",
+                    &[QueryValue::Text(dup_id.to_string())],
+                )
                 .await
                 .map_err(|e| SyncError::Database(e.to_string()))?;
 
@@ -684,55 +717,65 @@ impl ConflictResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bridge_traits::database::DatabaseAdapter;
+    use core_library::adapters::sqlite_native::SqliteAdapter;
     use core_library::db::DatabaseConfig;
 
-    async fn create_test_pool() -> SqlitePool {
+    async fn create_test_db() -> Arc<dyn DatabaseAdapter> {
         let config = DatabaseConfig::in_memory();
         let pool = core_library::db::create_pool(config).await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
 
         // Create a test provider to satisfy foreign key constraints
-        sqlx::query(
+        db.execute(
             r#"
             INSERT INTO providers (id, type, display_name, profile_id, created_at) 
             VALUES (?, ?, ?, ?, ?)
             "#,
+            &[
+                QueryValue::Text("test_provider".to_string()),
+                QueryValue::Text("GoogleDrive".to_string()),
+                QueryValue::Text("Test Provider".to_string()),
+                QueryValue::Text("test_profile_id".to_string()),
+                QueryValue::Integer(chrono::Utc::now().timestamp()),
+            ],
         )
-        .bind("test_provider")
-        .bind("GoogleDrive")
-        .bind("Test Provider")
-        .bind("test_profile_id")
-        .bind(chrono::Utc::now().timestamp())
-        .execute(&pool)
         .await
         .unwrap();
 
-        pool
+        db
     }
 
-    async fn create_test_track(pool: &SqlitePool, title: &str, hash: Option<&str>) -> TrackId {
+    async fn create_test_track(
+        db: &Arc<dyn DatabaseAdapter>,
+        title: &str,
+        hash: Option<&str>,
+    ) -> TrackId {
         let track_id = TrackId::new();
         let now = chrono::Utc::now().timestamp();
 
-        sqlx::query(
+        db.execute(
             r#"
             INSERT INTO tracks (
                 id, provider_id, provider_file_id, title, normalized_title,
                 duration_ms, format, file_size, created_at, updated_at, hash
             ) VALUES (?, ?, ?, ?, LOWER(TRIM(?)), ?, ?, ?, ?, ?, ?)
             "#,
+            &[
+                QueryValue::Text(track_id.to_string()),
+                QueryValue::Text("test_provider".to_string()),
+                QueryValue::Text(format!("file_{}", track_id)),
+                QueryValue::Text(title.to_string()),
+                QueryValue::Text(title.to_string()),
+                QueryValue::Integer(180000),
+                QueryValue::Text("mp3".to_string()),
+                QueryValue::Integer(5000000),
+                QueryValue::Integer(now),
+                QueryValue::Integer(now),
+                hash.map(|h| QueryValue::Text(h.to_string()))
+                    .unwrap_or(QueryValue::Null),
+            ],
         )
-        .bind(track_id.to_string())
-        .bind("test_provider")
-        .bind(format!("file_{}", track_id))
-        .bind(title)
-        .bind(title)
-        .bind(180000)
-        .bind("mp3") // Required NOT NULL field
-        .bind(5000000)
-        .bind(now)
-        .bind(now)
-        .bind(hash)
-        .execute(pool)
         .await
         .unwrap();
 
@@ -741,17 +784,17 @@ mod tests {
 
     #[core_async::test]
     async fn test_detect_duplicates() {
-        let pool = create_test_pool().await;
-        let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
+        let db = create_test_db().await;
+        let resolver = ConflictResolver::new(db.clone(), ConflictPolicy::KeepNewest);
 
         // Create tracks with same hash
         let hash = "abc123def456";
-        let _track1 = create_test_track(&pool, "Song 1", Some(hash)).await;
-        let _track2 = create_test_track(&pool, "Song 2", Some(hash)).await;
-        let _track3 = create_test_track(&pool, "Song 3", Some(hash)).await;
+        let _track1 = create_test_track(&db, "Song 1", Some(hash)).await;
+        let _track2 = create_test_track(&db, "Song 2", Some(hash)).await;
+        let _track3 = create_test_track(&db, "Song 3", Some(hash)).await;
 
         // Create track with different hash
-        let _track4 = create_test_track(&pool, "Song 4", Some("different_hash")).await;
+        let _track4 = create_test_track(&db, "Song 4", Some("different_hash")).await;
 
         let duplicates = resolver.detect_duplicates().await.unwrap();
 
@@ -762,33 +805,34 @@ mod tests {
 
     #[core_async::test]
     async fn test_resolve_rename() {
-        let pool = create_test_pool().await;
-        let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
+        let db = create_test_db().await;
+        let resolver = ConflictResolver::new(db.clone(), ConflictPolicy::KeepNewest);
 
         // Create a track
         let track_id = TrackId::new();
         let now = chrono::Utc::now().timestamp();
         let old_provider_id = "old_file_123";
 
-        sqlx::query(
+        db.execute(
             r#"
             INSERT INTO tracks (
                 id, provider_id, provider_file_id, title, normalized_title,
                 duration_ms, format, file_size, created_at, updated_at
             ) VALUES (?, ?, ?, ?, LOWER(TRIM(?)), ?, ?, ?, ?, ?)
             "#,
+            &[
+                QueryValue::Text(track_id.to_string()),
+                QueryValue::Text("test_provider".to_string()),
+                QueryValue::Text(old_provider_id.to_string()),
+                QueryValue::Text("Old Title".to_string()),
+                QueryValue::Text("Old Title".to_string()),
+                QueryValue::Integer(180000),
+                QueryValue::Text("mp3".to_string()),
+                QueryValue::Integer(5000000),
+                QueryValue::Integer(now),
+                QueryValue::Integer(now),
+            ],
         )
-        .bind(track_id.to_string())
-        .bind("test_provider")
-        .bind(old_provider_id)
-        .bind("Old Title")
-        .bind("Old Title")
-        .bind(180000)
-        .bind("mp3")
-        .bind(5000000)
-        .bind(now)
-        .bind(now)
-        .execute(&pool)
         .await
         .unwrap();
 
@@ -809,14 +853,19 @@ mod tests {
         }
 
         // Verify database was updated
-        let row = sqlx::query("SELECT provider_file_id, title FROM tracks WHERE id = ?")
-            .bind(track_id.to_string())
-            .fetch_one(&pool)
+        let rows = db
+            .query(
+                "SELECT provider_file_id, title FROM tracks WHERE id = ?",
+                &[QueryValue::Text(track_id.to_string())],
+            )
             .await
             .unwrap();
 
-        let new_provider_id: String = row.try_get("provider_file_id").unwrap();
-        let new_title: String = row.try_get("title").unwrap();
+        let new_provider_id = rows[0]
+            .get("provider_file_id")
+            .and_then(|v| v.as_string())
+            .unwrap();
+        let new_title = rows[0].get("title").and_then(|v| v.as_string()).unwrap();
 
         assert_eq!(new_provider_id, "new_file_456");
         assert_eq!(new_title, "New Title");
@@ -824,10 +873,10 @@ mod tests {
 
     #[core_async::test]
     async fn test_handle_deletion_soft() {
-        let pool = create_test_pool().await;
-        let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
+        let db = create_test_db().await;
+        let resolver = ConflictResolver::new(db.clone(), ConflictPolicy::KeepNewest);
 
-        let track_id = create_test_track(&pool, "Test Track", None).await;
+        let track_id = create_test_track(&db, "Test Track", None).await;
         let provider_file_id = format!("file_{}", track_id);
 
         // Soft delete
@@ -847,22 +896,27 @@ mod tests {
         }
 
         // Verify track still exists but provider_file_id is marked as DELETED
-        let row = sqlx::query("SELECT provider_file_id FROM tracks WHERE id = ?")
-            .bind(track_id.to_string())
-            .fetch_one(&pool)
+        let rows = db
+            .query(
+                "SELECT provider_file_id FROM tracks WHERE id = ?",
+                &[QueryValue::Text(track_id.to_string())],
+            )
             .await
             .unwrap();
 
-        let provider_file_id_value: String = row.try_get("provider_file_id").unwrap();
+        let provider_file_id_value = rows[0]
+            .get("provider_file_id")
+            .and_then(|v| v.as_string())
+            .unwrap();
         assert!(provider_file_id_value.starts_with("DELETED_"));
     }
 
     #[core_async::test]
     async fn test_handle_deletion_hard() {
-        let pool = create_test_pool().await;
-        let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
+        let db = create_test_db().await;
+        let resolver = ConflictResolver::new(db.clone(), ConflictPolicy::KeepNewest);
 
-        let track_id = create_test_track(&pool, "Test Track", None).await;
+        let track_id = create_test_track(&db, "Test Track", None).await;
         let provider_file_id = format!("file_{}", track_id);
 
         // Hard delete
@@ -882,31 +936,36 @@ mod tests {
         }
 
         // Verify track no longer exists
-        let row = sqlx::query("SELECT COUNT(*) as count FROM tracks WHERE id = ?")
-            .bind(track_id.to_string())
-            .fetch_one(&pool)
+        let rows = db
+            .query(
+                "SELECT COUNT(*) as count FROM tracks WHERE id = ?",
+                &[QueryValue::Text(track_id.to_string())],
+            )
             .await
             .unwrap();
 
-        let count: i64 = row.try_get("count").unwrap();
+        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap();
         assert_eq!(count, 0);
     }
 
     #[core_async::test]
     async fn test_merge_metadata() {
-        let pool = create_test_pool().await;
-        let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
+        let db = create_test_db().await;
+        let resolver = ConflictResolver::new(db.clone(), ConflictPolicy::KeepNewest);
 
-        let track_id = create_test_track(&pool, "Old Title", None).await;
+        let track_id = create_test_track(&db, "Old Title", None).await;
 
         // Update with modified timestamp from 10 seconds ago
         let old_timestamp = chrono::Utc::now().timestamp() - 10;
-        sqlx::query("UPDATE tracks SET provider_modified_at = ? WHERE id = ?")
-            .bind(old_timestamp)
-            .bind(track_id.to_string())
-            .execute(&pool)
-            .await
-            .unwrap();
+        db.execute(
+            "UPDATE tracks SET provider_modified_at = ? WHERE id = ?",
+            &[
+                QueryValue::Integer(old_timestamp),
+                QueryValue::Text(track_id.to_string()),
+            ],
+        )
+        .await
+        .unwrap();
 
         // Merge metadata with newer timestamp
         let new_timestamp = chrono::Utc::now().timestamp();
@@ -929,14 +988,16 @@ mod tests {
         }
 
         // Verify metadata was updated
-        let row = sqlx::query("SELECT title, year FROM tracks WHERE id = ?")
-            .bind(track_id.to_string())
-            .fetch_one(&pool)
+        let rows = db
+            .query(
+                "SELECT title, year FROM tracks WHERE id = ?",
+                &[QueryValue::Text(track_id.to_string())],
+            )
             .await
             .unwrap();
 
-        let title: String = row.try_get("title").unwrap();
-        let year: Option<i64> = row.try_get("year").unwrap();
+        let title = rows[0].get("title").and_then(|v| v.as_string()).unwrap();
+        let year = rows[0].get("year").and_then(|v| v.as_i64());
 
         assert_eq!(title, "New Title");
         assert_eq!(year, Some(2024));
@@ -944,35 +1005,38 @@ mod tests {
 
     #[core_async::test]
     async fn test_deduplicate() {
-        let pool = create_test_pool().await;
-        let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
+        let db = create_test_db().await;
+        let resolver = ConflictResolver::new(db.clone(), ConflictPolicy::KeepNewest);
 
         // Create duplicate tracks with same hash but different quality
         let hash = "duplicate_hash_123";
 
         // Low quality
-        let track1 = create_test_track(&pool, "Song - Low", Some(hash)).await;
-        sqlx::query("UPDATE tracks SET bitrate = 128000 WHERE id = ?")
-            .bind(track1.to_string())
-            .execute(&pool)
-            .await
-            .unwrap();
+        let track1 = create_test_track(&db, "Song - Low", Some(hash)).await;
+        db.execute(
+            "UPDATE tracks SET bitrate = 128000 WHERE id = ?",
+            &[QueryValue::Text(track1.to_string())],
+        )
+        .await
+        .unwrap();
 
         // High quality (should be kept)
-        let track2 = create_test_track(&pool, "Song - High", Some(hash)).await;
-        sqlx::query("UPDATE tracks SET bitrate = 320000 WHERE id = ?")
-            .bind(track2.to_string())
-            .execute(&pool)
-            .await
-            .unwrap();
+        let track2 = create_test_track(&db, "Song - High", Some(hash)).await;
+        db.execute(
+            "UPDATE tracks SET bitrate = 320000 WHERE id = ?",
+            &[QueryValue::Text(track2.to_string())],
+        )
+        .await
+        .unwrap();
 
         // Medium quality
-        let track3 = create_test_track(&pool, "Song - Medium", Some(hash)).await;
-        sqlx::query("UPDATE tracks SET bitrate = 192000 WHERE id = ?")
-            .bind(track3.to_string())
-            .execute(&pool)
-            .await
-            .unwrap();
+        let track3 = create_test_track(&db, "Song - Medium", Some(hash)).await;
+        db.execute(
+            "UPDATE tracks SET bitrate = 192000 WHERE id = ?",
+            &[QueryValue::Text(track3.to_string())],
+        )
+        .await
+        .unwrap();
 
         let duplicate_set = DuplicateSet {
             hash: hash.to_string(),
@@ -986,41 +1050,48 @@ mod tests {
         assert_eq!(results.len(), 2);
 
         // Verify only track2 (highest quality) still exists
-        let count = sqlx::query("SELECT COUNT(*) as count FROM tracks WHERE hash = ?")
-            .bind(hash)
-            .fetch_one(&pool)
+        let rows = db
+            .query(
+                "SELECT COUNT(*) as count FROM tracks WHERE hash = ?",
+                &[QueryValue::Text(hash.to_string())],
+            )
             .await
             .unwrap();
 
-        let count: i64 = count.try_get("count").unwrap();
+        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap();
         assert_eq!(count, 1);
 
         // Verify it's the high quality track
-        let row = sqlx::query("SELECT bitrate FROM tracks WHERE hash = ?")
-            .bind(hash)
-            .fetch_one(&pool)
+        let rows = db
+            .query(
+                "SELECT bitrate FROM tracks WHERE hash = ?",
+                &[QueryValue::Text(hash.to_string())],
+            )
             .await
             .unwrap();
 
-        let bitrate: Option<i64> = row.try_get("bitrate").unwrap();
+        let bitrate = rows[0].get("bitrate").and_then(|v| v.as_i64());
         assert_eq!(bitrate, Some(320000));
     }
 
     #[core_async::test]
     async fn test_conflict_policy_keep_newest() {
-        let pool = create_test_pool().await;
-        let resolver = ConflictResolver::new(pool.clone(), ConflictPolicy::KeepNewest);
+        let db = create_test_db().await;
+        let resolver = ConflictResolver::new(db.clone(), ConflictPolicy::KeepNewest);
 
-        let track_id = create_test_track(&pool, "Title", None).await;
+        let track_id = create_test_track(&db, "Title", None).await;
 
         // Set old modification time
         let old_time = chrono::Utc::now().timestamp() - 100;
-        sqlx::query("UPDATE tracks SET provider_modified_at = ? WHERE id = ?")
-            .bind(old_time)
-            .bind(track_id.to_string())
-            .execute(&pool)
-            .await
-            .unwrap();
+        db.execute(
+            "UPDATE tracks SET provider_modified_at = ? WHERE id = ?",
+            &[
+                QueryValue::Integer(old_time),
+                QueryValue::Text(track_id.to_string()),
+            ],
+        )
+        .await
+        .unwrap();
 
         // Try to merge with older metadata (should not update)
         let older_time = old_time - 50;
@@ -1045,13 +1116,15 @@ mod tests {
         assert!(matches!(result, ResolutionResult::Updated { .. }));
 
         // Verify the title was updated
-        let row = sqlx::query("SELECT title FROM tracks WHERE id = ?")
-            .bind(track_id.to_string())
-            .fetch_one(&pool)
+        let rows = db
+            .query(
+                "SELECT title FROM tracks WHERE id = ?",
+                &[QueryValue::Text(track_id.to_string())],
+            )
             .await
             .unwrap();
 
-        let title: String = row.try_get("title").unwrap();
+        let title = rows[0].get("title").and_then(|v| v.as_string()).unwrap();
         assert_eq!(title, "Should Update");
     }
 }

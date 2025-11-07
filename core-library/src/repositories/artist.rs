@@ -3,12 +3,16 @@
 use crate::error::{LibraryError, Result};
 use crate::models::Artist;
 use crate::repositories::{Page, PageRequest};
-use async_trait::async_trait;
-use sqlx::{query, query_as, SqlitePool};
+use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
+use bridge_traits::platform::PlatformSendSync;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use sqlx::SqlitePool;
+use std::sync::Arc;
 
 /// Artist repository interface for data access operations
-#[async_trait]
-pub trait ArtistRepository: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait ArtistRepository: PlatformSendSync {
     /// Find an artist by its ID
     ///
     /// # Returns
@@ -72,125 +76,172 @@ pub trait ArtistRepository: Send + Sync {
 
 /// SQLite implementation of ArtistRepository
 pub struct SqliteArtistRepository {
-    pool: SqlitePool,
+    adapter: Arc<dyn DatabaseAdapter>,
 }
 
 impl SqliteArtistRepository {
-    /// Create a new SqliteArtistRepository
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Create a new repository using the provided database adapter.
+    pub fn new(adapter: Arc<dyn DatabaseAdapter>) -> Self {
+        Self { adapter }
+    }
+
+    fn validate_artist(artist: &Artist) -> Result<()> {
+        artist.validate().map_err(|msg| LibraryError::InvalidInput {
+            field: "Artist".to_string(),
+            message: msg,
+        })
+    }
+
+    fn insert_params(artist: &Artist) -> Vec<QueryValue> {
+        vec![
+            QueryValue::Text(artist.id.clone()),
+            QueryValue::Text(artist.name.clone()),
+            QueryValue::Text(artist.normalized_name.clone()),
+            opt_text(&artist.sort_name),
+            opt_text(&artist.bio),
+            opt_text(&artist.country),
+            QueryValue::Integer(artist.created_at),
+            QueryValue::Integer(artist.updated_at),
+        ]
+    }
+
+    fn update_params(artist: &Artist) -> Vec<QueryValue> {
+        let mut params = vec![
+            QueryValue::Text(artist.name.clone()),
+            QueryValue::Text(artist.normalized_name.clone()),
+            opt_text(&artist.sort_name),
+            opt_text(&artist.bio),
+            opt_text(&artist.country),
+            QueryValue::Integer(artist.updated_at),
+        ];
+        params.push(QueryValue::Text(artist.id.clone()));
+        params
+    }
+
+    async fn fetch_artists(&self, sql: &str, params: Vec<QueryValue>) -> Result<Vec<Artist>> {
+        let rows = self.adapter.query(sql, &params).await?;
+        rows.into_iter().map(|row| row_to_artist(&row)).collect()
+    }
+
+    async fn fetch_optional_artist(
+        &self,
+        sql: &str,
+        params: Vec<QueryValue>,
+    ) -> Result<Option<Artist>> {
+        let row = self.adapter.query_one_optional(sql, &params).await?;
+        row.map(|row| row_to_artist(&row)).transpose()
+    }
+
+    async fn paginate(
+        &self,
+        count_sql: &str,
+        count_params: Vec<QueryValue>,
+        data_sql: &str,
+        mut data_params: Vec<QueryValue>,
+        request: PageRequest,
+    ) -> Result<Page<Artist>> {
+        let total = self.count_with(count_sql, count_params).await?;
+        data_params.push(QueryValue::Integer(request.limit() as i64));
+        data_params.push(QueryValue::Integer(request.offset() as i64));
+        let items = self.fetch_artists(data_sql, data_params).await?;
+        Ok(Page::new(items, total as u64, request))
+    }
+
+    async fn count_with(&self, sql: &str, params: Vec<QueryValue>) -> Result<i64> {
+        let row = self.adapter.query_one(sql, &params).await?;
+        row.get("count")
+            .and_then(|value| value.as_i64())
+            .ok_or_else(|| missing_column("count"))
     }
 }
 
-#[async_trait]
+#[cfg(not(target_arch = "wasm32"))]
+impl SqliteArtistRepository {
+    /// Convenience constructor for native targets using an existing `sqlx` pool.
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        use crate::adapters::sqlite_native::SqliteAdapter;
+        Self::new(Arc::new(SqliteAdapter::from_pool(pool)))
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl ArtistRepository for SqliteArtistRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Artist>> {
-        let artist = query_as::<_, Artist>("SELECT * FROM artists WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        Ok(artist)
+        self.fetch_optional_artist(
+            "SELECT * FROM artists WHERE id = ?",
+            vec![QueryValue::Text(id.to_string())],
+        )
+        .await
     }
 
     async fn insert(&self, artist: &Artist) -> Result<()> {
-        // Validate before insertion
-        artist.validate().map_err(|e| LibraryError::InvalidInput {
-            field: "Artist".to_string(),
-            message: e,
-        })?;
-
-        query(
-            r#"
-            INSERT INTO artists (
-                id, name, normalized_name, sort_name, bio, country,
-                created_at, updated_at
+        Self::validate_artist(artist)?;
+        self.adapter
+            .execute(
+                r#"
+                INSERT INTO artists (
+                    id, name, normalized_name, sort_name, bio, country,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+                &Self::insert_params(artist),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&artist.id)
-        .bind(&artist.name)
-        .bind(&artist.normalized_name)
-        .bind(&artist.sort_name)
-        .bind(&artist.bio)
-        .bind(&artist.country)
-        .bind(artist.created_at)
-        .bind(artist.updated_at)
-        .execute(&self.pool)
-        .await?;
-
+            .await?;
         Ok(())
     }
 
     async fn update(&self, artist: &Artist) -> Result<()> {
-        // Validate before update
-        artist.validate().map_err(|e| LibraryError::InvalidInput {
-            field: "Artist".to_string(),
-            message: e,
-        })?;
-
-        let result = query(
-            r#"
-            UPDATE artists
-            SET name = ?, normalized_name = ?, sort_name = ?, bio = ?, country = ?,
-                updated_at = ?
-            WHERE id = ?
-            "#,
-        )
-        .bind(&artist.name)
-        .bind(&artist.normalized_name)
-        .bind(&artist.sort_name)
-        .bind(&artist.bio)
-        .bind(&artist.country)
-        .bind(artist.updated_at)
-        .bind(&artist.id)
-        .execute(&self.pool)
-        .await?;
-
-        if result.rows_affected() == 0 {
+        Self::validate_artist(artist)?;
+        let affected = self
+            .adapter
+            .execute(
+                r#"
+                UPDATE artists
+                SET name = ?, normalized_name = ?, sort_name = ?, bio = ?, country = ?,
+                    updated_at = ?
+                WHERE id = ?
+                "#,
+                &Self::update_params(artist),
+            )
+            .await?;
+        if affected == 0 {
             return Err(LibraryError::NotFound {
                 entity_type: "Artist".to_string(),
                 id: artist.id.clone(),
             });
         }
-
         Ok(())
     }
 
     async fn delete(&self, id: &str) -> Result<bool> {
-        let result = query("DELETE FROM artists WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
+        let affected = self
+            .adapter
+            .execute(
+                "DELETE FROM artists WHERE id = ?",
+                &[QueryValue::Text(id.to_string())],
+            )
             .await?;
-
-        Ok(result.rows_affected() > 0)
+        Ok(affected > 0)
     }
 
     async fn query(&self, page_request: PageRequest) -> Result<Page<Artist>> {
-        let total = self.count().await?;
-
-        let artists =
-            query_as::<_, Artist>("SELECT * FROM artists ORDER BY name ASC LIMIT ? OFFSET ?")
-                .bind(page_request.limit())
-                .bind(page_request.offset())
-                .fetch_all(&self.pool)
-                .await?;
-
-        Ok(Page::new(artists, total as u64, page_request))
+        self.paginate(
+            "SELECT COUNT(*) as count FROM artists",
+            vec![],
+            "SELECT * FROM artists ORDER BY name ASC LIMIT ? OFFSET ?",
+            vec![],
+            page_request,
+        )
+        .await
     }
 
     async fn search(&self, search_query: &str, page_request: PageRequest) -> Result<Page<Artist>> {
-        // Count matching artists
-        let total: i64 =
-            query_as("SELECT COUNT(*) as count FROM artists_fts WHERE artists_fts MATCH ?")
-                .bind(search_query)
-                .fetch_one(&self.pool)
-                .await
-                .map(|row: (i64,)| row.0)?;
-
-        // Perform FTS5 search
-        let artists = query_as::<_, Artist>(
+        let params = vec![QueryValue::Text(search_query.to_string())];
+        self.paginate(
+            "SELECT COUNT(*) as count FROM artists_fts WHERE artists_fts MATCH ?",
+            params.clone(),
             r#"
             SELECT a.* FROM artists a
             INNER JOIN artists_fts fts ON a.id = fts.id
@@ -198,35 +249,71 @@ impl ArtistRepository for SqliteArtistRepository {
             ORDER BY rank
             LIMIT ? OFFSET ?
             "#,
+            params,
+            page_request,
         )
-        .bind(search_query)
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(Page::new(artists, total as u64, page_request))
+        .await
     }
 
     async fn count(&self) -> Result<i64> {
-        let count: i64 = query_as("SELECT COUNT(*) as count FROM artists")
-            .fetch_one(&self.pool)
+        self.count_with("SELECT COUNT(*) as count FROM artists", vec![])
             .await
-            .map(|row: (i64,)| row.0)?;
-
-        Ok(count)
     }
 
     async fn find_by_name(&self, name: &str) -> Result<Option<Artist>> {
         let normalized = Artist::normalize(name);
-        let artist =
-            query_as::<_, Artist>("SELECT * FROM artists WHERE normalized_name = ? LIMIT 1")
-                .bind(normalized)
-                .fetch_optional(&self.pool)
-                .await?;
-
-        Ok(artist)
+        self.fetch_optional_artist(
+            "SELECT * FROM artists WHERE normalized_name = ? LIMIT 1",
+            vec![QueryValue::Text(normalized)],
+        )
+        .await
     }
+}
+
+pub(crate) fn row_to_artist(row: &QueryRow) -> Result<Artist> {
+    Ok(Artist {
+        id: get_string(row, "id")?,
+        name: get_string(row, "name")?,
+        normalized_name: get_string(row, "normalized_name")?,
+        sort_name: get_optional_string(row, "sort_name")?,
+        bio: get_optional_string(row, "bio")?,
+        country: get_optional_string(row, "country")?,
+        created_at: get_i64(row, "created_at")?,
+        updated_at: get_i64(row, "updated_at")?,
+    })
+}
+
+fn get_string(row: &QueryRow, key: &str) -> Result<String> {
+    row.get(key)
+        .and_then(|value| value.as_string())
+        .ok_or_else(|| missing_column(key))
+}
+
+fn get_optional_string(row: &QueryRow, key: &str) -> Result<Option<String>> {
+    Ok(match row.get(key) {
+        Some(QueryValue::Null) | None => None,
+        Some(value) => Some(value.as_string().ok_or_else(|| missing_column(key))?),
+    })
+}
+
+fn get_i64(row: &QueryRow, key: &str) -> Result<i64> {
+    row.get(key)
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| missing_column(key))
+}
+
+fn missing_column(column: &str) -> LibraryError {
+    LibraryError::InvalidInput {
+        field: column.to_string(),
+        message: "missing column in result set".to_string(),
+    }
+}
+
+fn opt_text(value: &Option<String>) -> QueryValue {
+    value
+        .as_ref()
+        .map(|v| QueryValue::Text(v.clone()))
+        .unwrap_or(QueryValue::Null)
 }
 
 #[cfg(test)]
@@ -234,14 +321,10 @@ mod tests {
     use super::*;
     use crate::db::create_test_pool;
 
-    async fn setup_test_pool() -> SqlitePool {
-        create_test_pool().await.unwrap()
-    }
-
     #[core_async::test]
     async fn test_insert_and_find_artist() {
-        let pool = setup_test_pool().await;
-        let repo = SqliteArtistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqliteArtistRepository::from_pool(pool);
 
         // Create and insert artist
         let mut artist = Artist::new("Test Artist".to_string());
@@ -263,8 +346,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_update_artist() {
-        let pool = setup_test_pool().await;
-        let repo = SqliteArtistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqliteArtistRepository::from_pool(pool);
 
         // Create and insert artist
         let mut artist = Artist::new("Original Name".to_string());
@@ -289,8 +372,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_delete_artist() {
-        let pool = setup_test_pool().await;
-        let repo = SqliteArtistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqliteArtistRepository::from_pool(pool);
 
         // Create and insert artist
         let artist = Artist::new("Test Artist".to_string());
@@ -307,8 +390,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_query_with_pagination() {
-        let pool = setup_test_pool().await;
-        let repo = SqliteArtistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqliteArtistRepository::from_pool(pool);
 
         // Insert multiple artists
         for i in 1..=5 {
@@ -332,8 +415,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_find_by_name() {
-        let pool = setup_test_pool().await;
-        let repo = SqliteArtistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqliteArtistRepository::from_pool(pool);
 
         // Create and insert artist
         let artist = Artist::new("Test Artist".to_string());
@@ -351,8 +434,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_count_artists() {
-        let pool = setup_test_pool().await;
-        let repo = SqliteArtistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqliteArtistRepository::from_pool(pool);
 
         // Initially should be 0
         let count = repo.count().await.unwrap();
@@ -371,8 +454,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_artist_validation() {
-        let pool = setup_test_pool().await;
-        let repo = SqliteArtistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqliteArtistRepository::from_pool(pool);
 
         // Create artist with empty name
         let mut artist = Artist::new("Test".to_string());

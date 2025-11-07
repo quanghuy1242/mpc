@@ -41,11 +41,11 @@ async fn setup_test_db() -> sqlx::SqlitePool {
 async fn create_enrichment_service_without_artist() -> (EnrichmentService, sqlx::SqlitePool) {
     let pool = setup_test_db().await;
 
-    let artist_repo = Arc::new(SqliteArtistRepository::new(pool.clone()));
-    let album_repo = Arc::new(SqliteAlbumRepository::new(pool.clone()));
-    let track_repo = Arc::new(SqliteTrackRepository::new(pool.clone()));
-    let artwork_repo = Arc::new(SqliteArtworkRepository::new(pool.clone()));
-    let lyrics_repo = Arc::new(SqliteLyricsRepository::new(pool.clone()));
+    let artist_repo = Arc::new(SqliteArtistRepository::from_pool(pool.clone()));
+    let album_repo = Arc::new(SqliteAlbumRepository::from_pool(pool.clone()));
+    let track_repo = Arc::new(SqliteTrackRepository::from_pool(pool.clone()));
+    let artwork_repo = Arc::new(SqliteArtworkRepository::from_pool(pool.clone()));
+    let lyrics_repo = Arc::new(SqliteLyricsRepository::from_pool(pool.clone()));
 
     let artwork_service = Arc::new(ArtworkService::new(
         artwork_repo,
@@ -69,7 +69,7 @@ async fn create_enrichment_service_without_artist() -> (EnrichmentService, sqlx:
 #[core_async::test]
 async fn test_artist_enrichment_without_provider() {
     let (service, pool) = create_enrichment_service_without_artist().await;
-    let artist_repo = SqliteArtistRepository::new(pool.clone());
+    let artist_repo = SqliteArtistRepository::from_pool(pool.clone());
 
     // Create test artist
     let artist = Artist::new("Radiohead".to_string());
@@ -90,7 +90,7 @@ async fn test_artist_enrichment_without_provider() {
 #[core_async::test]
 async fn test_batch_enrichment_without_provider() {
     let (service, pool) = create_enrichment_service_without_artist().await;
-    let artist_repo = SqliteArtistRepository::new(pool.clone());
+    let artist_repo = SqliteArtistRepository::from_pool(pool.clone());
 
     // Create test artists
     let artist1 = Artist::new("The Beatles".to_string());

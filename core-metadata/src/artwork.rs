@@ -231,7 +231,7 @@ impl ArtworkService {
     /// # Examples
     ///
     /// ```ignore
-    /// let extracted_artwork = extractor.extract_from_file(path).await?.artwork;
+    /// let extracted_artwork = extractor.extract_from_bytes(bytes, path).await?.artwork;
     /// let processed = service.extract_embedded(extracted_artwork).await?;
     /// for artwork in processed {
     ///     println!("Stored artwork: {} (deduplicated: {})", artwork.id, artwork.deduplicated);

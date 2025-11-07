@@ -3,12 +3,16 @@
 use crate::error::{LibraryError, Result};
 use crate::models::Playlist;
 use crate::repositories::{Page, PageRequest};
-use async_trait::async_trait;
-use sqlx::{query, query_as, SqlitePool};
+use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
+use bridge_traits::platform::PlatformSendSync;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use sqlx::SqlitePool;
+use std::sync::Arc;
 
 /// Playlist repository interface for data access operations
-#[async_trait]
-pub trait PlaylistRepository: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait PlaylistRepository: PlatformSendSync {
     /// Find a playlist by its ID
     ///
     /// # Returns
@@ -92,131 +96,185 @@ pub trait PlaylistRepository: Send + Sync {
 
 /// SQLite implementation of PlaylistRepository
 pub struct SqlitePlaylistRepository {
-    pool: SqlitePool,
+    adapter: Arc<dyn DatabaseAdapter>,
 }
 
 impl SqlitePlaylistRepository {
-    /// Create a new SqlitePlaylistRepository
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Create a new repository using the provided database adapter.
+    pub fn new(adapter: Arc<dyn DatabaseAdapter>) -> Self {
+        Self { adapter }
+    }
+
+    fn validate_playlist(playlist: &Playlist) -> Result<()> {
+        playlist
+            .validate()
+            .map_err(|msg| LibraryError::InvalidInput {
+                field: "Playlist".to_string(),
+                message: msg,
+            })
+    }
+
+    // Helper to build insert parameters for a playlist
+    fn insert_params(playlist: &Playlist) -> Vec<QueryValue> {
+        vec![
+            QueryValue::Text(playlist.id.clone()),
+            QueryValue::Text(playlist.name.clone()),
+            QueryValue::Text(playlist.normalized_name.clone()),
+            opt_text(&playlist.description),
+            QueryValue::Text(playlist.owner_type.clone()),
+            QueryValue::Text(playlist.sort_order.clone()),
+            QueryValue::Integer(playlist.is_public),
+            QueryValue::Integer(playlist.track_count),
+            QueryValue::Integer(playlist.total_duration_ms),
+            opt_text(&playlist.artwork_id),
+            QueryValue::Integer(playlist.created_at),
+            QueryValue::Integer(playlist.updated_at),
+        ]
+    }
+
+    // Helper to build update parameters for a playlist
+    fn update_params(playlist: &Playlist) -> Vec<QueryValue> {
+        let mut params = vec![
+            QueryValue::Text(playlist.name.clone()),
+            QueryValue::Text(playlist.normalized_name.clone()),
+            opt_text(&playlist.description),
+            QueryValue::Text(playlist.sort_order.clone()),
+            QueryValue::Integer(playlist.is_public as i64),
+            QueryValue::Integer(playlist.track_count),
+            QueryValue::Integer(playlist.total_duration_ms),
+            opt_text(&playlist.artwork_id),
+            QueryValue::Integer(playlist.updated_at),
+        ];
+        params.push(QueryValue::Text(playlist.id.clone()));
+        params
+    }
+
+    async fn fetch_playlists(&self, sql: &str, params: Vec<QueryValue>) -> Result<Vec<Playlist>> {
+        let rows = self.adapter.query(sql, &params).await?;
+        rows.into_iter().map(|row| row_to_playlist(&row)).collect()
+    }
+
+    async fn fetch_optional_playlist(
+        &self,
+        sql: &str,
+        params: Vec<QueryValue>,
+    ) -> Result<Option<Playlist>> {
+        let row = self.adapter.query_one_optional(sql, &params).await?;
+        row.map(|row| row_to_playlist(&row)).transpose()
+    }
+
+    async fn paginate(
+        &self,
+        count_sql: &str,
+        count_params: Vec<QueryValue>,
+        data_sql: &str,
+        mut data_params: Vec<QueryValue>,
+        request: PageRequest,
+    ) -> Result<Page<Playlist>> {
+        let total = self.count_with(count_sql, count_params).await?;
+        data_params.push(QueryValue::Integer(request.limit() as i64));
+        data_params.push(QueryValue::Integer(request.offset() as i64));
+        let items = self.fetch_playlists(data_sql, data_params).await?;
+        Ok(Page::new(items, total as u64, request))
+    }
+
+    async fn count_with(&self, sql: &str, params: Vec<QueryValue>) -> Result<i64> {
+        let row = self.adapter.query_one(sql, &params).await?;
+        row.get("count")
+            .and_then(|value| value.as_i64())
+            .ok_or_else(|| missing_column("count"))
     }
 }
 
-#[async_trait]
+#[cfg(not(target_arch = "wasm32"))]
+impl SqlitePlaylistRepository {
+    /// Convenience constructor for native targets using an existing `sqlx` pool.
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        use crate::adapters::sqlite_native::SqliteAdapter;
+        Self::new(Arc::new(SqliteAdapter::from_pool(pool)))
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl PlaylistRepository for SqlitePlaylistRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Playlist>> {
-        let playlist = query_as::<_, Playlist>("SELECT * FROM playlists WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        Ok(playlist)
+        self.fetch_optional_playlist(
+            "SELECT * FROM playlists WHERE id = ?",
+            vec![QueryValue::Text(id.to_string())],
+        )
+        .await
     }
 
     async fn insert(&self, playlist: &Playlist) -> Result<()> {
-        // Validate before insertion
-        playlist
-            .validate()
-            .map_err(|e| LibraryError::InvalidInput {
-                field: "Playlist".to_string(),
-                message: e,
-            })?;
-
-        query(
-            r#"
-            INSERT INTO playlists (
-                id, name, normalized_name, description, owner_type, sort_order,
-                is_public, track_count, total_duration_ms, artwork_id, created_at, updated_at
+        Self::validate_playlist(playlist)?;
+        self.adapter
+            .execute(
+                r#"
+                INSERT INTO playlists (
+                    id, name, normalized_name, description, owner_type, sort_order,
+                    is_public, track_count, total_duration_ms, artwork_id, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+                &Self::insert_params(playlist),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&playlist.id)
-        .bind(&playlist.name)
-        .bind(&playlist.normalized_name)
-        .bind(&playlist.description)
-        .bind(&playlist.owner_type)
-        .bind(&playlist.sort_order)
-        .bind(playlist.is_public)
-        .bind(playlist.track_count)
-        .bind(playlist.total_duration_ms)
-        .bind(&playlist.artwork_id)
-        .bind(playlist.created_at)
-        .bind(playlist.updated_at)
-        .execute(&self.pool)
-        .await?;
-
+            .await?;
         Ok(())
     }
 
     async fn update(&self, playlist: &Playlist) -> Result<()> {
-        // Validate before update
-        playlist
-            .validate()
-            .map_err(|e| LibraryError::InvalidInput {
-                field: "Playlist".to_string(),
-                message: e,
-            })?;
-
-        let result = query(
-            r#"
-            UPDATE playlists
-            SET name = ?, normalized_name = ?, description = ?, sort_order = ?, 
-                is_public = ?, track_count = ?, total_duration_ms = ?, artwork_id = ?, updated_at = ?
-            WHERE id = ?
-            "#,
-        )
-        .bind(&playlist.name)
-        .bind(&playlist.normalized_name)
-        .bind(&playlist.description)
-        .bind(&playlist.sort_order)
-        .bind(playlist.is_public)
-        .bind(playlist.track_count)
-        .bind(playlist.total_duration_ms)
-        .bind(&playlist.artwork_id)
-        .bind(playlist.updated_at)
-        .bind(&playlist.id)
-        .execute(&self.pool)
-        .await
-        ?;
-
-        if result.rows_affected() == 0 {
+        Self::validate_playlist(playlist)?;
+        let affected = self
+            .adapter
+            .execute(
+                r#"
+                UPDATE playlists
+                SET name = ?, normalized_name = ?, description = ?, sort_order = ?, 
+                    is_public = ?, track_count = ?, total_duration_ms = ?, artwork_id = ?, updated_at = ?
+                WHERE id = ?
+                "#,
+                &Self::update_params(playlist),
+            )
+            .await?;
+        if affected == 0 {
             return Err(LibraryError::NotFound {
                 entity_type: "Playlist".to_string(),
                 id: playlist.id.clone(),
             });
         }
-
         Ok(())
     }
 
     async fn delete(&self, id: &str) -> Result<bool> {
         // Delete playlist tracks first (due to foreign key)
-        query("DELETE FROM playlist_tracks WHERE playlist_id = ?")
-            .bind(id)
-            .execute(&self.pool)
+        self.adapter
+            .execute(
+                "DELETE FROM playlist_tracks WHERE playlist_id = ?",
+                &[QueryValue::Text(id.to_string())],
+            )
             .await?;
 
         // Then delete the playlist
-        let result = query("DELETE FROM playlists WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
+        let affected = self
+            .adapter
+            .execute(
+                "DELETE FROM playlists WHERE id = ?",
+                &[QueryValue::Text(id.to_string())],
+            )
             .await?;
-
-        Ok(result.rows_affected() > 0)
+        Ok(affected > 0)
     }
 
     async fn query(&self, page_request: PageRequest) -> Result<Page<Playlist>> {
-        let total = self.count().await?;
-
-        let playlists =
-            query_as::<_, Playlist>("SELECT * FROM playlists ORDER BY name ASC LIMIT ? OFFSET ?")
-                .bind(page_request.limit())
-                .bind(page_request.offset())
-                .fetch_all(&self.pool)
-                .await?;
-
-        Ok(Page::new(playlists, total as u64, page_request))
+        self.paginate(
+            "SELECT COUNT(*) as count FROM playlists",
+            vec![],
+            "SELECT * FROM playlists ORDER BY name ASC LIMIT ? OFFSET ?",
+            vec![],
+            page_request,
+        )
+        .await
     }
 
     async fn query_by_owner_type(
@@ -224,71 +282,122 @@ impl PlaylistRepository for SqlitePlaylistRepository {
         owner_type: &str,
         page_request: PageRequest,
     ) -> Result<Page<Playlist>> {
-        let total: i64 = query_as("SELECT COUNT(*) as count FROM playlists WHERE owner_type = ?")
-            .bind(owner_type)
-            .fetch_one(&self.pool)
-            .await
-            .map(|row: (i64,)| row.0)?;
-
-        let playlists = query_as::<_, Playlist>(
+        let params = vec![QueryValue::Text(owner_type.to_string())];
+        self.paginate(
+            "SELECT COUNT(*) as count FROM playlists WHERE owner_type = ?",
+            params.clone(),
             "SELECT * FROM playlists WHERE owner_type = ? ORDER BY name ASC LIMIT ? OFFSET ?",
+            params,
+            page_request,
         )
-        .bind(owner_type)
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(Page::new(playlists, total as u64, page_request))
+        .await
     }
 
     async fn add_track(&self, playlist_id: &str, track_id: &str, position: i32) -> Result<()> {
-        query(
-            r#"
-            INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
-            VALUES (?, ?, ?, ?)
-            "#,
-        )
-        .bind(playlist_id)
-        .bind(track_id)
-        .bind(position)
-        .bind(chrono::Utc::now().timestamp())
-        .execute(&self.pool)
-        .await?;
-
+        self.adapter
+            .execute(
+                r#"
+                INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at)
+                VALUES (?, ?, ?, ?)
+                "#,
+                &[
+                    QueryValue::Text(playlist_id.to_string()),
+                    QueryValue::Text(track_id.to_string()),
+                    QueryValue::Integer(position as i64),
+                    QueryValue::Integer(chrono::Utc::now().timestamp()),
+                ],
+            )
+            .await?;
         Ok(())
     }
 
     async fn remove_track(&self, playlist_id: &str, track_id: &str) -> Result<bool> {
-        let result = query("DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?")
-            .bind(playlist_id)
-            .bind(track_id)
-            .execute(&self.pool)
+        let affected = self
+            .adapter
+            .execute(
+                "DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?",
+                &[
+                    QueryValue::Text(playlist_id.to_string()),
+                    QueryValue::Text(track_id.to_string()),
+                ],
+            )
             .await?;
-
-        Ok(result.rows_affected() > 0)
+        Ok(affected > 0)
     }
 
     async fn get_track_ids(&self, playlist_id: &str) -> Result<Vec<String>> {
-        let track_ids = query_as::<_, (String,)>(
-            "SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position ASC",
-        )
-        .bind(playlist_id)
-        .fetch_all(&self.pool)
-        .await
-        .map(|rows| rows.into_iter().map(|(id,)| id).collect())?;
-
+        let rows = self
+            .adapter
+            .query(
+                "SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position ASC",
+                &[QueryValue::Text(playlist_id.to_string())],
+            )
+            .await?;
+        let track_ids = rows
+            .into_iter()
+            .filter_map(|row| row.get("track_id").and_then(|v| v.as_string()))
+            .collect();
         Ok(track_ids)
     }
 
     async fn count(&self) -> Result<i64> {
-        let count: i64 = query_as("SELECT COUNT(*) as count FROM playlists")
-            .fetch_one(&self.pool)
+        self.count_with("SELECT COUNT(*) as count FROM playlists", vec![])
             .await
-            .map(|row: (i64,)| row.0)?;
-
-        Ok(count)
     }
+}
+
+pub(crate) fn row_to_playlist(row: &QueryRow) -> Result<Playlist> {
+    Ok(Playlist {
+        id: get_string(row, "id")?,
+        name: get_string(row, "name")?,
+        normalized_name: get_string(row, "normalized_name")?,
+        description: get_optional_string(row, "description")?,
+        owner_type: get_string(row, "owner_type")?,
+        sort_order: get_string(row, "sort_order")?,
+        is_public: get_i64(row, "is_public")?,
+        track_count: get_i64(row, "track_count")?,
+        total_duration_ms: get_i64(row, "total_duration_ms")?,
+        artwork_id: get_optional_string(row, "artwork_id")?,
+        created_at: get_i64(row, "created_at")?,
+        updated_at: get_i64(row, "updated_at")?,
+    })
+}
+
+fn get_string(row: &QueryRow, key: &str) -> Result<String> {
+    row.get(key)
+        .and_then(|value| value.as_string())
+        .ok_or_else(|| missing_column(key))
+}
+
+fn get_optional_string(row: &QueryRow, key: &str) -> Result<Option<String>> {
+    Ok(match row.get(key) {
+        Some(QueryValue::Null) | None => None,
+        Some(value) => Some(value.as_string().ok_or_else(|| missing_column(key))?),
+    })
+}
+
+fn get_i64(row: &QueryRow, key: &str) -> Result<i64> {
+    row.get(key)
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| missing_column(key))
+}
+
+fn get_i32(row: &QueryRow, key: &str) -> Result<i32> {
+    Ok(get_i64(row, key)? as i32)
+}
+
+fn missing_column(column: &str) -> LibraryError {
+    LibraryError::InvalidInput {
+        field: column.to_string(),
+        message: "missing column in result set".to_string(),
+    }
+}
+
+fn opt_text(value: &Option<String>) -> QueryValue {
+    value
+        .as_ref()
+        .map(|v| QueryValue::Text(v.clone()))
+        .unwrap_or(QueryValue::Null)
 }
 
 #[cfg(test)]
@@ -296,14 +405,10 @@ mod tests {
     use super::*;
     use crate::db::create_test_pool;
 
-    async fn setup_test_pool() -> SqlitePool {
-        create_test_pool().await.unwrap()
-    }
-
     #[core_async::test]
     async fn test_insert_and_find_playlist() {
-        let pool = setup_test_pool().await;
-        let repo = SqlitePlaylistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqlitePlaylistRepository::from_pool(pool);
 
         // Create and insert playlist
         let mut playlist = Playlist::new("My Playlist".to_string());
@@ -322,8 +427,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_update_playlist() {
-        let pool = setup_test_pool().await;
-        let repo = SqlitePlaylistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqlitePlaylistRepository::from_pool(pool);
 
         // Create and insert playlist
         let mut playlist = Playlist::new("Original Name".to_string());
@@ -344,8 +449,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_delete_playlist() {
-        let pool = setup_test_pool().await;
-        let repo = SqlitePlaylistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqlitePlaylistRepository::from_pool(pool);
 
         // Create and insert playlist
         let playlist = Playlist::new("Test Playlist".to_string());
@@ -362,8 +467,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_query_by_owner_type() {
-        let pool = setup_test_pool().await;
-        let repo = SqlitePlaylistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqlitePlaylistRepository::from_pool(pool);
 
         // Create user and system playlists
         let user_playlist = Playlist::new("User Playlist".to_string());
@@ -385,8 +490,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_count_playlists() {
-        let pool = setup_test_pool().await;
-        let repo = SqlitePlaylistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqlitePlaylistRepository::from_pool(pool);
 
         // Initially should be 0
         let count = repo.count().await.unwrap();
@@ -405,8 +510,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_playlist_validation() {
-        let pool = setup_test_pool().await;
-        let repo = SqlitePlaylistRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqlitePlaylistRepository::from_pool(pool);
 
         // Create playlist with empty name
         let mut playlist = Playlist::new("Test".to_string());

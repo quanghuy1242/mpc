@@ -425,6 +425,13 @@ impl Semaphore {
     pub async fn acquire(&self) -> Result<SemaphorePermit<'_>, ()> {
         panic!("Semaphore is not fully supported on WASM");
     }
+
+    /// Returns the number of available permits.
+    ///
+    /// Note: On WASM this always returns 0 as semaphores are not fully implemented.
+    pub fn available_permits(&self) -> usize {
+        0
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -434,44 +441,233 @@ pub struct SemaphorePermit<'a> {
 }
 
 // ============================================================================
-// Broadcast Channel (WASM Stub)
+// Broadcast Channel (WASM Implementation)
 // ============================================================================
 
 #[cfg(target_arch = "wasm32")]
 /// Broadcast channel types.
 ///
-/// On WASM, broadcast channels are not yet implemented.
+/// On WASM, broadcast channels use a single-threaded implementation
+/// with `Rc` and `RefCell` for interior mutability.
 pub mod broadcast {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+
     /// Error type for broadcast operations.
-    #[derive(Debug)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum RecvError {
         /// Channel was closed.
         Closed,
-        /// Message was missed.
+        /// Message was missed due to buffer overflow.
         Lagged(u64),
     }
+
+    impl std::fmt::Display for RecvError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                RecvError::Closed => write!(f, "broadcast channel closed"),
+                RecvError::Lagged(n) => write!(f, "broadcast channel lagged by {} messages", n),
+            }
+        }
+    }
+
+    impl std::error::Error for RecvError {}
 
     /// Error type for send operations.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SendError<T>(pub T);
 
+    impl<T> std::fmt::Display for SendError<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "broadcast channel closed")
+        }
+    }
+
+    impl<T: std::fmt::Debug> std::error::Error for SendError<T> {}
+
+    /// Shared state for a broadcast channel.
+    struct Shared<T> {
+        buffer: VecDeque<T>,
+        capacity: usize,
+        closed: bool,
+        receiver_count: usize,
+        total_sent: u64,
+    }
+
     /// A broadcast sender.
+    ///
+    /// Messages sent through this sender will be received by all receivers.
     pub struct Sender<T> {
-        _phantom: std::marker::PhantomData<T>,
+        shared: Rc<RefCell<Shared<T>>>,
+    }
+
+    impl<T: Clone> Sender<T> {
+        /// Sends a value to all receivers.
+        ///
+        /// Returns the number of receivers that will receive the message.
+        /// Returns an error if all receivers have been dropped.
+        pub fn send(&self, value: T) -> Result<usize, SendError<T>> {
+            let mut shared = self.shared.borrow_mut();
+
+            if shared.closed || shared.receiver_count == 0 {
+                return Err(SendError(value));
+            }
+
+            // Add to buffer
+            shared.buffer.push_back(value);
+            shared.total_sent += 1;
+
+            // Truncate buffer if over capacity
+            while shared.buffer.len() > shared.capacity {
+                shared.buffer.pop_front();
+            }
+
+            Ok(shared.receiver_count)
+        }
+
+        /// Creates a new receiver for this broadcast channel.
+        pub fn subscribe(&self) -> Receiver<T> {
+            let mut shared = self.shared.borrow_mut();
+            shared.receiver_count += 1;
+
+            Receiver {
+                shared: Rc::clone(&self.shared),
+                next_index: shared.total_sent,
+            }
+        }
+
+        /// Returns the number of active receivers.
+        pub fn receiver_count(&self) -> usize {
+            self.shared.borrow().receiver_count
+        }
+    }
+
+    impl<T> Clone for Sender<T> {
+        fn clone(&self) -> Self {
+            Self {
+                shared: Rc::clone(&self.shared),
+            }
+        }
+    }
+
+    impl<T> Drop for Sender<T> {
+        fn drop(&mut self) {
+            // If this is the last sender, close the channel
+            if Rc::strong_count(&self.shared) == self.shared.borrow().receiver_count + 1 {
+                self.shared.borrow_mut().closed = true;
+            }
+        }
     }
 
     /// A broadcast receiver.
+    ///
+    /// Receives messages sent by the broadcast sender.
     pub struct Receiver<T> {
-        _phantom: std::marker::PhantomData<T>,
+        shared: Rc<RefCell<Shared<T>>>,
+        next_index: u64,
+    }
+
+    impl<T: Clone> Receiver<T> {
+        /// Receives the next value from the channel.
+        ///
+        /// Waits asynchronously if no messages are available.
+        pub async fn recv(&mut self) -> Result<T, RecvError> {
+            loop {
+                let result = self.try_recv();
+
+                match result {
+                    Ok(value) => return Ok(value),
+                    Err(TryRecvError::Empty) => {
+                        // Wait a bit before trying again
+                        crate::task::yield_now().await;
+                        continue;
+                    }
+                    Err(TryRecvError::Closed) => return Err(RecvError::Closed),
+                    Err(TryRecvError::Lagged(n)) => return Err(RecvError::Lagged(n)),
+                }
+            }
+        }
+
+        /// Attempts to receive the next value without blocking.
+        pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
+            let shared = self.shared.borrow();
+
+            if shared.closed && shared.buffer.is_empty() {
+                return Err(TryRecvError::Closed);
+            }
+
+            // Check if we've lagged behind
+            let oldest_index = shared.total_sent.saturating_sub(shared.buffer.len() as u64);
+            if self.next_index < oldest_index {
+                let lagged_by = oldest_index - self.next_index;
+                self.next_index = oldest_index;
+                return Err(TryRecvError::Lagged(lagged_by));
+            }
+
+            // Check if there are new messages for us
+            let buffer_index = (self.next_index - oldest_index) as usize;
+            if buffer_index >= shared.buffer.len() {
+                return Err(TryRecvError::Empty);
+            }
+
+            // Get the message
+            let value = shared.buffer[buffer_index].clone();
+            self.next_index += 1;
+
+            Ok(value)
+        }
+    }
+
+    impl<T> Drop for Receiver<T> {
+        fn drop(&mut self) {
+            let mut shared = self.shared.borrow_mut();
+            shared.receiver_count = shared.receiver_count.saturating_sub(1);
+        }
+    }
+
+    /// Error type for try_recv operations.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum TryRecvError {
+        /// No messages are available.
+        Empty,
+        /// Channel was closed.
+        Closed,
+        /// Message was missed due to buffer overflow.
+        Lagged(u64),
     }
 
     /// Creates a new broadcast channel.
     ///
-    /// # Panics
+    /// The channel will buffer up to `capacity` messages before old messages
+    /// are dropped.
     ///
-    /// Panics on WASM as broadcast channels are not yet supported.
-    pub fn channel<T>(_capacity: usize) -> (Sender<T>, Receiver<T>) {
-        panic!("broadcast channels are not yet supported on WASM");
+    /// # Examples
+    ///
+    /// ```rust
+    /// use core_async::sync::broadcast;
+    ///
+    /// let (tx, mut rx) = broadcast::channel(16);
+    /// ```
+    pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
+        let shared = Rc::new(RefCell::new(Shared {
+            buffer: VecDeque::with_capacity(capacity),
+            capacity,
+            closed: false,
+            receiver_count: 1, // One receiver created by default
+            total_sent: 0,
+        }));
+
+        let sender = Sender {
+            shared: Rc::clone(&shared),
+        };
+
+        let receiver = Receiver {
+            shared,
+            next_index: 0,
+        };
+
+        (sender, receiver)
     }
 }
 

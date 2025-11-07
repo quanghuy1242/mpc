@@ -176,8 +176,18 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 // Re-export commonly used types
-pub use core_async::sync::broadcast::error::{RecvError, SendError};
 pub use core_async::sync::broadcast::Receiver;
+
+// Import error types based on platform
+#[cfg(not(target_arch = "wasm32"))]
+pub use core_async::sync::broadcast::error::{RecvError, SendError};
+
+#[cfg(target_arch = "wasm32")]
+pub use core_async::sync::broadcast::{RecvError, SendError};
+
+// Internal import for try_recv operations
+#[cfg(target_arch = "wasm32")]
+use core_async::sync::broadcast::TryRecvError;
 
 /// Default buffer size for the event bus channel.
 ///
@@ -800,10 +810,19 @@ impl EventStream {
 
                     // Event didn't match filter, continue
                 }
+                #[cfg(target_arch = "wasm32")]
+                Err(TryRecvError::Empty) => return None,
+                #[cfg(not(target_arch = "wasm32"))]
                 Err(broadcast::error::TryRecvError::Empty) => return None,
+                #[cfg(target_arch = "wasm32")]
+                Err(TryRecvError::Lagged(n)) => return Some(Err(RecvError::Lagged(n))),
+                #[cfg(not(target_arch = "wasm32"))]
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
                     return Some(Err(RecvError::Lagged(n)))
                 }
+                #[cfg(target_arch = "wasm32")]
+                Err(TryRecvError::Closed) => return Some(Err(RecvError::Closed)),
+                #[cfg(not(target_arch = "wasm32"))]
                 Err(broadcast::error::TryRecvError::Closed) => return Some(Err(RecvError::Closed)),
             }
         }

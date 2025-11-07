@@ -8,6 +8,9 @@ pub enum BridgeError {
     #[error("Bridge operation failed: {0}")]
     OperationFailed(String),
 
+    #[error("Database error: {0}")]
+    DatabaseError(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

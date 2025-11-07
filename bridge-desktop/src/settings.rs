@@ -241,7 +241,7 @@ impl SettingsStore for SqliteSettingsStore {
         Ok(())
     }
 
-    async fn begin_transaction(&self) -> Result<Box<dyn SettingsTransaction + Send>> {
+    async fn begin_transaction(&self) -> Result<Box<dyn SettingsTransaction>> {
         let tx = self.pool.begin().await.map_err(|e| {
             BridgeError::OperationFailed(format!("Failed to begin transaction: {}", e))
         })?;

@@ -3,12 +3,16 @@
 use crate::error::{LibraryError, Result};
 use crate::models::Album;
 use crate::repositories::{Page, PageRequest};
-use async_trait::async_trait;
-use sqlx::{query, query_as, SqlitePool};
+use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
+use bridge_traits::platform::PlatformSendSync;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use sqlx::SqlitePool;
+use std::sync::Arc;
 
 /// Album repository interface for data access operations
-#[async_trait]
-pub trait AlbumRepository: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait AlbumRepository: PlatformSendSync {
     /// Find an album by its ID
     ///
     /// # Returns
@@ -84,118 +88,171 @@ pub trait AlbumRepository: Send + Sync {
 
 /// SQLite implementation of AlbumRepository
 pub struct SqliteAlbumRepository {
-    pool: SqlitePool,
+    adapter: Arc<dyn DatabaseAdapter>,
 }
 
 impl SqliteAlbumRepository {
-    /// Create a new SqliteAlbumRepository
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Create a new repository using the provided database adapter.
+    pub fn new(adapter: Arc<dyn DatabaseAdapter>) -> Self {
+        Self { adapter }
+    }
+
+    fn validate_album(album: &Album) -> Result<()> {
+        album.validate().map_err(|msg| LibraryError::InvalidInput {
+            field: "Album".to_string(),
+            message: msg,
+        })
+    }
+
+    fn insert_params(album: &Album) -> Vec<QueryValue> {
+        vec![
+            QueryValue::Text(album.id.clone()),
+            QueryValue::Text(album.name.clone()),
+            QueryValue::Text(album.normalized_name.clone()),
+            opt_text(&album.artist_id),
+            opt_i32(album.year),
+            opt_text(&album.genre),
+            opt_text(&album.artwork_id),
+            QueryValue::Integer(album.track_count),
+            QueryValue::Integer(album.total_duration_ms),
+            QueryValue::Integer(album.created_at),
+            QueryValue::Integer(album.updated_at),
+        ]
+    }
+
+    fn update_params(album: &Album) -> Vec<QueryValue> {
+        let mut params = vec![
+            QueryValue::Text(album.name.clone()),
+            QueryValue::Text(album.normalized_name.clone()),
+            opt_text(&album.artist_id),
+            opt_i32(album.year),
+            opt_text(&album.genre),
+            opt_text(&album.artwork_id),
+            QueryValue::Integer(album.track_count),
+            QueryValue::Integer(album.total_duration_ms),
+            QueryValue::Integer(album.updated_at),
+        ];
+        params.push(QueryValue::Text(album.id.clone()));
+        params
+    }
+
+    async fn fetch_albums(&self, sql: &str, params: Vec<QueryValue>) -> Result<Vec<Album>> {
+        let rows = self.adapter.query(sql, &params).await?;
+        rows.into_iter().map(|row| row_to_album(&row)).collect()
+    }
+
+    async fn fetch_optional_album(
+        &self,
+        sql: &str,
+        params: Vec<QueryValue>,
+    ) -> Result<Option<Album>> {
+        let row = self.adapter.query_one_optional(sql, &params).await?;
+        row.map(|row| row_to_album(&row)).transpose()
+    }
+
+    async fn paginate(
+        &self,
+        count_sql: &str,
+        count_params: Vec<QueryValue>,
+        data_sql: &str,
+        mut data_params: Vec<QueryValue>,
+        request: PageRequest,
+    ) -> Result<Page<Album>> {
+        let total = self.count_with(count_sql, count_params).await?;
+        data_params.push(QueryValue::Integer(request.limit() as i64));
+        data_params.push(QueryValue::Integer(request.offset() as i64));
+        let items = self.fetch_albums(data_sql, data_params).await?;
+        Ok(Page::new(items, total as u64, request))
+    }
+
+    async fn count_with(&self, sql: &str, params: Vec<QueryValue>) -> Result<i64> {
+        let row = self.adapter.query_one(sql, &params).await?;
+        row.get("count")
+            .and_then(|value| value.as_i64())
+            .ok_or_else(|| missing_column("count"))
     }
 }
 
-#[async_trait]
+#[cfg(not(target_arch = "wasm32"))]
+impl SqliteAlbumRepository {
+    /// Convenience constructor for native targets using an existing `sqlx` pool.
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        use crate::adapters::sqlite_native::SqliteAdapter;
+        Self::new(Arc::new(SqliteAdapter::from_pool(pool)))
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl AlbumRepository for SqliteAlbumRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Album>> {
-        let album = query_as::<_, Album>("SELECT * FROM albums WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        Ok(album)
+        self.fetch_optional_album(
+            "SELECT * FROM albums WHERE id = ?",
+            vec![QueryValue::Text(id.to_string())],
+        )
+        .await
     }
 
     async fn insert(&self, album: &Album) -> Result<()> {
-        // Validate before insertion
-        album.validate().map_err(|e| LibraryError::InvalidInput {
-            field: "Album".to_string(),
-            message: e,
-        })?;
-
-        query(
-            r#"
-            INSERT INTO albums (
-                id, name, normalized_name, artist_id, year,
-                genre, artwork_id, track_count, total_duration_ms, created_at, updated_at
+        Self::validate_album(album)?;
+        self.adapter
+            .execute(
+                r#"
+                INSERT INTO albums (
+                    id, name, normalized_name, artist_id, year,
+                    genre, artwork_id, track_count, total_duration_ms, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+                &Self::insert_params(album),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&album.id)
-        .bind(&album.name)
-        .bind(&album.normalized_name)
-        .bind(&album.artist_id)
-        .bind(album.year)
-        .bind(&album.genre)
-        .bind(&album.artwork_id)
-        .bind(album.track_count)
-        .bind(album.total_duration_ms)
-        .bind(album.created_at)
-        .bind(album.updated_at)
-        .execute(&self.pool)
-        .await?;
-
+            .await?;
         Ok(())
     }
 
     async fn update(&self, album: &Album) -> Result<()> {
-        // Validate before update
-        album.validate().map_err(|e| LibraryError::InvalidInput {
-            field: "Album".to_string(),
-            message: e,
-        })?;
-
-        let result = query(
-            r#"
-            UPDATE albums
-            SET name = ?, normalized_name = ?, artist_id = ?, year = ?,
-                genre = ?, artwork_id = ?, track_count = ?, total_duration_ms = ?, updated_at = ?
-            WHERE id = ?
-            "#,
-        )
-        .bind(&album.name)
-        .bind(&album.normalized_name)
-        .bind(&album.artist_id)
-        .bind(album.year)
-        .bind(&album.genre)
-        .bind(&album.artwork_id)
-        .bind(album.track_count)
-        .bind(album.total_duration_ms)
-        .bind(album.updated_at)
-        .bind(&album.id)
-        .execute(&self.pool)
-        .await?;
-
-        if result.rows_affected() == 0 {
+        Self::validate_album(album)?;
+        let affected = self
+            .adapter
+            .execute(
+                r#"
+                UPDATE albums
+                SET name = ?, normalized_name = ?, artist_id = ?, year = ?,
+                    genre = ?, artwork_id = ?, track_count = ?, total_duration_ms = ?, updated_at = ?
+                WHERE id = ?
+                "#,
+                &Self::update_params(album),
+            )
+            .await?;
+        if affected == 0 {
             return Err(LibraryError::NotFound {
                 entity_type: "Album".to_string(),
                 id: album.id.clone(),
             });
         }
-
         Ok(())
     }
 
     async fn delete(&self, id: &str) -> Result<bool> {
-        let result = query("DELETE FROM albums WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
+        let affected = self
+            .adapter
+            .execute(
+                "DELETE FROM albums WHERE id = ?",
+                &[QueryValue::Text(id.to_string())],
+            )
             .await?;
-
-        Ok(result.rows_affected() > 0)
+        Ok(affected > 0)
     }
 
     async fn query(&self, page_request: PageRequest) -> Result<Page<Album>> {
-        let total = self.count().await?;
-
-        let albums =
-            query_as::<_, Album>("SELECT * FROM albums ORDER BY name ASC LIMIT ? OFFSET ?")
-                .bind(page_request.limit())
-                .bind(page_request.offset())
-                .fetch_all(&self.pool)
-                .await?;
-
-        Ok(Page::new(albums, total as u64, page_request))
+        self.paginate(
+            "SELECT COUNT(*) as count FROM albums",
+            vec![],
+            "SELECT * FROM albums ORDER BY name ASC LIMIT ? OFFSET ?",
+            vec![],
+            page_request,
+        )
+        .await
     }
 
     async fn query_by_artist(
@@ -203,36 +260,22 @@ impl AlbumRepository for SqliteAlbumRepository {
         artist_id: &str,
         page_request: PageRequest,
     ) -> Result<Page<Album>> {
-        let total: i64 = query_as("SELECT COUNT(*) as count FROM albums WHERE artist_id = ?")
-            .bind(artist_id)
-            .fetch_one(&self.pool)
-            .await
-            .map(|row: (i64,)| row.0)?;
-
-        let albums = query_as::<_, Album>(
+        let params = vec![QueryValue::Text(artist_id.to_string())];
+        self.paginate(
+            "SELECT COUNT(*) as count FROM albums WHERE artist_id = ?",
+            params.clone(),
             "SELECT * FROM albums WHERE artist_id = ? ORDER BY year DESC, name ASC LIMIT ? OFFSET ?",
+            params,
+            page_request,
         )
-        .bind(artist_id)
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
         .await
-        ?;
-
-        Ok(Page::new(albums, total as u64, page_request))
     }
 
     async fn search(&self, search_query: &str, page_request: PageRequest) -> Result<Page<Album>> {
-        // Count matching albums
-        let total: i64 =
-            query_as("SELECT COUNT(*) as count FROM albums_fts WHERE albums_fts MATCH ?")
-                .bind(search_query)
-                .fetch_one(&self.pool)
-                .await
-                .map(|row: (i64,)| row.0)?;
-
-        // Perform FTS5 search
-        let albums = query_as::<_, Album>(
+        let params = vec![QueryValue::Text(search_query.to_string())];
+        self.paginate(
+            "SELECT COUNT(*) as count FROM albums_fts WHERE albums_fts MATCH ?",
+            params.clone(),
             r#"
             SELECT a.* FROM albums a
             INNER JOIN albums_fts fts ON a.id = fts.album_id
@@ -240,43 +283,98 @@ impl AlbumRepository for SqliteAlbumRepository {
             ORDER BY rank
             LIMIT ? OFFSET ?
             "#,
+            params,
+            page_request,
         )
-        .bind(search_query)
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(Page::new(albums, total as u64, page_request))
+        .await
     }
 
     async fn count(&self) -> Result<i64> {
-        let count: i64 = query_as("SELECT COUNT(*) as count FROM albums")
-            .fetch_one(&self.pool)
+        self.count_with("SELECT COUNT(*) as count FROM albums", vec![])
             .await
-            .map(|row: (i64,)| row.0)?;
-
-        Ok(count)
     }
 
     async fn query_by_year(&self, year: i32, page_request: PageRequest) -> Result<Page<Album>> {
-        let total: i64 = query_as("SELECT COUNT(*) as count FROM albums WHERE year = ?")
-            .bind(year)
-            .fetch_one(&self.pool)
-            .await
-            .map(|row: (i64,)| row.0)?;
-
-        let albums = query_as::<_, Album>(
+        let params = vec![QueryValue::Integer(year as i64)];
+        self.paginate(
+            "SELECT COUNT(*) as count FROM albums WHERE year = ?",
+            params.clone(),
             "SELECT * FROM albums WHERE year = ? ORDER BY name ASC LIMIT ? OFFSET ?",
+            params,
+            page_request,
         )
-        .bind(year)
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(Page::new(albums, total as u64, page_request))
+        .await
     }
+}
+
+pub(crate) fn row_to_album(row: &QueryRow) -> Result<Album> {
+    Ok(Album {
+        id: get_string(row, "id")?,
+        name: get_string(row, "name")?,
+        normalized_name: get_string(row, "normalized_name")?,
+        artist_id: get_optional_string(row, "artist_id")?,
+        year: get_optional_i32(row, "year")?,
+        genre: get_optional_string(row, "genre")?,
+        artwork_id: get_optional_string(row, "artwork_id")?,
+        track_count: get_i64(row, "track_count")?,
+        total_duration_ms: get_i64(row, "total_duration_ms")?,
+        created_at: get_i64(row, "created_at")?,
+        updated_at: get_i64(row, "updated_at")?,
+    })
+}
+
+fn get_string(row: &QueryRow, key: &str) -> Result<String> {
+    row.get(key)
+        .and_then(|value| value.as_string())
+        .ok_or_else(|| missing_column(key))
+}
+
+fn get_optional_string(row: &QueryRow, key: &str) -> Result<Option<String>> {
+    Ok(match row.get(key) {
+        Some(QueryValue::Null) | None => None,
+        Some(value) => Some(value.as_string().ok_or_else(|| missing_column(key))?),
+    })
+}
+
+fn get_i64(row: &QueryRow, key: &str) -> Result<i64> {
+    row.get(key)
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| missing_column(key))
+}
+
+fn get_optional_i64(row: &QueryRow, key: &str) -> Result<Option<i64>> {
+    Ok(match row.get(key) {
+        Some(QueryValue::Null) | None => None,
+        Some(value) => Some(value.as_i64().ok_or_else(|| missing_column(key))?),
+    })
+}
+
+fn get_i32(row: &QueryRow, key: &str) -> Result<i32> {
+    Ok(get_i64(row, key)? as i32)
+}
+
+fn get_optional_i32(row: &QueryRow, key: &str) -> Result<Option<i32>> {
+    Ok(get_optional_i64(row, key)?.map(|value| value as i32))
+}
+
+fn missing_column(column: &str) -> LibraryError {
+    LibraryError::InvalidInput {
+        field: column.to_string(),
+        message: "missing column in result set".to_string(),
+    }
+}
+
+fn opt_text(value: &Option<String>) -> QueryValue {
+    value
+        .as_ref()
+        .map(|v| QueryValue::Text(v.clone()))
+        .unwrap_or(QueryValue::Null)
+}
+
+fn opt_i32(value: Option<i32>) -> QueryValue {
+    value
+        .map(|v| QueryValue::Integer(v as i64))
+        .unwrap_or(QueryValue::Null)
 }
 
 #[cfg(test)]
@@ -286,15 +384,11 @@ mod tests {
     use crate::models::Artist;
     use crate::repositories::artist::{ArtistRepository, SqliteArtistRepository};
 
-    async fn setup_test_pool() -> SqlitePool {
-        create_test_pool().await.unwrap()
-    }
-
     #[core_async::test]
     async fn test_insert_and_find_album() {
-        let pool = setup_test_pool().await;
-        let artist_repo = SqliteArtistRepository::new(pool.clone());
-        let repo = SqliteAlbumRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let artist_repo = SqliteArtistRepository::from_pool(pool.clone());
+        let repo = SqliteAlbumRepository::from_pool(pool);
 
         // Create test artist first
         let artist = Artist::new("Test Artist".to_string());
@@ -315,9 +409,9 @@ mod tests {
 
     #[core_async::test]
     async fn test_update_album() {
-        let pool = setup_test_pool().await;
-        let artist_repo = SqliteArtistRepository::new(pool.clone());
-        let repo = SqliteAlbumRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let artist_repo = SqliteArtistRepository::from_pool(pool.clone());
+        let repo = SqliteAlbumRepository::from_pool(pool);
 
         // Create test artist
         let artist = Artist::new("Test Artist".to_string());
@@ -343,9 +437,9 @@ mod tests {
 
     #[core_async::test]
     async fn test_delete_album() {
-        let pool = setup_test_pool().await;
-        let artist_repo = SqliteArtistRepository::new(pool.clone());
-        let repo = SqliteAlbumRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let artist_repo = SqliteArtistRepository::from_pool(pool.clone());
+        let repo = SqliteAlbumRepository::from_pool(pool);
 
         // Create test artist
         let artist = Artist::new("Test Artist".to_string());
@@ -366,9 +460,9 @@ mod tests {
 
     #[core_async::test]
     async fn test_query_with_pagination() {
-        let pool = setup_test_pool().await;
-        let artist_repo = SqliteArtistRepository::new(pool.clone());
-        let repo = SqliteAlbumRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let artist_repo = SqliteArtistRepository::from_pool(pool.clone());
+        let repo = SqliteAlbumRepository::from_pool(pool);
 
         // Create test artist
         let artist = Artist::new("Test Artist".to_string());
@@ -396,9 +490,9 @@ mod tests {
 
     #[core_async::test]
     async fn test_query_by_artist() {
-        let pool = setup_test_pool().await;
-        let artist_repo = SqliteArtistRepository::new(pool.clone());
-        let repo = SqliteAlbumRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let artist_repo = SqliteArtistRepository::from_pool(pool.clone());
+        let repo = SqliteAlbumRepository::from_pool(pool);
 
         // Create two artists
         let artist1 = Artist::new("Artist 1".to_string());
@@ -430,9 +524,9 @@ mod tests {
 
     #[core_async::test]
     async fn test_count_albums() {
-        let pool = setup_test_pool().await;
-        let artist_repo = SqliteArtistRepository::new(pool.clone());
-        let repo = SqliteAlbumRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let artist_repo = SqliteArtistRepository::from_pool(pool.clone());
+        let repo = SqliteAlbumRepository::from_pool(pool);
 
         // Create test artist
         let artist = Artist::new("Test Artist".to_string());
@@ -455,8 +549,8 @@ mod tests {
 
     #[core_async::test]
     async fn test_album_validation() {
-        let pool = setup_test_pool().await;
-        let repo = SqliteAlbumRepository::new(pool);
+        let pool = create_test_pool().await.unwrap();
+        let repo = SqliteAlbumRepository::from_pool(pool);
 
         // Create album with empty name
         let mut album = Album::new("Test".to_string(), None);

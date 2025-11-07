@@ -47,9 +47,9 @@ use crate::{
     job::SyncJobId,
     Result, SyncError,
 };
+use bridge_traits::database::{DatabaseAdapter, QueryValue};
 use core_library::models::TrackId;
 use core_runtime::events::{CoreEvent, EventBus, SyncEvent};
-use sqlx::{Row, SqlitePool};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, error, info, instrument, warn};
@@ -86,7 +86,7 @@ impl ConflictResolutionStats {
 /// Orchestrates conflict resolution workflow during sync operations
 pub struct ConflictResolutionOrchestrator {
     conflict_resolver: Arc<ConflictResolver>,
-    db_pool: SqlitePool,
+    db: Arc<dyn DatabaseAdapter>,
     event_bus: EventBus,
     policy: ConflictPolicy,
     hard_delete: bool,
@@ -98,20 +98,20 @@ impl ConflictResolutionOrchestrator {
     /// # Arguments
     ///
     /// * `conflict_resolver` - The conflict resolver implementation
-    /// * `db_pool` - Database connection pool
+    /// * `db` - Database adapter for persistence
     /// * `event_bus` - Event bus for progress notifications
     /// * `policy` - Conflict resolution policy (KeepNewest, KeepBoth, UserPrompt)
     /// * `hard_delete` - Whether to permanently delete tracks (true) or soft-delete (false)
     pub fn new(
         conflict_resolver: Arc<ConflictResolver>,
-        db_pool: SqlitePool,
+        db: Arc<dyn DatabaseAdapter>,
         event_bus: EventBus,
         policy: ConflictPolicy,
         hard_delete: bool,
     ) -> Self {
         Self {
             conflict_resolver,
-            db_pool,
+            db,
             event_bus,
             policy,
             hard_delete,
@@ -379,30 +379,35 @@ impl ConflictResolutionOrchestrator {
         &self,
         provider_id: &str,
     ) -> Result<Vec<(String, String, TrackId)>> {
-        let rows = sqlx::query(
-            r#"
+        let query = r#"
             SELECT hash, provider_file_id, id
             FROM tracks
             WHERE provider_id = ? AND hash IS NOT NULL
-            "#,
-        )
-        .bind(provider_id)
-        .fetch_all(&self.db_pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+            "#;
+
+        let rows = self
+            .db
+            .query(query, &[QueryValue::Text(provider_id.to_string())])
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
         let mut result = Vec::new();
 
         for row in rows {
-            let hash: String = row
-                .try_get("hash")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
-            let provider_file_id: String = row
-                .try_get("provider_file_id")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
-            let track_id_str: String = row
-                .try_get("id")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
+            let hash = row
+                .get("hash")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing hash field".to_string()))?;
+
+            let provider_file_id = row
+                .get("provider_file_id")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing provider_file_id field".to_string()))?;
+
+            let track_id_str = row
+                .get("id")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing id field".to_string()))?;
 
             let track_id =
                 TrackId::from_string(&track_id_str).map_err(|e| SyncError::InvalidInput {
@@ -421,27 +426,30 @@ impl ConflictResolutionOrchestrator {
         &self,
         provider_id: &str,
     ) -> Result<Vec<(String, TrackId)>> {
-        let rows = sqlx::query(
-            r#"
+        let query = r#"
             SELECT provider_file_id, id
             FROM tracks
             WHERE provider_id = ?
-            "#,
-        )
-        .bind(provider_id)
-        .fetch_all(&self.db_pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+            "#;
+
+        let rows = self
+            .db
+            .query(query, &[QueryValue::Text(provider_id.to_string())])
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
         let mut result = Vec::new();
 
         for row in rows {
-            let provider_file_id: String = row
-                .try_get("provider_file_id")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
-            let track_id_str: String = row
-                .try_get("id")
-                .map_err(|e| SyncError::Database(e.to_string()))?;
+            let provider_file_id = row
+                .get("provider_file_id")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing provider_file_id field".to_string()))?;
+
+            let track_id_str = row
+                .get("id")
+                .and_then(|v| v.as_string())
+                .ok_or_else(|| SyncError::Database("Missing id field".to_string()))?;
 
             let track_id =
                 TrackId::from_string(&track_id_str).map_err(|e| SyncError::InvalidInput {
@@ -473,60 +481,66 @@ impl ConflictResolutionOrchestrator {
 mod tests {
     use super::*;
     use crate::conflict_resolver::ConflictResolver;
+    use bridge_traits::database::DatabaseAdapter;
+    use core_library::adapters::sqlite_native::SqliteAdapter;
     use core_library::db::DatabaseConfig;
     use core_runtime::events::EventBus;
 
-    async fn create_test_pool() -> SqlitePool {
+    async fn create_test_db() -> Arc<dyn DatabaseAdapter> {
         let config = DatabaseConfig::in_memory();
         let pool = core_library::db::create_pool(config).await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
 
         // Create test provider
-        sqlx::query(
+        db.execute(
             r#"
             INSERT INTO providers (id, type, display_name, profile_id, created_at)
             VALUES (?, ?, ?, ?, ?)
             "#,
+            &[
+                QueryValue::Text("test_provider".to_string()),
+                QueryValue::Text("GoogleDrive".to_string()),
+                QueryValue::Text("Test Provider".to_string()),
+                QueryValue::Text("test_profile_id".to_string()),
+                QueryValue::Integer(chrono::Utc::now().timestamp()),
+            ],
         )
-        .bind("test_provider")
-        .bind("GoogleDrive")
-        .bind("Test Provider")
-        .bind("test_profile_id")
-        .bind(chrono::Utc::now().timestamp())
-        .execute(&pool)
         .await
         .unwrap();
 
-        pool
+        db
     }
 
     async fn create_test_track(
-        pool: &SqlitePool,
+        db: &Arc<dyn DatabaseAdapter>,
         provider_file_id: &str,
         hash: Option<&str>,
     ) -> TrackId {
         let track_id = TrackId::new();
         let now = chrono::Utc::now().timestamp();
 
-        sqlx::query(
+        db.execute(
             r#"
             INSERT INTO tracks (
                 id, provider_id, provider_file_id, title, normalized_title,
                 duration_ms, format, file_size, created_at, updated_at, hash
             ) VALUES (?, ?, ?, ?, LOWER(TRIM(?)), ?, ?, ?, ?, ?, ?)
             "#,
+            &[
+                QueryValue::Text(track_id.to_string()),
+                QueryValue::Text("test_provider".to_string()),
+                QueryValue::Text(provider_file_id.to_string()),
+                QueryValue::Text("Test Track".to_string()),
+                QueryValue::Text("Test Track".to_string()),
+                QueryValue::Integer(180000),
+                QueryValue::Text("mp3".to_string()),
+                QueryValue::Integer(5000000),
+                QueryValue::Integer(now),
+                QueryValue::Integer(now),
+                hash.map(|h| QueryValue::Text(h.to_string()))
+                    .unwrap_or(QueryValue::Null),
+            ],
         )
-        .bind(track_id.to_string())
-        .bind("test_provider")
-        .bind(provider_file_id)
-        .bind("Test Track")
-        .bind("Test Track")
-        .bind(180000)
-        .bind("mp3")
-        .bind(5000000)
-        .bind(now)
-        .bind(now)
-        .bind(hash)
-        .execute(pool)
         .await
         .unwrap();
 
@@ -535,25 +549,25 @@ mod tests {
 
     #[core_async::test]
     async fn test_deletion_tracking_soft() {
-        let pool = create_test_pool().await;
+        let db = create_test_db().await;
         let resolver = Arc::new(ConflictResolver::new(
-            pool.clone(),
+            db.clone(),
             ConflictPolicy::KeepNewest,
         ));
         let event_bus = EventBus::new(100);
 
         let orchestrator = ConflictResolutionOrchestrator::new(
             resolver,
-            pool.clone(),
+            db.clone(),
             event_bus,
             ConflictPolicy::KeepNewest,
             false, // soft delete
         );
 
         // Create tracks
-        let _track1 = create_test_track(&pool, "file_1", None).await;
-        let _track2 = create_test_track(&pool, "file_2", None).await;
-        let _track3 = create_test_track(&pool, "file_3", None).await;
+        let _track1 = create_test_track(&db, "file_1", None).await;
+        let _track2 = create_test_track(&db, "file_2", None).await;
+        let _track3 = create_test_track(&db, "file_3", None).await;
 
         // Provider only has file_1 and file_2 (file_3 was deleted)
         let mut provider_files = HashSet::new();
@@ -572,37 +586,39 @@ mod tests {
         assert_eq!(stats.total_deleted(), 1);
 
         // Verify track is soft-deleted (marked with DELETED_ prefix)
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tracks WHERE provider_file_id LIKE 'DELETED_%'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let rows = db
+            .query(
+                "SELECT COUNT(*) as count FROM tracks WHERE provider_file_id LIKE ?",
+                &[QueryValue::Text("DELETED_%".to_string())],
+            )
+            .await
+            .unwrap();
 
+        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap();
         assert_eq!(count, 1);
     }
 
     #[core_async::test]
     async fn test_deletion_tracking_hard() {
-        let pool = create_test_pool().await;
+        let db = create_test_db().await;
         let resolver = Arc::new(ConflictResolver::new(
-            pool.clone(),
+            db.clone(),
             ConflictPolicy::KeepNewest,
         ));
         let event_bus = EventBus::new(100);
 
         let orchestrator = ConflictResolutionOrchestrator::new(
             resolver,
-            pool.clone(),
+            db.clone(),
             event_bus,
             ConflictPolicy::KeepNewest,
             true, // hard delete
         );
 
         // Create tracks
-        create_test_track(&pool, "file_1", None).await;
-        create_test_track(&pool, "file_2", None).await;
-        create_test_track(&pool, "file_3", None).await;
+        create_test_track(&db, "file_1", None).await;
+        create_test_track(&db, "file_2", None).await;
+        create_test_track(&db, "file_3", None).await;
 
         // Provider only has file_1 (file_2 and file_3 were deleted)
         let mut provider_files = HashSet::new();
@@ -620,27 +636,30 @@ mod tests {
         assert_eq!(stats.total_deleted(), 2);
 
         // Verify tracks are hard-deleted (removed from database)
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracks WHERE provider_id = ?")
-            .bind("test_provider")
-            .fetch_one(&pool)
+        let rows = db
+            .query(
+                "SELECT COUNT(*) as count FROM tracks WHERE provider_id = ?",
+                &[QueryValue::Text("test_provider".to_string())],
+            )
             .await
             .unwrap();
 
+        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap();
         assert_eq!(count, 1); // Only file_1 remains
     }
 
     #[core_async::test]
     async fn test_duplicate_resolution() {
-        let pool = create_test_pool().await;
+        let db = create_test_db().await;
         let resolver = Arc::new(ConflictResolver::new(
-            pool.clone(),
+            db.clone(),
             ConflictPolicy::KeepNewest,
         ));
         let event_bus = EventBus::new(100);
 
         let orchestrator = ConflictResolutionOrchestrator::new(
             resolver,
-            pool.clone(),
+            db.clone(),
             event_bus,
             ConflictPolicy::KeepNewest,
             false,
@@ -648,9 +667,9 @@ mod tests {
 
         // Create duplicate tracks with same hash
         let hash = "duplicate_hash_123";
-        create_test_track(&pool, "file_1", Some(hash)).await;
-        create_test_track(&pool, "file_2", Some(hash)).await;
-        create_test_track(&pool, "file_3", Some(hash)).await;
+        create_test_track(&db, "file_1", Some(hash)).await;
+        create_test_track(&db, "file_2", Some(hash)).await;
+        create_test_track(&db, "file_3", Some(hash)).await;
 
         let provider_files = HashSet::new();
         let job_id = SyncJobId::new();
@@ -665,35 +684,38 @@ mod tests {
         assert_eq!(stats.duplicates_resolved, 2); // 2 merged into primary
 
         // Verify only 1 track with this hash remains
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tracks WHERE hash = ?")
-            .bind(hash)
-            .fetch_one(&pool)
+        let rows = db
+            .query(
+                "SELECT COUNT(*) as count FROM tracks WHERE hash = ?",
+                &[QueryValue::Text(hash.to_string())],
+            )
             .await
             .unwrap();
 
+        let count = rows[0].get("count").and_then(|v| v.as_i64()).unwrap();
         assert_eq!(count, 1);
     }
 
     #[core_async::test]
     async fn test_no_conflicts() {
-        let pool = create_test_pool().await;
+        let db = create_test_db().await;
         let resolver = Arc::new(ConflictResolver::new(
-            pool.clone(),
+            db.clone(),
             ConflictPolicy::KeepNewest,
         ));
         let event_bus = EventBus::new(100);
 
         let orchestrator = ConflictResolutionOrchestrator::new(
             resolver,
-            pool.clone(),
+            db.clone(),
             event_bus,
             ConflictPolicy::KeepNewest,
             false,
         );
 
         // Create tracks that all exist in provider
-        create_test_track(&pool, "file_1", None).await;
-        create_test_track(&pool, "file_2", None).await;
+        create_test_track(&db, "file_1", None).await;
+        create_test_track(&db, "file_2", None).await;
 
         let mut provider_files = HashSet::new();
         provider_files.insert("file_1".to_string());

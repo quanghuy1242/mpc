@@ -1,0 +1,89 @@
+[package]
+name = "bridge-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Bridge traits
+bridge-traits = { path = "../bridge-traits" }
+
+# Core async
+core-async = { path = "../core-async" }
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Async
+async-trait.workspace = true
+futures.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Bytes
+bytes.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# HTTP + timers
+gloo-timers = { workspace = true, features = ["futures"] }
+
+# Crypto / encoding
+aes-gcm = { version = "0.10", features = ["aes"] }
+base64 = "0.22"
+rand = { version = "0.8", features = ["std", "getrandom"] }
+getrandom.workspace = true
+
+# Futures utilities
+futures-util.workspace = true
+
+# WASM-specific dependencies
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "AbortController",
+    "AbortSignal",
+    "DomException",
+    "DomStringList",
+    "File",
+    "FileReader",
+    "Headers",
+    "Navigator",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "IdbCursor",
+    "IdbCursorWithValue",
+    "IdbDatabase",
+    "IdbFactory",
+    "IdbObjectStore",
+    "IdbObjectStoreParameters",
+    "IdbOpenDbRequest",
+    "IdbRequest",
+    "IdbTransaction",
+    "IdbTransactionMode",
+    "IdbVersionChangeEvent",
+    "Performance",
+    "Storage",
+    "Window",
+] }
+js-sys = "0.3"
+gloo-utils = "0.2"
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"
+
+[dev-dependencies]
+wasm-bindgen-test.workspace = true
+
+[features]
+default = []

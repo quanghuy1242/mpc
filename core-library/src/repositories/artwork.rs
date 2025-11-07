@@ -3,12 +3,17 @@
 use crate::error::{LibraryError, Result};
 use crate::models::Artwork;
 use crate::repositories::{Page, PageRequest};
-use async_trait::async_trait;
-use sqlx::{query, query_as, SqlitePool};
+use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
+use bridge_traits::error::BridgeError;
+use bridge_traits::platform::PlatformSendSync;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use sqlx::SqlitePool;
+use std::sync::Arc;
 
 /// Artwork repository interface for data access operations
-#[async_trait]
-pub trait ArtworkRepository: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait ArtworkRepository: PlatformSendSync {
     /// Find artwork by its ID
     ///
     /// # Returns
@@ -64,27 +69,169 @@ pub trait ArtworkRepository: Send + Sync {
     async fn total_size(&self) -> Result<i64>;
 }
 
-/// SQLite implementation of ArtworkRepository
+/// SQLite implementation of the artwork repository
 pub struct SqliteArtworkRepository {
-    pool: SqlitePool,
+    adapter: Arc<dyn DatabaseAdapter>,
 }
 
 impl SqliteArtworkRepository {
-    /// Create a new SqliteArtworkRepository
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Create a new artwork repository with the given database adapter
+    pub fn new(adapter: Arc<dyn DatabaseAdapter>) -> Self {
+        Self { adapter }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Create a new artwork repository from a SQLite connection pool (native only)
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        use crate::adapters::SqliteAdapter;
+        Self::new(Arc::new(SqliteAdapter::from_pool(pool)))
+    }
+
+    // Helper functions for extracting values from QueryRow
+    fn get_string(row: &QueryRow, col: &str) -> Result<String> {
+        row.get(col)
+            .and_then(|v| match v {
+                QueryValue::Text(s) => Some(s.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| Self::missing_column(col))
+    }
+
+    fn get_optional_string(row: &QueryRow, col: &str) -> Option<String> {
+        row.get(col).and_then(|v| match v {
+            QueryValue::Text(s) => Some(s.clone()),
+            QueryValue::Null => None,
+            _ => None,
+        })
+    }
+
+    fn get_i64(row: &QueryRow, col: &str) -> Result<i64> {
+        row.get(col)
+            .and_then(|v| match v {
+                QueryValue::Integer(i) => Some(*i),
+                _ => None,
+            })
+            .ok_or_else(|| Self::missing_column(col))
+    }
+
+    fn get_optional_i64(row: &QueryRow, col: &str) -> Option<i64> {
+        row.get(col).and_then(|v| match v {
+            QueryValue::Integer(i) => Some(*i),
+            QueryValue::Null => None,
+            _ => None,
+        })
+    }
+
+    fn get_i32(row: &QueryRow, col: &str) -> Result<i32> {
+        row.get(col)
+            .and_then(|v| match v {
+                QueryValue::Integer(i) => Some(*i as i32),
+                _ => None,
+            })
+            .ok_or_else(|| Self::missing_column(col))
+    }
+
+    fn get_optional_i32(row: &QueryRow, col: &str) -> Option<i32> {
+        row.get(col).and_then(|v| match v {
+            QueryValue::Integer(i) => Some(*i as i32),
+            QueryValue::Null => None,
+            _ => None,
+        })
+    }
+
+    fn get_blob(row: &QueryRow, col: &str) -> Result<Vec<u8>> {
+        row.get(col)
+            .and_then(|v| match v {
+                QueryValue::Blob(b) => Some(b.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| Self::missing_column(col))
+    }
+
+    fn missing_column(col: &str) -> LibraryError {
+        LibraryError::Bridge(BridgeError::DatabaseError(format!(
+            "Missing or invalid column: {}",
+            col
+        )))
+    }
+
+    // Helper to build an optional text parameter
+    fn opt_text(value: &Option<String>) -> QueryValue {
+        match value {
+            Some(v) => QueryValue::Text(v.clone()),
+            None => QueryValue::Null,
+        }
+    }
+
+    // Helper to build an optional i32 parameter
+    fn opt_i32(value: Option<i32>) -> QueryValue {
+        match value {
+            Some(v) => QueryValue::Integer(v as i64),
+            None => QueryValue::Null,
+        }
+    }
+
+    // Helper to convert a QueryRow into an Artwork
+    fn row_to_artwork(row: QueryRow) -> Result<Artwork> {
+        Ok(Artwork {
+            id: Self::get_string(&row, "id")?,
+            hash: Self::get_string(&row, "hash")?,
+            mime_type: Self::get_string(&row, "mime_type")?,
+            binary_blob: Self::get_blob(&row, "binary_blob")?,
+            width: Self::get_i64(&row, "width")?,
+            height: Self::get_i64(&row, "height")?,
+            file_size: Self::get_i64(&row, "file_size")?,
+            dominant_color: Self::get_optional_string(&row, "dominant_color"),
+            source: Self::get_string(&row, "source")?,
+            created_at: Self::get_i64(&row, "created_at")?,
+        })
+    }
+
+    // Helper to build insert parameters
+    fn insert_params(artwork: &Artwork) -> Vec<QueryValue> {
+        vec![
+            QueryValue::Text(artwork.id.clone()),
+            QueryValue::Text(artwork.hash.clone()),
+            QueryValue::Text(artwork.mime_type.clone()),
+            QueryValue::Blob(artwork.binary_blob.clone()),
+            QueryValue::Integer(artwork.width),
+            QueryValue::Integer(artwork.height),
+            QueryValue::Integer(artwork.file_size),
+            Self::opt_text(&artwork.dominant_color),
+            QueryValue::Text(artwork.source.clone()),
+            QueryValue::Integer(artwork.created_at),
+        ]
+    }
+
+    // Helper to build update parameters
+    fn update_params(artwork: &Artwork) -> Vec<QueryValue> {
+        let mut params = vec![
+            QueryValue::Text(artwork.hash.clone()),
+            QueryValue::Text(artwork.mime_type.clone()),
+            QueryValue::Blob(artwork.binary_blob.clone()),
+            QueryValue::Integer(artwork.width),
+            QueryValue::Integer(artwork.height),
+            QueryValue::Integer(artwork.file_size),
+            Self::opt_text(&artwork.dominant_color),
+            QueryValue::Text(artwork.source.clone()),
+        ];
+        // Add id for WHERE clause
+        params.push(QueryValue::Text(artwork.id.clone()));
+        params
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl ArtworkRepository for SqliteArtworkRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Artwork>> {
-        let artwork = query_as::<_, Artwork>("SELECT * FROM artworks WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let sql = "SELECT * FROM artworks WHERE id = ?";
+        let params = vec![QueryValue::Text(id.to_string())];
 
-        Ok(artwork)
+        match self.adapter.query_one_optional(sql, &params).await? {
+            Some(row) => Ok(Some(Self::row_to_artwork(row)?)),
+            None => Ok(None),
+        }
     }
 
     async fn insert(&self, artwork: &Artwork) -> Result<()> {
@@ -94,26 +241,16 @@ impl ArtworkRepository for SqliteArtworkRepository {
             message: e,
         })?;
 
-        query(
-            r#"
+        let sql = r#"
             INSERT INTO artworks (
-                id, hash, binary_blob, width, height,
-                dominant_color, mime_type, file_size, created_at
+                id, hash, mime_type, binary_blob, width, height,
+                file_size, dominant_color, source, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&artwork.id)
-        .bind(&artwork.hash)
-        .bind(&artwork.binary_blob)
-        .bind(artwork.width)
-        .bind(artwork.height)
-        .bind(&artwork.dominant_color)
-        .bind(&artwork.mime_type)
-        .bind(artwork.file_size)
-        .bind(artwork.created_at)
-        .execute(&self.pool)
-        .await?;
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#;
+
+        let params = Self::insert_params(artwork);
+        self.adapter.execute(sql, &params).await?;
 
         Ok(())
     }
@@ -125,26 +262,17 @@ impl ArtworkRepository for SqliteArtworkRepository {
             message: e,
         })?;
 
-        let result = query(
-            r#"
+        let sql = r#"
             UPDATE artworks
-            SET hash = ?, binary_blob = ?, width = ?, height = ?,
-                dominant_color = ?, mime_type = ?, file_size = ?
+            SET hash = ?, mime_type = ?, binary_blob = ?, width = ?, height = ?,
+                file_size = ?, dominant_color = ?, source = ?
             WHERE id = ?
-            "#,
-        )
-        .bind(&artwork.hash)
-        .bind(&artwork.binary_blob)
-        .bind(artwork.width)
-        .bind(artwork.height)
-        .bind(&artwork.dominant_color)
-        .bind(&artwork.mime_type)
-        .bind(artwork.file_size)
-        .bind(&artwork.id)
-        .execute(&self.pool)
-        .await?;
+        "#;
 
-        if result.rows_affected() == 0 {
+        let params = Self::update_params(artwork);
+        let rows_affected = self.adapter.execute(sql, &params).await?;
+
+        if rows_affected == 0 {
             return Err(LibraryError::NotFound {
                 entity_type: "Artwork".to_string(),
                 id: artwork.id.clone(),
@@ -155,53 +283,56 @@ impl ArtworkRepository for SqliteArtworkRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<bool> {
-        let result = query("DELETE FROM artworks WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let sql = "DELETE FROM artworks WHERE id = ?";
+        let params = vec![QueryValue::Text(id.to_string())];
 
-        Ok(result.rows_affected() > 0)
+        let rows_affected = self.adapter.execute(sql, &params).await?;
+
+        Ok(rows_affected > 0)
     }
 
     async fn query(&self, page_request: PageRequest) -> Result<Page<Artwork>> {
         let total = self.count().await?;
 
-        let artworks = query_as::<_, Artwork>(
-            "SELECT * FROM artworks ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(page_request.limit())
-        .bind(page_request.offset())
-        .fetch_all(&self.pool)
-        .await?;
+        let sql = "SELECT * FROM artworks ORDER BY created_at DESC LIMIT ? OFFSET ?";
+        let params = vec![
+            QueryValue::Integer(page_request.limit() as i64),
+            QueryValue::Integer(page_request.offset() as i64),
+        ];
+
+        let rows = self.adapter.query(sql, &params).await?;
+
+        let artworks = rows
+            .into_iter()
+            .map(Self::row_to_artwork)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Page::new(artworks, total as u64, page_request))
     }
 
     async fn find_by_hash(&self, hash: &str) -> Result<Option<Artwork>> {
-        let artwork = query_as::<_, Artwork>("SELECT * FROM artworks WHERE hash = ? LIMIT 1")
-            .bind(hash)
-            .fetch_optional(&self.pool)
-            .await?;
+        let sql = "SELECT * FROM artworks WHERE hash = ? LIMIT 1";
+        let params = vec![QueryValue::Text(hash.to_string())];
 
-        Ok(artwork)
+        match self.adapter.query_one_optional(sql, &params).await? {
+            Some(row) => Ok(Some(Self::row_to_artwork(row)?)),
+            None => Ok(None),
+        }
     }
 
     async fn count(&self) -> Result<i64> {
-        let count: i64 = query_as("SELECT COUNT(*) as count FROM artworks")
-            .fetch_one(&self.pool)
-            .await
-            .map(|row: (i64,)| row.0)?;
+        let sql = "SELECT COUNT(*) as count FROM artworks";
+        let row = self.adapter.query_one(sql, &[]).await?;
 
-        Ok(count)
+        Self::get_i64(&row, "count")
     }
 
     async fn total_size(&self) -> Result<i64> {
-        let size: Option<i64> = query_as("SELECT SUM(file_size) as total FROM artworks")
-            .fetch_one(&self.pool)
-            .await
-            .map(|row: (Option<i64>,)| row.0)?;
+        let sql = "SELECT SUM(file_size) as total FROM artworks";
+        let row = self.adapter.query_one(sql, &[]).await?;
 
-        Ok(size.unwrap_or(0))
+        // SUM can return NULL if table is empty
+        Ok(Self::get_optional_i64(&row, "total").unwrap_or(0))
     }
 }
 
@@ -227,7 +358,7 @@ mod tests {
     #[core_async::test]
     async fn test_insert_and_find_artwork() {
         let pool = setup_test_pool().await;
-        let repo = SqliteArtworkRepository::new(pool);
+        let repo = SqliteArtworkRepository::from_pool(pool);
 
         // Create and insert artwork
         let artwork = create_test_artwork("hash123");
@@ -245,7 +376,7 @@ mod tests {
     #[core_async::test]
     async fn test_find_by_hash() {
         let pool = setup_test_pool().await;
-        let repo = SqliteArtworkRepository::new(pool);
+        let repo = SqliteArtworkRepository::from_pool(pool);
 
         // Create and insert artwork
         let artwork = create_test_artwork("unique_hash");
@@ -260,7 +391,7 @@ mod tests {
     #[core_async::test]
     async fn test_deduplication_by_hash() {
         let pool = setup_test_pool().await;
-        let repo = SqliteArtworkRepository::new(pool);
+        let repo = SqliteArtworkRepository::from_pool(pool);
 
         // Insert first artwork
         let artwork1 = create_test_artwork("duplicate_hash");
@@ -277,7 +408,7 @@ mod tests {
     #[core_async::test]
     async fn test_count_and_total_size() {
         let pool = setup_test_pool().await;
-        let repo = SqliteArtworkRepository::new(pool);
+        let repo = SqliteArtworkRepository::from_pool(pool);
 
         // Initially should be 0
         let count = repo.count().await.unwrap();
@@ -303,7 +434,7 @@ mod tests {
     #[core_async::test]
     async fn test_artwork_validation() {
         let pool = setup_test_pool().await;
-        let repo = SqliteArtworkRepository::new(pool);
+        let repo = SqliteArtworkRepository::from_pool(pool);
 
         // Create artwork with empty data
         let mut artwork = create_test_artwork("hash123");

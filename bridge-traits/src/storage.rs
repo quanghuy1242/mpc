@@ -3,11 +3,13 @@
 //! Provides platform-agnostic traits for file I/O, secure credential storage,
 //! and key-value settings storage.
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
 
-use crate::error::Result;
+use crate::{
+    error::Result,
+    platform::{DynAsyncRead, DynAsyncWrite, PlatformSend, PlatformSendSync},
+};
 
 /// File metadata information
 #[derive(Debug, Clone)]
@@ -37,8 +39,9 @@ pub struct FileMetadata {
 ///     Ok(())
 /// }
 /// ```
-#[async_trait]
-pub trait FileSystemAccess: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait FileSystemAccess: PlatformSendSync {
     /// Get the application's cache directory
     ///
     /// This directory is suitable for temporary files that can be deleted
@@ -82,16 +85,10 @@ pub trait FileSystemAccess: Send + Sync {
     /// Open a file for streaming reads
     ///
     /// This is more efficient than `read_file` for large files.
-    async fn open_read_stream(
-        &self,
-        path: &Path,
-    ) -> Result<Box<dyn core_async::io::AsyncRead + Send + Unpin>>;
+    async fn open_read_stream(&self, path: &Path) -> Result<Box<DynAsyncRead>>;
 
     /// Open a file for streaming writes
-    async fn open_write_stream(
-        &self,
-        path: &Path,
-    ) -> Result<Box<dyn core_async::io::AsyncWrite + Send + Unpin>>;
+    async fn open_write_stream(&self, path: &Path) -> Result<Box<DynAsyncWrite>>;
 
     /// Calculate total size of a directory recursively
     async fn directory_size(&self, path: &Path) -> Result<u64> {
@@ -139,8 +136,9 @@ pub trait FileSystemAccess: Send + Sync {
 ///     Ok(())
 /// }
 /// ```
-#[async_trait]
-pub trait SecureStore: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait SecureStore: PlatformSendSync {
     /// Store a secret value
     ///
     /// # Arguments
@@ -208,8 +206,9 @@ pub trait SecureStore: Send + Sync {
 ///     Ok(())
 /// }
 /// ```
-#[async_trait]
-pub trait SettingsStore: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait SettingsStore: PlatformSendSync {
     /// Store a string value
     async fn set_string(&self, key: &str, value: &str) -> Result<()>;
 
@@ -250,12 +249,13 @@ pub trait SettingsStore: Send + Sync {
     ///
     /// Changes are committed when the transaction is dropped successfully,
     /// or rolled back if an error occurs.
-    async fn begin_transaction(&self) -> Result<Box<dyn SettingsTransaction + Send>>;
+    async fn begin_transaction(&self) -> Result<Box<dyn SettingsTransaction>>;
 }
 
 /// Transaction for atomic settings updates
-#[async_trait]
-pub trait SettingsTransaction: Send {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait SettingsTransaction: PlatformSend {
     /// Set a value within the transaction
     async fn set_string(&mut self, key: &str, value: &str) -> Result<()>;
 
@@ -338,8 +338,9 @@ pub struct RemoteFile {
 ///     Ok(audio_files)
 /// }
 /// ```
-#[async_trait]
-pub trait StorageProvider: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait StorageProvider: PlatformSendSync {
     /// List media files from the cloud storage
     ///
     /// Returns a paginated list of files. Audio files should be filtered by MIME type
@@ -492,6 +493,63 @@ pub trait StorageProvider: Send + Sync {
         &self,
         cursor: Option<String>,
     ) -> Result<(Vec<RemoteFile>, Option<String>)>;
+}
+
+// Blanket implementation for Arc<dyn FileSystemAccess> to allow passing Arc directly
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl FileSystemAccess for std::sync::Arc<dyn FileSystemAccess> {
+    async fn get_cache_directory(&self) -> Result<PathBuf> {
+        (**self).get_cache_directory().await
+    }
+
+    async fn get_data_directory(&self) -> Result<PathBuf> {
+        (**self).get_data_directory().await
+    }
+
+    async fn exists(&self, path: &Path) -> Result<bool> {
+        (**self).exists(path).await
+    }
+
+    async fn metadata(&self, path: &Path) -> Result<FileMetadata> {
+        (**self).metadata(path).await
+    }
+
+    async fn create_dir_all(&self, path: &Path) -> Result<()> {
+        (**self).create_dir_all(path).await
+    }
+
+    async fn read_file(&self, path: &Path) -> Result<Bytes> {
+        (**self).read_file(path).await
+    }
+
+    async fn write_file(&self, path: &Path, data: Bytes) -> Result<()> {
+        (**self).write_file(path, data).await
+    }
+
+    async fn append_file(&self, path: &Path, data: Bytes) -> Result<()> {
+        (**self).append_file(path, data).await
+    }
+
+    async fn delete_file(&self, path: &Path) -> Result<()> {
+        (**self).delete_file(path).await
+    }
+
+    async fn delete_dir_all(&self, path: &Path) -> Result<()> {
+        (**self).delete_dir_all(path).await
+    }
+
+    async fn list_directory(&self, path: &Path) -> Result<Vec<PathBuf>> {
+        (**self).list_directory(path).await
+    }
+
+    async fn open_read_stream(&self, path: &Path) -> Result<Box<DynAsyncRead>> {
+        (**self).open_read_stream(path).await
+    }
+
+    async fn open_write_stream(&self, path: &Path) -> Result<Box<DynAsyncWrite>> {
+        (**self).open_write_stream(path).await
+    }
 }
 
 #[cfg(test)]

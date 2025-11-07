@@ -921,7 +921,7 @@ mod tests {
     #[core_async::test]
     async fn test_lyrics_service_creation() {
         let pool = create_test_pool().await.unwrap();
-        let repository = Arc::new(SqliteLyricsRepository::new(pool));
+        let repository = Arc::new(SqliteLyricsRepository::from_pool(pool));
         let service = LyricsService::without_providers(repository);
 
         assert_eq!(service.providers.len(), 0);
@@ -931,12 +931,12 @@ mod tests {
     async fn test_lyrics_service_stats() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
-        let track_repo = SqliteTrackRepository::new(pool.clone());
+        let track_repo = SqliteTrackRepository::from_pool(pool.clone());
 
         // Create test track first
         create_test_track(&track_repo, "track-1").await.unwrap();
 
-        let repository = Arc::new(SqliteLyricsRepository::new(pool.clone()));
+        let repository = Arc::new(SqliteLyricsRepository::from_pool(pool.clone()));
         let service = LyricsService::without_providers(repository.clone());
 
         // Insert test lyrics
@@ -958,12 +958,12 @@ mod tests {
     async fn test_lyrics_service_fetch_cached() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
-        let track_repo = SqliteTrackRepository::new(pool.clone());
+        let track_repo = SqliteTrackRepository::from_pool(pool.clone());
 
         // Create test track first
         create_test_track(&track_repo, "track-1").await.unwrap();
 
-        let repository = Arc::new(SqliteLyricsRepository::new(pool.clone()));
+        let repository = Arc::new(SqliteLyricsRepository::from_pool(pool.clone()));
         let service = LyricsService::without_providers(repository.clone());
 
         // Pre-cache lyrics
@@ -989,12 +989,12 @@ mod tests {
     async fn test_lyrics_service_update() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
-        let track_repo = SqliteTrackRepository::new(pool.clone());
+        let track_repo = SqliteTrackRepository::from_pool(pool.clone());
 
         // Create test track first
         create_test_track(&track_repo, "track-1").await.unwrap();
 
-        let repository = Arc::new(SqliteLyricsRepository::new(pool.clone()));
+        let repository = Arc::new(SqliteLyricsRepository::from_pool(pool.clone()));
         let service = LyricsService::without_providers(repository.clone());
 
         // Insert and update
@@ -1021,12 +1021,12 @@ mod tests {
     async fn test_lyrics_service_delete() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
-        let track_repo = SqliteTrackRepository::new(pool.clone());
+        let track_repo = SqliteTrackRepository::from_pool(pool.clone());
 
         // Create test track first
         create_test_track(&track_repo, "track-1").await.unwrap();
 
-        let repository = Arc::new(SqliteLyricsRepository::new(pool.clone()));
+        let repository = Arc::new(SqliteLyricsRepository::from_pool(pool.clone()));
         let service = LyricsService::without_providers(repository.clone());
 
         // Insert and delete

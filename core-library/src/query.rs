@@ -8,14 +8,17 @@
 use crate::error::{LibraryError, Result};
 use crate::models::{Album, Artist, Lyrics, Playlist, Track};
 use crate::repositories::{
+    album::row_to_album, artist::row_to_artist, playlist::row_to_playlist, track::row_to_track,
     AlbumRepository, ArtistRepository, LyricsRepository, Page, PageRequest, SqliteAlbumRepository,
     SqliteArtistRepository, SqliteLyricsRepository, SqliteTrackRepository, TrackRepository,
 };
+use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
 use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::{SqliteArguments, SqliteRow};
-use sqlx::{query_scalar_with, query_with, Arguments, FromRow, Row, SqlitePool};
+#[cfg(not(target_arch = "wasm32"))]
+use sqlx::SqlitePool;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 /// Item returned when querying tracks. Includes the base `Track` plus
 /// commonly needed relational metadata to avoid additional round-trips.
@@ -192,13 +195,20 @@ pub enum AlbumSort {
 /// High-level service composing complex library queries.
 #[derive(Clone)]
 pub struct LibraryQueryService {
-    pool: SqlitePool,
+    adapter: Arc<dyn DatabaseAdapter>,
 }
 
 impl LibraryQueryService {
-    /// Create a new `LibraryQueryService` backed by the provided pool.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    /// Create a new `LibraryQueryService` backed by the provided adapter.
+    pub fn new(adapter: Arc<dyn DatabaseAdapter>) -> Self {
+        Self { adapter }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Create a new `LibraryQueryService` from a SQLite connection pool (native only).
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        use crate::adapters::sqlite_native::SqliteAdapter;
+        Self::new(Arc::new(SqliteAdapter::from_pool(pool)))
     }
 
     /// Query tracks with filtering, sorting, and pagination.
@@ -216,40 +226,22 @@ impl LibraryQueryService {
         }
 
         let spec = build_track_query_spec(&filter);
-
-        let total = {
-            let mut args = SqliteArguments::default();
-            for bind in &spec.binds {
-                bind.bind(&mut args);
-            }
-            let count: i64 = query_scalar_with(&spec.count_sql, args)
-                .fetch_one(&self.pool)
-                .await?;
-            count.max(0) as u64
-        };
-
-        let mut args = SqliteArguments::default();
-        for bind in &spec.binds {
-            bind.bind(&mut args);
-        }
-        args.add(page_request.limit() as i64)
-            .expect("failed to bind limit");
-        args.add(page_request.offset() as i64)
-            .expect("failed to bind offset");
+        let total = self.count_with(&spec.count_sql, &spec.binds).await?.max(0);
 
         let mut paginated_sql = spec.select_sql.clone();
         paginated_sql.push_str(" LIMIT ? OFFSET ?");
 
-        let rows = query_with(&paginated_sql, args)
-            .fetch_all(&self.pool)
-            .await?;
+        let mut args = binds_to_query_values(&spec.binds);
+        args.push(QueryValue::Integer(page_request.limit() as i64));
+        args.push(QueryValue::Integer(page_request.offset() as i64));
 
-        let mut items = Vec::with_capacity(rows.len());
-        for row in rows {
-            items.push(row_to_track_item(row)?);
-        }
+        let rows = self.adapter.query(&paginated_sql, &args).await?;
+        let items = rows
+            .into_iter()
+            .map(row_to_track_item)
+            .collect::<Result<Vec<_>>>()?;
 
-        Ok(Page::new(items, total, page_request))
+        Ok(Page::new(items, total as u64, page_request))
     }
 
     /// Stream tracks matching a filter without materializing the entire result set.
@@ -311,40 +303,22 @@ impl LibraryQueryService {
         validate_year_range(filter.min_year, filter.max_year)?;
 
         let spec = build_album_query_spec(&filter);
-
-        let total = {
-            let mut args = SqliteArguments::default();
-            for bind in &spec.binds {
-                bind.bind(&mut args);
-            }
-            let count: i64 = query_scalar_with(&spec.count_sql, args)
-                .fetch_one(&self.pool)
-                .await?;
-            count.max(0) as u64
-        };
-
-        let mut args = SqliteArguments::default();
-        for bind in &spec.binds {
-            bind.bind(&mut args);
-        }
-        args.add(page_request.limit() as i64)
-            .expect("failed to bind limit");
-        args.add(page_request.offset() as i64)
-            .expect("failed to bind offset");
+        let total = self.count_with(&spec.count_sql, &spec.binds).await?.max(0);
 
         let mut paginated_sql = spec.select_sql.clone();
         paginated_sql.push_str(" LIMIT ? OFFSET ?");
 
-        let rows = query_with(&paginated_sql, args)
-            .fetch_all(&self.pool)
-            .await?;
+        let mut args = binds_to_query_values(&spec.binds);
+        args.push(QueryValue::Integer(page_request.limit() as i64));
+        args.push(QueryValue::Integer(page_request.offset() as i64));
 
-        let mut items = Vec::with_capacity(rows.len());
-        for row in rows {
-            items.push(row_to_album_item(row)?);
-        }
+        let rows = self.adapter.query(&paginated_sql, &args).await?;
+        let items = rows
+            .into_iter()
+            .map(row_to_album_item)
+            .collect::<Result<Vec<_>>>()?;
 
-        Ok(Page::new(items, total, page_request))
+        Ok(Page::new(items, total as u64, page_request))
     }
 
     /// Perform full-text search across tracks, albums, artists, and playlists.
@@ -363,8 +337,10 @@ impl LibraryQueryService {
 
         // Track search via FTS.
         {
-            let rows = sqlx::query(
-                r#"
+            let rows = self
+                .adapter
+                .query(
+                    r#"
                 SELECT
                     t.*,
                     COALESCE(t.artwork_id, alb.artwork_id) AS display_artwork_id,
@@ -381,11 +357,12 @@ impl LibraryQueryService {
                 ORDER BY tracks_fts.rank ASC, t.normalized_title ASC
                 LIMIT ?
                 "#,
-            )
-            .bind(trimmed)
-            .bind(TRACK_LIMIT)
-            .fetch_all(&self.pool)
-            .await?;
+                    &[
+                        QueryValue::Text(trimmed.to_string()),
+                        QueryValue::Integer(TRACK_LIMIT),
+                    ],
+                )
+                .await?;
 
             for row in rows {
                 results.tracks.push(row_to_track_item(row)?);
@@ -394,8 +371,10 @@ impl LibraryQueryService {
 
         // Album search via FTS.
         {
-            let rows = sqlx::query(
-                r#"
+            let rows = self
+                .adapter
+                .query(
+                    r#"
                 SELECT
                     alb.*,
                     art.name AS artist_name,
@@ -411,18 +390,19 @@ impl LibraryQueryService {
                 ORDER BY albums_fts.rank ASC, alb.normalized_name ASC
                 LIMIT ?
                 "#,
-            )
-            .bind(trimmed)
-            .bind(ALBUM_LIMIT)
-            .fetch_all(&self.pool)
-            .await?;
+                    &[
+                        QueryValue::Text(trimmed.to_string()),
+                        QueryValue::Integer(ALBUM_LIMIT),
+                    ],
+                )
+                .await?;
 
             for row in rows {
-                let mut album = Album::from_row(&row)?;
-                let artist_name: Option<String> = row.try_get("artist_name")?;
-                let score: f64 = row.try_get("relevance").unwrap_or(0.0);
-                let actual_track_count: i64 = row.try_get("actual_track_count")?;
-                let actual_duration_ms: i64 = row.try_get("actual_duration_ms")?;
+                let mut album = row_to_album(&row)?;
+                let artist_name = optional_string(&row, "artist_name");
+                let score = row_value_f64(&row, "relevance", 0.0);
+                let actual_track_count = required_i64(&row, "actual_track_count")?;
+                let actual_duration_ms = required_i64(&row, "actual_duration_ms")?;
 
                 album.track_count = actual_track_count;
                 album.total_duration_ms = actual_duration_ms;
@@ -437,8 +417,10 @@ impl LibraryQueryService {
 
         // Artist search via FTS.
         {
-            let rows = sqlx::query(
-                r#"
+            let rows = self
+                .adapter
+                .query(
+                    r#"
                 SELECT
                     art.*,
                     0.0 AS relevance
@@ -448,15 +430,16 @@ impl LibraryQueryService {
                 ORDER BY artists_fts.rank ASC, art.normalized_name ASC
                 LIMIT ?
                 "#,
-            )
-            .bind(trimmed)
-            .bind(ARTIST_LIMIT)
-            .fetch_all(&self.pool)
-            .await?;
+                    &[
+                        QueryValue::Text(trimmed.to_string()),
+                        QueryValue::Integer(ARTIST_LIMIT),
+                    ],
+                )
+                .await?;
 
             for row in rows {
-                let artist = Artist::from_row(&row)?;
-                let score: f64 = row.try_get("relevance").unwrap_or(0.0);
+                let artist = row_to_artist(&row)?;
+                let score = row_value_f64(&row, "relevance", 0.0);
                 results.artists.push(ArtistSearchItem { artist, score });
             }
         }
@@ -465,8 +448,10 @@ impl LibraryQueryService {
         {
             let normalized = Playlist::new(trimmed.to_string()).normalized_name;
             let pattern = format!("%{}%", normalized);
-            let rows = sqlx::query(
-                r#"
+            let rows = self
+                .adapter
+                .query(
+                    r#"
                 SELECT
                     pl.*,
                     CASE
@@ -478,16 +463,17 @@ impl LibraryQueryService {
                 ORDER BY score ASC, pl.normalized_name ASC
                 LIMIT ?
                 "#,
-            )
-            .bind(&normalized)
-            .bind(&pattern)
-            .bind(PLAYLIST_LIMIT)
-            .fetch_all(&self.pool)
-            .await?;
+                    &[
+                        QueryValue::Text(normalized.clone()),
+                        QueryValue::Text(pattern),
+                        QueryValue::Integer(PLAYLIST_LIMIT),
+                    ],
+                )
+                .await?;
 
             for row in rows {
-                let playlist = Playlist::from_row(&row)?;
-                let score: f64 = row.try_get("score").unwrap_or(1.0);
+                let playlist = row_to_playlist(&row)?;
+                let score = row_value_f64(&row, "score", 1.0);
                 results
                     .playlists
                     .push(PlaylistSearchItem { playlist, score });
@@ -499,7 +485,7 @@ impl LibraryQueryService {
 
     /// Fetch a track with eagerly loaded relations.
     pub async fn get_track_details(&self, track_id: &str) -> Result<TrackDetails> {
-        let track_repo = SqliteTrackRepository::new(self.pool.clone());
+        let track_repo = SqliteTrackRepository::new(self.adapter.clone());
         let track =
             track_repo
                 .find_by_id(track_id)
@@ -509,9 +495,9 @@ impl LibraryQueryService {
                     id: track_id.to_string(),
                 })?;
 
-        let album_repo = SqliteAlbumRepository::new(self.pool.clone());
-        let artist_repo = SqliteArtistRepository::new(self.pool.clone());
-        let lyrics_repo = SqliteLyricsRepository::new(self.pool.clone());
+        let album_repo = SqliteAlbumRepository::new(self.adapter.clone());
+        let artist_repo = SqliteArtistRepository::new(self.adapter.clone());
+        let lyrics_repo = SqliteLyricsRepository::new(self.adapter.clone());
 
         let album = match &track.album_id {
             Some(album_id) => album_repo.find_by_id(album_id).await?,
@@ -543,6 +529,22 @@ impl LibraryQueryService {
             lyrics,
             display_artwork_id,
         })
+    }
+
+    async fn count_with(&self, sql: &str, binds: &[BindValue]) -> Result<i64> {
+        let row = self
+            .adapter
+            .query_one(sql, &binds_to_query_values(binds))
+            .await?;
+        row.get("count")
+            .and_then(|value| {
+                if value.is_null() {
+                    None
+                } else {
+                    value.as_i64()
+                }
+            })
+            .ok_or_else(|| missing_column("count"))
     }
 }
 
@@ -578,20 +580,17 @@ enum BindValue {
 }
 
 impl BindValue {
-    fn bind(&self, args: &mut SqliteArguments<'_>) {
+    fn to_query_value(&self) -> QueryValue {
         match self {
-            BindValue::Text(value) => {
-                args.add(value.clone())
-                    .expect("failed to bind text argument");
-            }
-            BindValue::I64(value) => {
-                args.add(*value).expect("failed to bind i64 argument");
-            }
-            BindValue::I32(value) => {
-                args.add(*value).expect("failed to bind i32 argument");
-            }
+            BindValue::Text(value) => QueryValue::Text(value.clone()),
+            BindValue::I64(value) => QueryValue::Integer(*value),
+            BindValue::I32(value) => QueryValue::Integer(*value as i64),
         }
     }
+}
+
+fn binds_to_query_values(binds: &[BindValue]) -> Vec<QueryValue> {
+    binds.iter().map(BindValue::to_query_value).collect()
 }
 
 fn build_track_query_spec(filter: &TrackFilter) -> TrackQuerySpec {
@@ -687,7 +686,7 @@ fn build_track_query_spec(filter: &TrackFilter) -> TrackQuerySpec {
         TrackSort::DurationAsc => "t.duration_ms ASC, t.normalized_title ASC",
     });
 
-    let mut count_sql = String::from("SELECT COUNT(*) FROM tracks t");
+    let mut count_sql = String::from("SELECT COUNT(*) AS count FROM tracks t");
     for join in &joins {
         // Only joins that affect filtering need to be replicated in the count query.
         if join.starts_with("INNER JOIN playlist_tracks") {
@@ -769,7 +768,7 @@ fn build_album_query_spec(filter: &AlbumFilter) -> AlbumQuerySpec {
     });
 
     let mut count_sql = String::from(
-        "SELECT COUNT(*) FROM albums alb LEFT JOIN artists art ON art.id = alb.artist_id",
+        "SELECT COUNT(*) AS count FROM albums alb LEFT JOIN artists art ON art.id = alb.artist_id",
     );
     if !conditions.is_empty() {
         count_sql.push_str(" WHERE ");
@@ -783,12 +782,15 @@ fn build_album_query_spec(filter: &AlbumFilter) -> AlbumQuerySpec {
     }
 }
 
-fn row_to_track_item(row: SqliteRow) -> Result<TrackListItem> {
-    let track = Track::from_row(&row)?;
-    let album_name: Option<String> = row.try_get("album_name")?;
-    let artist_name: Option<String> = row.try_get("artist_name")?;
-    let album_artist_name: Option<String> = row.try_get("album_artist_name")?;
-    let display_artwork_id: Option<String> = row.try_get("display_artwork_id")?;
+fn row_to_track_item(row: QueryRow) -> Result<TrackListItem> {
+    let track = row_to_track(&row)?;
+    let album_name = optional_string(&row, "album_name");
+    let artist_name = optional_string(&row, "artist_name");
+    let album_artist_name = optional_string(&row, "album_artist_name");
+    let display_artwork_id = track
+        .artwork_id
+        .clone()
+        .or_else(|| optional_string(&row, "display_artwork_id"));
 
     Ok(TrackListItem {
         track,
@@ -799,11 +801,11 @@ fn row_to_track_item(row: SqliteRow) -> Result<TrackListItem> {
     })
 }
 
-fn row_to_album_item(row: SqliteRow) -> Result<AlbumListItem> {
-    let mut album = Album::from_row(&row)?;
-    let artist_name: Option<String> = row.try_get("artist_name")?;
-    let actual_track_count: i64 = row.try_get("actual_track_count")?;
-    let actual_duration_ms: i64 = row.try_get("actual_duration_ms")?;
+fn row_to_album_item(row: QueryRow) -> Result<AlbumListItem> {
+    let mut album = row_to_album(&row)?;
+    let artist_name = optional_string(&row, "artist_name");
+    let actual_track_count = required_i64(&row, "actual_track_count")?;
+    let actual_duration_ms = required_i64(&row, "actual_duration_ms")?;
 
     album.track_count = actual_track_count;
     album.total_duration_ms = actual_duration_ms;
@@ -839,7 +841,48 @@ fn validate_year_range(min: Option<i32>, max: Option<i32>) -> Result<()> {
     }
 }
 
-#[cfg(test)]
+fn optional_string(row: &QueryRow, column: &str) -> Option<String> {
+    row.get(column).and_then(|value| {
+        if value.is_null() {
+            None
+        } else {
+            value.as_string()
+        }
+    })
+}
+
+fn required_i64(row: &QueryRow, column: &str) -> Result<i64> {
+    row.get(column)
+        .and_then(|value| {
+            if value.is_null() {
+                None
+            } else {
+                value.as_i64()
+            }
+        })
+        .ok_or_else(|| missing_column(column))
+}
+
+fn row_value_f64(row: &QueryRow, column: &str, default: f64) -> f64 {
+    row.get(column)
+        .and_then(|value| {
+            if value.is_null() {
+                None
+            } else {
+                value.as_f64()
+            }
+        })
+        .unwrap_or(default)
+}
+
+fn missing_column(column: &str) -> LibraryError {
+    LibraryError::InvalidInput {
+        field: column.to_string(),
+        message: "missing column in result set".to_string(),
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::db::create_test_pool;
@@ -862,7 +905,7 @@ mod tests {
         artist.normalized_name = Artist::normalize(name);
         artist.created_at = 1700000000;
         artist.updated_at = 1700000000;
-        let repo = SqliteArtistRepository::new(pool.clone());
+        let repo = SqliteArtistRepository::from_pool(pool.clone());
         repo.insert(&artist).await.unwrap();
         artist
     }
@@ -880,7 +923,7 @@ mod tests {
         album.created_at = 1700000000;
         album.updated_at = 1700000000;
         album.genre = genre.map(|g| g.to_string());
-        let repo = SqliteAlbumRepository::new(pool.clone());
+        let repo = SqliteAlbumRepository::from_pool(pool.clone());
         repo.insert(&album).await.unwrap();
         album
     }
@@ -916,7 +959,7 @@ mod tests {
     }
 
     async fn insert_track(pool: &SqlitePool, track: &Track) {
-        let repo = SqliteTrackRepository::new(pool.clone());
+        let repo = SqliteTrackRepository::from_pool(pool.clone());
         repo.insert(track).await.unwrap();
     }
 
@@ -926,7 +969,7 @@ mod tests {
         playlist.normalized_name = name.trim().to_lowercase();
         playlist.created_at = 1700000000;
         playlist.updated_at = 1700000000;
-        let repo = SqlitePlaylistRepository::new(pool.clone());
+        let repo = SqlitePlaylistRepository::from_pool(pool.clone());
         repo.insert(&playlist).await.unwrap();
         playlist
     }
@@ -952,13 +995,13 @@ mod tests {
         let track2 = make_track("track-2", None, None);
         insert_track(&pool, &track2).await;
 
-        let playlist_repo = SqlitePlaylistRepository::new(pool.clone());
+        let playlist_repo = SqlitePlaylistRepository::from_pool(pool.clone());
         playlist_repo
             .add_track(&playlist.id, &track1.id, 1)
             .await
             .unwrap();
 
-        let service = LibraryQueryService::new(pool.clone());
+        let service = LibraryQueryService::from_pool(pool.clone());
         let mut filter = TrackFilter::default();
         filter.album_id = Some(album.id.clone());
         filter.playlist_id = Some(playlist.id.clone());
@@ -1002,7 +1045,7 @@ mod tests {
         filter.genre = Some("Jazz".to_string());
         filter.sort = AlbumSort::TrackCountDesc;
 
-        let service = LibraryQueryService::new(pool.clone());
+        let service = LibraryQueryService::from_pool(pool.clone());
         let page = service
             .query_albums(filter, PageRequest::new(0, 10))
             .await
@@ -1037,7 +1080,7 @@ mod tests {
         insert_track(&pool, &track).await;
         insert_playlist(&pool, "playlist-search", "Search Playlist").await;
 
-        let service = LibraryQueryService::new(pool.clone());
+        let service = LibraryQueryService::from_pool(pool.clone());
         let results = service.search("search").await.unwrap();
 
         assert!(!results.tracks.is_empty());
@@ -1076,10 +1119,10 @@ mod tests {
             false,
             "Test lyrics".to_string(),
         );
-        let lyrics_repo = SqliteLyricsRepository::new(pool.clone());
+        let lyrics_repo = SqliteLyricsRepository::from_pool(pool.clone());
         lyrics_repo.insert(&lyrics).await.unwrap();
 
-        let service = LibraryQueryService::new(pool.clone());
+        let service = LibraryQueryService::from_pool(pool.clone());
         let details = service
             .get_track_details(&track.id)
             .await

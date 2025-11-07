@@ -2,12 +2,11 @@
 //!
 //! Provides injectable time source and logging sink for testing and platform integration.
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::error::Result;
+use crate::{error::Result, platform::PlatformSendSync};
 
 /// Time source trait
 ///
@@ -24,7 +23,7 @@ use crate::error::Result;
 ///     println!("Current time: {}", now);
 /// }
 /// ```
-pub trait Clock: Send + Sync {
+pub trait Clock: PlatformSendSync {
     /// Get current UTC time
     fn now(&self) -> DateTime<Utc>;
 
@@ -125,8 +124,9 @@ impl LogEntry {
 ///     logger.log(entry).await.ok();
 /// }
 /// ```
-#[async_trait]
-pub trait LoggerSink: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait LoggerSink: PlatformSendSync {
     /// Forward a log entry to the host logging system
     async fn log(&self, entry: LogEntry) -> Result<()>;
 
@@ -157,7 +157,8 @@ impl Default for ConsoleLogger {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl LoggerSink for ConsoleLogger {
     async fn log(&self, entry: LogEntry) -> Result<()> {
         if entry.level >= self.min_level {

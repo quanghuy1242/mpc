@@ -42,9 +42,9 @@
 //! ```
 
 use async_trait::async_trait;
+use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
 use core_async::sync::Semaphore;
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -267,44 +267,51 @@ impl WorkItem {
 }
 
 /// Repository trait for persisting scan queue to database
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait ScanQueueRepository: Send + Sync {
     /// Insert a work item
-    async fn insert(&self, item: &WorkItem) -> Result<()>;
+    async fn insert(&self, db: &dyn DatabaseAdapter, item: &WorkItem) -> Result<()>;
 
     /// Update a work item
-    async fn update(&self, item: &WorkItem) -> Result<()>;
+    async fn update(&self, db: &dyn DatabaseAdapter, item: &WorkItem) -> Result<()>;
 
     /// Find work item by ID
-    async fn find_by_id(&self, id: WorkItemId) -> Result<Option<WorkItem>>;
+    async fn find_by_id(
+        &self,
+        db: &dyn DatabaseAdapter,
+        id: WorkItemId,
+    ) -> Result<Option<WorkItem>>;
 
     /// Get next pending item by priority
-    async fn get_next_pending(&self) -> Result<Option<WorkItem>>;
+    async fn get_next_pending(&self, db: &dyn DatabaseAdapter) -> Result<Option<WorkItem>>;
 
     /// Count items by status
-    async fn count_by_status(&self, status: WorkItemStatus) -> Result<u64>;
+    async fn count_by_status(
+        &self,
+        db: &dyn DatabaseAdapter,
+        status: WorkItemStatus,
+    ) -> Result<u64>;
 
     /// Delete completed items
-    async fn delete_completed(&self) -> Result<u64>;
+    async fn delete_completed(&self, db: &dyn DatabaseAdapter) -> Result<u64>;
 
     /// Get all failed items
-    async fn get_failed_items(&self) -> Result<Vec<WorkItem>>;
+    async fn get_failed_items(&self, db: &dyn DatabaseAdapter) -> Result<Vec<WorkItem>>;
 }
 
 /// SQLite implementation of scan queue repository
-pub struct SqliteScanQueueRepository {
-    pool: SqlitePool,
-}
+pub struct SqliteScanQueueRepository {}
 
 impl SqliteScanQueueRepository {
     /// Create a new repository
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Initialize database table if it doesn't exist
-    pub async fn initialize(&self) -> Result<()> {
-        sqlx::query(
+    pub async fn initialize(&self, db: &dyn DatabaseAdapter) -> Result<()> {
+        db.execute(
             r#"
             CREATE TABLE IF NOT EXISTS scan_queue (
                 id TEXT PRIMARY KEY,
@@ -320,57 +327,114 @@ impl SqliteScanQueueRepository {
                 processing_started_at INTEGER
             )
             "#,
+            &[],
         )
-        .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Database(e.to_string()))?;
 
         // Create indexes for efficient queries
-        sqlx::query(
+        db.execute(
             r#"
             CREATE INDEX IF NOT EXISTS idx_scan_queue_status_priority 
             ON scan_queue(status, priority DESC, created_at ASC)
             "#,
+            &[],
         )
-        .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Database(e.to_string()))?;
 
         Ok(())
     }
+
+    /// Parse a database row into a WorkItem
+    fn row_to_work_item(row: &QueryRow) -> Result<WorkItem> {
+        Ok(WorkItem {
+            id: WorkItemId::from_string(&Self::get_string(row, "id")?)?,
+            remote_file_id: Self::get_string(row, "remote_file_id")?,
+            mime_type: Self::get_string(row, "mime_type")?,
+            file_size: Self::get_optional_i64(row, "file_size"),
+            status: Self::get_string(row, "status")?.parse()?,
+            priority: Priority::from_i32(Self::get_i32(row, "priority")?)?,
+            retry_count: Self::get_i32(row, "retry_count")? as u32,
+            error_message: Self::get_optional_string(row, "error_message"),
+            created_at: Self::get_i64(row, "created_at")?,
+            updated_at: Self::get_i64(row, "updated_at")?,
+            processing_started_at: Self::get_optional_i64(row, "processing_started_at"),
+        })
+    }
+
+    /// Get a string value from a row
+    fn get_string(row: &QueryRow, key: &str) -> Result<String> {
+        row.get(key)
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .ok_or_else(|| SyncError::Database(format!("Missing or invalid column: {}", key)))
+    }
+
+    /// Get an optional string value from a row
+    fn get_optional_string(row: &QueryRow, key: &str) -> Option<String> {
+        row.get(key).and_then(|v| v.as_str().map(|s| s.to_string()))
+    }
+
+    /// Get an i32 value from a row
+    fn get_i32(row: &QueryRow, key: &str) -> Result<i32> {
+        row.get(key)
+            .and_then(|v| v.as_i64().map(|i| i as i32))
+            .ok_or_else(|| SyncError::Database(format!("Missing or invalid column: {}", key)))
+    }
+
+    /// Get an i64 value from a row
+    fn get_i64(row: &QueryRow, key: &str) -> Result<i64> {
+        row.get(key)
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| SyncError::Database(format!("Missing or invalid column: {}", key)))
+    }
+
+    /// Get an optional i64 value from a row
+    fn get_optional_i64(row: &QueryRow, key: &str) -> Option<i64> {
+        row.get(key).and_then(|v| v.as_i64())
+    }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ScanQueueRepository for SqliteScanQueueRepository {
-    async fn insert(&self, item: &WorkItem) -> Result<()> {
-        sqlx::query(
+    async fn insert(&self, db: &dyn DatabaseAdapter, item: &WorkItem) -> Result<()> {
+        db.execute(
             r#"
             INSERT INTO scan_queue (
                 id, remote_file_id, mime_type, file_size, status, priority,
                 retry_count, error_message, created_at, updated_at, processing_started_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
+            &[
+                QueryValue::Text(item.id.as_str()),
+                QueryValue::Text(item.remote_file_id.clone()),
+                QueryValue::Text(item.mime_type.clone()),
+                item.file_size
+                    .map(QueryValue::Integer)
+                    .unwrap_or(QueryValue::Null),
+                QueryValue::Text(item.status.as_str().to_string()),
+                QueryValue::Integer(item.priority.as_i32() as i64),
+                QueryValue::Integer(item.retry_count as i64),
+                item.error_message
+                    .as_ref()
+                    .map(|s| QueryValue::Text(s.clone()))
+                    .unwrap_or(QueryValue::Null),
+                QueryValue::Integer(item.created_at),
+                QueryValue::Integer(item.updated_at),
+                item.processing_started_at
+                    .map(QueryValue::Integer)
+                    .unwrap_or(QueryValue::Null),
+            ],
         )
-        .bind(item.id.as_str())
-        .bind(&item.remote_file_id)
-        .bind(&item.mime_type)
-        .bind(item.file_size)
-        .bind(item.status.as_str())
-        .bind(item.priority.as_i32())
-        .bind(item.retry_count as i32)
-        .bind(&item.error_message)
-        .bind(item.created_at)
-        .bind(item.updated_at)
-        .bind(item.processing_started_at)
-        .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Database(e.to_string()))?;
 
         Ok(())
     }
 
-    async fn update(&self, item: &WorkItem) -> Result<()> {
-        sqlx::query(
+    async fn update(&self, db: &dyn DatabaseAdapter, item: &WorkItem) -> Result<()> {
+        db.execute(
             r#"
             UPDATE scan_queue SET
                 status = ?,
@@ -380,56 +444,51 @@ impl ScanQueueRepository for SqliteScanQueueRepository {
                 processing_started_at = ?
             WHERE id = ?
             "#,
+            &[
+                QueryValue::Text(item.status.as_str().to_string()),
+                QueryValue::Integer(item.retry_count as i64),
+                item.error_message
+                    .as_ref()
+                    .map(|s| QueryValue::Text(s.clone()))
+                    .unwrap_or(QueryValue::Null),
+                QueryValue::Integer(item.updated_at),
+                item.processing_started_at
+                    .map(QueryValue::Integer)
+                    .unwrap_or(QueryValue::Null),
+                QueryValue::Text(item.id.as_str()),
+            ],
         )
-        .bind(item.status.as_str())
-        .bind(item.retry_count as i32)
-        .bind(&item.error_message)
-        .bind(item.updated_at)
-        .bind(item.processing_started_at)
-        .bind(item.id.as_str())
-        .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Database(e.to_string()))?;
 
         Ok(())
     }
 
-    async fn find_by_id(&self, id: WorkItemId) -> Result<Option<WorkItem>> {
-        let row = sqlx::query(
-            r#"
+    async fn find_by_id(
+        &self,
+        db: &dyn DatabaseAdapter,
+        id: WorkItemId,
+    ) -> Result<Option<WorkItem>> {
+        let row = db
+            .query_one_optional(
+                r#"
             SELECT id, remote_file_id, mime_type, file_size, status, priority,
                    retry_count, error_message, created_at, updated_at, processing_started_at
             FROM scan_queue
             WHERE id = ?
             "#,
-        )
-        .bind(id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[QueryValue::Text(id.as_str())],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        if let Some(row) = row {
-            Ok(Some(WorkItem {
-                id: WorkItemId::from_string(&row.get::<String, _>("id"))?,
-                remote_file_id: row.get("remote_file_id"),
-                mime_type: row.get("mime_type"),
-                file_size: row.get("file_size"),
-                status: row.get::<String, _>("status").parse()?,
-                priority: Priority::from_i32(row.get("priority"))?,
-                retry_count: row.get::<i32, _>("retry_count") as u32,
-                error_message: row.get("error_message"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-                processing_started_at: row.get("processing_started_at"),
-            }))
-        } else {
-            Ok(None)
-        }
+        row.map(|r| Self::row_to_work_item(&r)).transpose()
     }
 
-    async fn get_next_pending(&self) -> Result<Option<WorkItem>> {
-        let row = sqlx::query(
-            r#"
+    async fn get_next_pending(&self, db: &dyn DatabaseAdapter) -> Result<Option<WorkItem>> {
+        let row = db
+            .query_one_optional(
+                r#"
             SELECT id, remote_file_id, mime_type, file_size, status, priority,
                    retry_count, error_message, created_at, updated_at, processing_started_at
             FROM scan_queue
@@ -437,86 +496,67 @@ impl ScanQueueRepository for SqliteScanQueueRepository {
             ORDER BY priority DESC, created_at ASC
             LIMIT 1
             "#,
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
-
-        if let Some(row) = row {
-            Ok(Some(WorkItem {
-                id: WorkItemId::from_string(&row.get::<String, _>("id"))?,
-                remote_file_id: row.get("remote_file_id"),
-                mime_type: row.get("mime_type"),
-                file_size: row.get("file_size"),
-                status: row.get::<String, _>("status").parse()?,
-                priority: Priority::from_i32(row.get("priority"))?,
-                retry_count: row.get::<i32, _>("retry_count") as u32,
-                error_message: row.get("error_message"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-                processing_started_at: row.get("processing_started_at"),
-            }))
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn count_by_status(&self, status: WorkItemStatus) -> Result<u64> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scan_queue WHERE status = ?")
-            .bind(status.as_str())
-            .fetch_one(&self.pool)
+                &[],
+            )
             .await
             .map_err(|e| SyncError::Database(e.to_string()))?;
+
+        row.map(|r| Self::row_to_work_item(&r)).transpose()
+    }
+
+    async fn count_by_status(
+        &self,
+        db: &dyn DatabaseAdapter,
+        status: WorkItemStatus,
+    ) -> Result<u64> {
+        let row = db
+            .query_one_optional(
+                "SELECT COUNT(*) as count FROM scan_queue WHERE status = ?",
+                &[QueryValue::Text(status.as_str().to_string())],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
+
+        let count = row
+            .as_ref()
+            .and_then(|r| r.get("count"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
 
         Ok(count as u64)
     }
 
-    async fn delete_completed(&self) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM scan_queue WHERE status = 'completed'")
-            .execute(&self.pool)
+    async fn delete_completed(&self, db: &dyn DatabaseAdapter) -> Result<u64> {
+        let affected = db
+            .execute("DELETE FROM scan_queue WHERE status = 'completed'", &[])
             .await
             .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        Ok(result.rows_affected())
+        Ok(affected)
     }
 
-    async fn get_failed_items(&self) -> Result<Vec<WorkItem>> {
-        let rows = sqlx::query(
-            r#"
+    async fn get_failed_items(&self, db: &dyn DatabaseAdapter) -> Result<Vec<WorkItem>> {
+        let rows = db
+            .query(
+                r#"
             SELECT id, remote_file_id, mime_type, file_size, status, priority,
                    retry_count, error_message, created_at, updated_at, processing_started_at
             FROM scan_queue
             WHERE status = 'failed'
             ORDER BY updated_at DESC
             "#,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        let mut items = Vec::with_capacity(rows.len());
-        for row in rows {
-            items.push(WorkItem {
-                id: WorkItemId::from_string(&row.get::<String, _>("id"))?,
-                remote_file_id: row.get("remote_file_id"),
-                mime_type: row.get("mime_type"),
-                file_size: row.get("file_size"),
-                status: row.get::<String, _>("status").parse()?,
-                priority: Priority::from_i32(row.get("priority"))?,
-                retry_count: row.get::<i32, _>("retry_count") as u32,
-                error_message: row.get("error_message"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-                processing_started_at: row.get("processing_started_at"),
-            });
-        }
-
-        Ok(items)
+        rows.iter().map(Self::row_to_work_item).collect()
     }
 }
 
 /// Scan queue for managing file processing work items
 pub struct ScanQueue {
+    db: Arc<dyn DatabaseAdapter>,
     repository: Arc<dyn ScanQueueRepository>,
     semaphore: Arc<Semaphore>,
     max_concurrent: usize,
@@ -524,11 +564,12 @@ pub struct ScanQueue {
 
 impl ScanQueue {
     /// Create a new scan queue with specified concurrency limit
-    pub async fn new(pool: SqlitePool, max_concurrent: usize) -> Result<Self> {
-        let repository = SqliteScanQueueRepository::new(pool);
-        repository.initialize().await?;
+    pub async fn new(db: Arc<dyn DatabaseAdapter>, max_concurrent: usize) -> Result<Self> {
+        let repository = SqliteScanQueueRepository::new();
+        repository.initialize(db.as_ref()).await?;
 
         Ok(Self {
+            db,
             repository: Arc::new(repository),
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             max_concurrent,
@@ -537,10 +578,12 @@ impl ScanQueue {
 
     /// Create a scan queue with custom repository
     pub fn with_repository(
+        db: Arc<dyn DatabaseAdapter>,
         repository: Arc<dyn ScanQueueRepository>,
         max_concurrent: usize,
     ) -> Self {
         Self {
+            db,
             repository,
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             max_concurrent,
@@ -556,7 +599,7 @@ impl ScanQueue {
             "Enqueuing work item"
         );
 
-        self.repository.insert(&item).await?;
+        self.repository.insert(self.db.as_ref(), &item).await?;
         Ok(item.id)
     }
 
@@ -570,9 +613,9 @@ impl ScanQueue {
             .map_err(|_| SyncError::Provider("Semaphore closed".to_string()))?;
 
         // Get next pending item
-        if let Some(mut item) = self.repository.get_next_pending().await? {
+        if let Some(mut item) = self.repository.get_next_pending(self.db.as_ref()).await? {
             item.start_processing();
-            self.repository.update(&item).await?;
+            self.repository.update(self.db.as_ref(), &item).await?;
 
             debug!(
                 work_item_id = %item.id,
@@ -589,16 +632,16 @@ impl ScanQueue {
 
     /// Mark a work item as successfully completed
     pub async fn mark_complete(&self, item_id: WorkItemId) -> Result<()> {
-        let mut item =
-            self.repository
-                .find_by_id(item_id)
-                .await?
-                .ok_or_else(|| SyncError::JobNotFound {
-                    job_id: item_id.to_string(),
-                })?;
+        let mut item = self
+            .repository
+            .find_by_id(self.db.as_ref(), item_id)
+            .await?
+            .ok_or_else(|| SyncError::JobNotFound {
+                job_id: item_id.to_string(),
+            })?;
 
         item.complete();
-        self.repository.update(&item).await?;
+        self.repository.update(self.db.as_ref(), &item).await?;
 
         info!(
             work_item_id = %item_id,
@@ -614,18 +657,18 @@ impl ScanQueue {
         item_id: WorkItemId,
         error_message: Option<String>,
     ) -> Result<()> {
-        let mut item =
-            self.repository
-                .find_by_id(item_id)
-                .await?
-                .ok_or_else(|| SyncError::JobNotFound {
-                    job_id: item_id.to_string(),
-                })?;
+        let mut item = self
+            .repository
+            .find_by_id(self.db.as_ref(), item_id)
+            .await?
+            .ok_or_else(|| SyncError::JobNotFound {
+                job_id: item_id.to_string(),
+            })?;
 
         let will_retry = item.can_retry();
         let retry_count = item.retry_count;
         item.fail(error_message.clone());
-        self.repository.update(&item).await?;
+        self.repository.update(self.db.as_ref(), &item).await?;
 
         if will_retry {
             warn!(
@@ -650,26 +693,26 @@ impl ScanQueue {
 
     /// Get status of a work item
     pub async fn get_status(&self, item_id: WorkItemId) -> Result<Option<WorkItem>> {
-        self.repository.find_by_id(item_id).await
+        self.repository.find_by_id(self.db.as_ref(), item_id).await
     }
 
     /// Get queue statistics
     pub async fn stats(&self) -> Result<QueueStats> {
         let pending = self
             .repository
-            .count_by_status(WorkItemStatus::Pending)
+            .count_by_status(self.db.as_ref(), WorkItemStatus::Pending)
             .await?;
         let processing = self
             .repository
-            .count_by_status(WorkItemStatus::Processing)
+            .count_by_status(self.db.as_ref(), WorkItemStatus::Processing)
             .await?;
         let completed = self
             .repository
-            .count_by_status(WorkItemStatus::Completed)
+            .count_by_status(self.db.as_ref(), WorkItemStatus::Completed)
             .await?;
         let failed = self
             .repository
-            .count_by_status(WorkItemStatus::Failed)
+            .count_by_status(self.db.as_ref(), WorkItemStatus::Failed)
             .await?;
 
         Ok(QueueStats {
@@ -684,14 +727,14 @@ impl ScanQueue {
 
     /// Clean up completed items from the queue
     pub async fn cleanup_completed(&self) -> Result<u64> {
-        let deleted = self.repository.delete_completed().await?;
+        let deleted = self.repository.delete_completed(self.db.as_ref()).await?;
         info!(deleted_count = deleted, "Cleaned up completed work items");
         Ok(deleted)
     }
 
     /// Get all failed items for inspection
     pub async fn get_failed_items(&self) -> Result<Vec<WorkItem>> {
-        self.repository.get_failed_items().await
+        self.repository.get_failed_items(self.db.as_ref()).await
     }
 }
 
@@ -826,23 +869,27 @@ mod tests {
 
     #[core_async::test]
     async fn test_scan_queue_repository_init() {
+        use core_library::adapters::sqlite_native::SqliteAdapter;
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        let repo = SqliteScanQueueRepository::new(pool);
-        repo.initialize().await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
+        let repo = SqliteScanQueueRepository::new();
+        repo.initialize(db.as_ref()).await.unwrap();
     }
 
     #[core_async::test]
     async fn test_scan_queue_insert_and_find() {
+        use core_library::adapters::sqlite_native::SqliteAdapter;
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        let repo = SqliteScanQueueRepository::new(pool);
-        repo.initialize().await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
+        let repo = SqliteScanQueueRepository::new();
+        repo.initialize(db.as_ref()).await.unwrap();
 
         let item = WorkItem::new("file123".to_string(), "audio/mpeg".to_string());
         let item_id = item.id;
 
-        repo.insert(&item).await.unwrap();
+        repo.insert(db.as_ref(), &item).await.unwrap();
 
-        let found = repo.find_by_id(item_id).await.unwrap();
+        let found = repo.find_by_id(db.as_ref(), item_id).await.unwrap();
         assert!(found.is_some());
         let found = found.unwrap();
         assert_eq!(found.id, item_id);
@@ -851,9 +898,11 @@ mod tests {
 
     #[core_async::test]
     async fn test_scan_queue_priority_ordering() {
+        use core_library::adapters::sqlite_native::SqliteAdapter;
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        let repo = SqliteScanQueueRepository::new(pool);
-        repo.initialize().await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
+        let repo = SqliteScanQueueRepository::new();
+        repo.initialize(db.as_ref()).await.unwrap();
 
         // Insert items with different priorities
         let low =
@@ -866,19 +915,21 @@ mod tests {
         let high =
             WorkItem::with_priority("high".to_string(), "audio/mpeg".to_string(), Priority::High);
 
-        repo.insert(&low).await.unwrap();
-        repo.insert(&normal).await.unwrap();
-        repo.insert(&high).await.unwrap();
+        repo.insert(db.as_ref(), &low).await.unwrap();
+        repo.insert(db.as_ref(), &normal).await.unwrap();
+        repo.insert(db.as_ref(), &high).await.unwrap();
 
         // Should get high priority first
-        let next = repo.get_next_pending().await.unwrap().unwrap();
+        let next = repo.get_next_pending(db.as_ref()).await.unwrap().unwrap();
         assert_eq!(next.priority, Priority::High);
     }
 
     #[core_async::test]
     async fn test_scan_queue_enqueue_dequeue() {
+        use core_library::adapters::sqlite_native::SqliteAdapter;
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        let queue = ScanQueue::new(pool, 2).await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
+        let queue = ScanQueue::new(db, 2).await.unwrap();
 
         let item = WorkItem::new("file123".to_string(), "audio/mpeg".to_string());
         let item_id = queue.enqueue(item).await.unwrap();
@@ -892,8 +943,10 @@ mod tests {
 
     #[core_async::test]
     async fn test_scan_queue_mark_complete() {
+        use core_library::adapters::sqlite_native::SqliteAdapter;
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        let queue = ScanQueue::new(pool, 2).await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
+        let queue = ScanQueue::new(db, 2).await.unwrap();
 
         let item = WorkItem::new("file123".to_string(), "audio/mpeg".to_string());
         let item_id = queue.enqueue(item).await.unwrap();
@@ -907,8 +960,10 @@ mod tests {
 
     #[core_async::test]
     async fn test_scan_queue_mark_failed_with_retry() {
+        use core_library::adapters::sqlite_native::SqliteAdapter;
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        let queue = ScanQueue::new(pool, 2).await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
+        let queue = ScanQueue::new(db, 2).await.unwrap();
 
         let item = WorkItem::new("file123".to_string(), "audio/mpeg".to_string());
         let item_id = queue.enqueue(item).await.unwrap();
@@ -926,8 +981,10 @@ mod tests {
 
     #[core_async::test]
     async fn test_scan_queue_stats() {
+        use core_library::adapters::sqlite_native::SqliteAdapter;
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        let queue = ScanQueue::new(pool, 2).await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
+        let queue = ScanQueue::new(db, 2).await.unwrap();
 
         let item1 = WorkItem::new("file1".to_string(), "audio/mpeg".to_string());
         let item2 = WorkItem::new("file2".to_string(), "audio/mpeg".to_string());
@@ -943,8 +1000,10 @@ mod tests {
 
     #[core_async::test]
     async fn test_scan_queue_cleanup() {
+        use core_library::adapters::sqlite_native::SqliteAdapter;
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-        let queue = ScanQueue::new(pool, 2).await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(pool));
+        let queue = ScanQueue::new(db, 2).await.unwrap();
 
         let item = WorkItem::new("file123".to_string(), "audio/mpeg".to_string());
         let item_id = queue.enqueue(item).await.unwrap();

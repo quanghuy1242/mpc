@@ -67,6 +67,7 @@ use crate::{
     scan_queue::{ScanQueue, WorkItem},
     Result, SyncError,
 };
+use bridge_traits::database::DatabaseAdapter;
 use bridge_traits::{
     network::{NetworkMonitor, NetworkStatus, NetworkType},
     storage::{FileSystemAccess, RemoteFile, StorageProvider},
@@ -80,7 +81,6 @@ use core_library::repositories::{
 };
 use core_metadata::artwork::ArtworkService;
 use core_runtime::events::{CoreEvent, EventBus, SyncEvent};
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -204,8 +204,8 @@ pub struct SyncCoordinator {
     /// Storage providers by kind
     providers: Arc<RwLock<HashMap<ProviderKind, Arc<dyn StorageProvider>>>>,
 
-    /// Database connection pool
-    db_pool: SqlitePool,
+    /// Database adapter for cross-platform database access
+    db: Arc<dyn DatabaseAdapter>,
 
     /// Active sync jobs by profile
     active_syncs: Arc<Mutex<HashMap<ProfileId, ActiveSync>>>,
@@ -236,7 +236,7 @@ impl SyncCoordinator {
     /// * `event_bus` - Event bus for emitting sync progress events
     /// * `network_monitor` - Optional network monitor for connectivity checks
     /// * `file_system` - File system access bridge for temporary file storage
-    /// * `db_pool` - Database connection pool
+    /// * `db` - Database adapter for cross-platform database access
     ///
     /// # Example
     ///
@@ -250,7 +250,7 @@ impl SyncCoordinator {
     ///     event_bus,
     ///     Some(network_monitor),
     ///     file_system,
-    ///     db_pool,
+    ///     db,
     /// ).await?;
     /// ```
     pub async fn new(
@@ -259,27 +259,27 @@ impl SyncCoordinator {
         event_bus: Arc<EventBus>,
         network_monitor: Option<Arc<dyn NetworkMonitor>>,
         file_system: Arc<dyn FileSystemAccess>,
-        db_pool: SqlitePool,
+        db: Arc<dyn DatabaseAdapter>,
     ) -> Result<Self> {
         let scan_queue =
-            Arc::new(ScanQueue::new(db_pool.clone(), config.max_concurrent_downloads).await?);
+            Arc::new(ScanQueue::new(db.clone(), config.max_concurrent_downloads).await?);
 
         let conflict_resolver = Arc::new(ConflictResolver::new(
-            db_pool.clone(),
+            db.clone(),
             ConflictPolicy::KeepNewest,
         ));
 
-        let job_repository = Arc::new(SqliteSyncJobRepository::new(db_pool.clone()));
+        let job_repository = Arc::new(SqliteSyncJobRepository::new());
 
         // Initialize repositories for metadata processor
         let track_repository =
-            Arc::new(SqliteTrackRepository::new(db_pool.clone())) as Arc<dyn TrackRepository>;
+            Arc::new(SqliteTrackRepository::new(db.clone())) as Arc<dyn TrackRepository>;
         let artist_repository =
-            Arc::new(SqliteArtistRepository::new(db_pool.clone())) as Arc<dyn ArtistRepository>;
+            Arc::new(SqliteArtistRepository::new(db.clone())) as Arc<dyn ArtistRepository>;
         let album_repository =
-            Arc::new(SqliteAlbumRepository::new(db_pool.clone())) as Arc<dyn AlbumRepository>;
+            Arc::new(SqliteAlbumRepository::new(db.clone())) as Arc<dyn AlbumRepository>;
         let artwork_repository =
-            Arc::new(SqliteArtworkRepository::new(db_pool.clone())) as Arc<dyn ArtworkRepository>;
+            Arc::new(SqliteArtworkRepository::new(db.clone())) as Arc<dyn ArtworkRepository>;
 
         // Initialize artwork service (if artwork extraction is enabled)
         let artwork_service = if config.extract_artwork {
@@ -309,13 +309,13 @@ impl SyncCoordinator {
             album_repository,
             artwork_repository,
             artwork_service,
-            db_pool.clone(),
+            db.clone(),
         ));
 
         // Initialize conflict resolution orchestrator
         let conflict_resolution_orchestrator = Arc::new(ConflictResolutionOrchestrator::new(
             conflict_resolver.clone(),
-            db_pool.clone(),
+            db.clone(),
             event_bus.as_ref().clone(),
             ConflictPolicy::KeepNewest,
             false, // Soft delete by default (can be made configurable in future)
@@ -328,7 +328,7 @@ impl SyncCoordinator {
             network_monitor,
             file_system,
             providers: Arc::new(RwLock::new(HashMap::new())),
-            db_pool,
+            db,
             active_syncs: Arc::new(Mutex::new(HashMap::new())),
             scan_queue,
             conflict_resolver,
@@ -513,7 +513,7 @@ impl SyncCoordinator {
         let job_id = job.id;
 
         // Persist job
-        self.job_repository.insert(&job).await?;
+        self.job_repository.insert(self.db.as_ref(), &job).await?;
 
         // Create cancellation token
         let cancellation_token = CancellationToken::new();
@@ -576,7 +576,7 @@ impl SyncCoordinator {
             network_monitor: self.network_monitor.clone(),
             file_system: Arc::clone(&self.file_system),
             providers: Arc::clone(&self.providers),
-            db_pool: self.db_pool.clone(),
+            db: Arc::clone(&self.db),
             active_syncs: Arc::clone(&self.active_syncs),
             scan_queue: Arc::clone(&self.scan_queue),
             conflict_resolver: Arc::clone(&self.conflict_resolver),
@@ -611,9 +611,16 @@ impl SyncCoordinator {
                 error!("Sync job {} failed: {}", job_id, e);
 
                 // Update job status
-                if let Ok(Some(job)) = self.job_repository.find_by_id(&job_id).await {
+                if let Ok(Some(job)) = self
+                    .job_repository
+                    .find_by_id(self.db.as_ref(), &job_id)
+                    .await
+                {
                     if let Ok(failed_job) = job.fail(e.to_string(), None) {
-                        let _ = self.job_repository.update(&failed_job).await;
+                        let _ = self
+                            .job_repository
+                            .update(self.db.as_ref(), &failed_job)
+                            .await;
 
                         // Emit failed event
                         self.event_bus
@@ -633,11 +640,18 @@ impl SyncCoordinator {
                 error!("Sync job {} timed out", job_id);
 
                 // Update job status
-                if let Ok(Some(job)) = self.job_repository.find_by_id(&job_id).await {
+                if let Ok(Some(job)) = self
+                    .job_repository
+                    .find_by_id(self.db.as_ref(), &job_id)
+                    .await
+                {
                     let timeout_msg =
                         format!("Timeout after {} seconds", self.config.sync_timeout_secs);
                     if let Ok(failed_job) = job.fail(timeout_msg.clone(), None) {
-                        let _ = self.job_repository.update(&failed_job).await;
+                        let _ = self
+                            .job_repository
+                            .update(self.db.as_ref(), &failed_job)
+                            .await;
                     }
                 }
 
@@ -675,7 +689,7 @@ impl SyncCoordinator {
         // Get current job
         let mut job = self
             .job_repository
-            .find_by_id(&job_id)
+            .find_by_id(self.db.as_ref(), &job_id)
             .await?
             .ok_or_else(|| SyncError::JobNotFound {
                 job_id: job_id.to_string(),
@@ -708,7 +722,7 @@ impl SyncCoordinator {
                 0, // Total unknown during discovery
                 &format!("Discovered {} files", all_files.len()),
             )?;
-            self.job_repository.update(&job).await?;
+            self.job_repository.update(self.db.as_ref(), &job).await?;
 
             // Emit progress event
             self.event_bus
@@ -743,7 +757,9 @@ impl SyncCoordinator {
                 items_failed: 0,
             };
             let completed_job = job.complete(stats)?;
-            self.job_repository.update(&completed_job).await?;
+            self.job_repository
+                .update(self.db.as_ref(), &completed_job)
+                .await?;
             self.event_bus
                 .emit(CoreEvent::Sync(SyncEvent::Completed {
                     job_id: job_id.to_string(),
@@ -863,7 +879,7 @@ impl SyncCoordinator {
                             total_bytes_downloaded / (1024 * 1024)
                         ),
                     )?;
-                    self.job_repository.update(&job).await?;
+                    self.job_repository.update(self.db.as_ref(), &job).await?;
 
                     // Emit progress event every 10 items or at completion
                     if processed.is_multiple_of(10) || processed == total_items {
@@ -932,7 +948,9 @@ impl SyncCoordinator {
         };
 
         let completed_job = job.complete(stats)?;
-        self.job_repository.update(&completed_job).await?;
+        self.job_repository
+            .update(self.db.as_ref(), &completed_job)
+            .await?;
         let duration_secs = chrono::Utc::now().timestamp() - completed_job.started_at.unwrap_or(0);
 
         // Emit completion event
@@ -1031,9 +1049,15 @@ impl SyncCoordinator {
             sync.cancellation_token.cancel();
 
             // Update job status
-            if let Ok(Some(job)) = self.job_repository.find_by_id(&job_id).await {
+            if let Ok(Some(job)) = self
+                .job_repository
+                .find_by_id(self.db.as_ref(), &job_id)
+                .await
+            {
                 if let Ok(cancelled_job) = job.cancel() {
-                    self.job_repository.update(&cancelled_job).await?;
+                    self.job_repository
+                        .update(self.db.as_ref(), &cancelled_job)
+                        .await?;
                 }
             }
 
@@ -1076,7 +1100,7 @@ impl SyncCoordinator {
     /// ```
     pub async fn get_status(&self, job_id: SyncJobId) -> Result<SyncJob> {
         self.job_repository
-            .find_by_id(&job_id)
+            .find_by_id(self.db.as_ref(), &job_id)
             .await?
             .ok_or_else(|| SyncError::JobNotFound {
                 job_id: job_id.to_string(),
@@ -1104,7 +1128,11 @@ impl SyncCoordinator {
     /// ```
     pub async fn list_history(&self, provider: ProviderKind, limit: usize) -> Result<Vec<SyncJob>> {
         self.job_repository
-            .get_history(provider, limit.try_into().unwrap_or(u32::MAX))
+            .get_history(
+                self.db.as_ref(),
+                provider,
+                limit.try_into().unwrap_or(u32::MAX),
+            )
             .await
     }
 
@@ -1126,9 +1154,11 @@ impl SyncCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bridge_traits::database::DatabaseAdapter;
     use bridge_traits::error::BridgeError;
     use bytes::Bytes;
     use core_auth::AuthManager;
+    use core_library::adapters::sqlite_native::SqliteAdapter;
     use core_library::create_test_pool;
     use core_runtime::events::EventBus;
 
@@ -1166,8 +1196,10 @@ mod tests {
         }
     }
 
-    async fn setup_test_coordinator() -> (SyncCoordinator, Arc<AuthManager>, SqlitePool) {
+    async fn setup_test_coordinator(
+    ) -> (SyncCoordinator, Arc<AuthManager>, Arc<dyn DatabaseAdapter>) {
         let db_pool = create_test_pool().await.unwrap();
+        let db: Arc<dyn DatabaseAdapter> = Arc::new(SqliteAdapter::from_pool(db_pool.clone()));
 
         // Create auth manager
         let event_bus = Arc::new(EventBus::new(100));
@@ -1351,12 +1383,12 @@ mod tests {
             event_bus,
             None,
             file_system,
-            db_pool.clone(),
+            db.clone(),
         )
         .await
         .unwrap();
 
-        (coordinator, auth_manager, db_pool)
+        (coordinator, auth_manager, db)
     }
 
     #[core_async::test]

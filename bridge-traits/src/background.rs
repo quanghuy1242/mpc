@@ -2,10 +2,12 @@
 //!
 //! Provides platform-aware background task scheduling.
 
-use async_trait::async_trait;
 use std::time::Duration;
 
-use crate::error::Result;
+use crate::{
+    error::Result,
+    platform::{PlatformSend, PlatformSendSync},
+};
 
 /// Task execution constraints
 #[derive(Debug, Clone)]
@@ -99,8 +101,9 @@ pub enum TaskStatus {
 ///     Ok(())
 /// }
 /// ```
-#[async_trait]
-pub trait BackgroundExecutor: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait BackgroundExecutor: PlatformSendSync {
     /// Schedule a recurring task
     ///
     /// # Arguments
@@ -195,8 +198,9 @@ pub enum LifecycleState {
 ///     Ok(())
 /// }
 /// ```
-#[async_trait]
-pub trait LifecycleObserver: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait LifecycleObserver: PlatformSendSync {
     /// Get current lifecycle state
     async fn get_state(&self) -> Result<LifecycleState>;
 
@@ -205,8 +209,9 @@ pub trait LifecycleObserver: Send + Sync {
 }
 
 /// Stream of lifecycle state changes
-#[async_trait]
-pub trait LifecycleChangeStream: Send {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait LifecycleChangeStream: PlatformSend {
     /// Get the next lifecycle state update
     ///
     /// Returns `None` when the stream is closed.

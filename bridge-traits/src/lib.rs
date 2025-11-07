@@ -72,8 +72,10 @@
 //!
 //! ## Thread Safety
 //!
-//! All bridge traits require `Send + Sync` bounds to support safe concurrent usage
-//! across async tasks. Implementations must ensure thread safety.
+//! Bridge traits enforce `Send + Sync` on native targets to support safe concurrent
+//! usage across async tasks. On `wasm32`, those bounds are relaxed automatically
+//! because browser APIs cannot satisfy them; platform implementations remain single
+//! threaded in that environment.
 //!
 //! ## Examples
 //!
@@ -103,17 +105,23 @@
 //! ```
 
 pub mod background;
+pub mod database;
 pub mod error;
 pub mod http;
 pub mod network;
+pub mod platform;
 pub mod playback;
 pub mod storage;
 pub mod time;
 
 pub use error::BridgeError;
+pub use platform::{DynAsyncRead, DynAsyncWrite, PlatformSend, PlatformSendSync};
 
 // Re-export commonly used types
 pub use background::{BackgroundExecutor, LifecycleObserver, LifecycleState, TaskConstraints};
+pub use database::{
+    DatabaseAdapter, DatabaseConfig, DatabaseStatistics, QueryRow, QueryValue, TransactionId,
+};
 pub use http::{HttpClient, HttpMethod, HttpRequest, HttpResponse};
 pub use network::{NetworkInfo, NetworkMonitor, NetworkStatus, NetworkType};
 pub use playback::{

@@ -2,13 +2,15 @@
 //!
 //! Provides async HTTP operations with OAuth, retry logic, and TLS support.
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::error::{BridgeError, Result};
+use crate::{
+    error::{BridgeError, Result},
+    platform::{DynAsyncRead, PlatformSendSync},
+};
 
 /// HTTP method types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,8 +158,9 @@ impl Default for RetryPolicy {
 ///     response.text()
 /// }
 /// ```
-#[async_trait]
-pub trait HttpClient: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait HttpClient: PlatformSendSync {
     /// Execute an HTTP request
     ///
     /// # Errors
@@ -184,10 +187,7 @@ pub trait HttpClient: Send + Sync {
     /// Download a file as a stream of bytes
     ///
     /// This is useful for large files that should not be loaded entirely into memory.
-    async fn download_stream(
-        &self,
-        url: String,
-    ) -> Result<Box<dyn core_async::io::AsyncRead + Send + Unpin>>;
+    async fn download_stream(&self, url: String) -> Result<Box<DynAsyncRead>>;
 
     /// Check network connectivity
     async fn is_connected(&self) -> bool {

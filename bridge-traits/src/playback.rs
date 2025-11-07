@@ -6,8 +6,10 @@
 //! provide concrete implementations that satisfy their platform constraints
 //! (desktop, mobile, web).
 
-use crate::error::{BridgeError, Result};
-use async_trait::async_trait;
+use crate::{
+    error::{BridgeError, Result},
+    platform::{PlatformSend, PlatformSendSync},
+};
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -266,8 +268,9 @@ impl ProbeResult {
 }
 
 /// Trait for platform-specific playback adapters that drive native audio engines.
-#[async_trait]
-pub trait PlaybackAdapter: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait PlaybackAdapter: PlatformSendSync {
     /// Prepare a playback session. Implementations may allocate native resources,
     /// configure routes, or queue buffers. Returns a session identifier that
     /// subsequent control calls reference.
@@ -299,8 +302,9 @@ pub trait PlaybackAdapter: Send + Sync {
 }
 
 /// Trait for decoder implementations capable of producing PCM frames from an audio source.
-#[async_trait]
-pub trait AudioDecoder: Send {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait AudioDecoder: PlatformSend {
     /// Inspect the underlying stream and return format metadata.
     async fn probe(&mut self) -> Result<ProbeResult>;
 

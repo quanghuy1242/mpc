@@ -43,11 +43,11 @@ async fn setup_test_db() -> sqlx::SqlitePool {
 async fn create_enrichment_service() -> (EnrichmentService, sqlx::SqlitePool) {
     let pool = setup_test_db().await;
 
-    let artist_repo = Arc::new(SqliteArtistRepository::new(pool.clone()));
-    let album_repo = Arc::new(SqliteAlbumRepository::new(pool.clone()));
-    let track_repo = Arc::new(SqliteTrackRepository::new(pool.clone()));
-    let artwork_repo = Arc::new(SqliteArtworkRepository::new(pool.clone()));
-    let lyrics_repo = Arc::new(SqliteLyricsRepository::new(pool.clone()));
+    let artist_repo = Arc::new(SqliteArtistRepository::from_pool(pool.clone()));
+    let album_repo = Arc::new(SqliteAlbumRepository::from_pool(pool.clone()));
+    let track_repo = Arc::new(SqliteTrackRepository::from_pool(pool.clone()));
+    let artwork_repo = Arc::new(SqliteArtworkRepository::from_pool(pool.clone()));
+    let lyrics_repo = Arc::new(SqliteLyricsRepository::from_pool(pool.clone()));
 
     let artwork_service = Arc::new(ArtworkService::new(artwork_repo, 200 * 1024 * 1024));
     let lyrics_service = Arc::new(LyricsService::without_providers(lyrics_repo));
@@ -76,7 +76,7 @@ async fn create_test_artist(pool: &sqlx::SqlitePool, id: &str, name: &str) -> Ar
         updated_at: 1000000,
     };
 
-    let repo = SqliteArtistRepository::new(pool.clone());
+    let repo = SqliteArtistRepository::from_pool(pool.clone());
     repo.insert(&artist).await.unwrap();
 
     artist
@@ -103,7 +103,7 @@ async fn create_test_album(
         updated_at: 1000000,
     };
 
-    let repo = SqliteAlbumRepository::new(pool.clone());
+    let repo = SqliteAlbumRepository::from_pool(pool.clone());
     repo.insert(&album).await.unwrap();
 
     album
@@ -145,7 +145,7 @@ async fn create_test_track(
         provider_modified_at: None,
     };
 
-    let repo = SqliteTrackRepository::new(pool.clone());
+    let repo = SqliteTrackRepository::from_pool(pool.clone());
     repo.insert(&track).await.unwrap();
 
     track

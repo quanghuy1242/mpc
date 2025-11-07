@@ -985,7 +985,7 @@ mod tests {
 
         async fn begin_transaction(
             &self,
-        ) -> std::result::Result<Box<dyn SettingsTransaction + Send>, BridgeError> {
+        ) -> std::result::Result<Box<dyn SettingsTransaction>, BridgeError> {
             Ok(Box::new(MockTransaction))
         }
     }
@@ -1090,7 +1090,10 @@ mod tests {
         }
 
         drop(config);
-        let _ = core_async::fs::remove_dir_all(&base_dir).await;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = core_async::fs::remove_dir_all(&base_dir).await;
+        }
     }
 
     #[test]

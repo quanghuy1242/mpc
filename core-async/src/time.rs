@@ -50,8 +50,6 @@ pub use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(target_arch = "wasm32")]
 use std::pin::Pin;
-#[cfg(target_arch = "wasm32")]
-use std::task::{Context, Poll};
 
 #[cfg(target_arch = "wasm32")]
 /// Sleeps for the specified duration.

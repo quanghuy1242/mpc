@@ -3,6 +3,7 @@
 //! This module contains rich domain models with validation and database mapping.
 
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use sqlx::FromRow;
 use std::fmt;
 use uuid::Uuid;
@@ -12,8 +13,9 @@ use uuid::Uuid;
 // =============================================================================
 
 /// Unique identifier for a track
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(sqlx::Type))]
+#[cfg_attr(not(target_arch = "wasm32"), sqlx(transparent))]
 pub struct TrackId(pub Uuid);
 
 impl TrackId {
@@ -39,8 +41,9 @@ impl fmt::Display for TrackId {
 }
 
 /// Unique identifier for an album
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(sqlx::Type))]
+#[cfg_attr(not(target_arch = "wasm32"), sqlx(transparent))]
 pub struct AlbumId(pub Uuid);
 
 impl AlbumId {
@@ -66,8 +69,9 @@ impl fmt::Display for AlbumId {
 }
 
 /// Unique identifier for an artist
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(sqlx::Type))]
+#[cfg_attr(not(target_arch = "wasm32"), sqlx(transparent))]
 pub struct ArtistId(pub Uuid);
 
 impl ArtistId {
@@ -93,8 +97,9 @@ impl fmt::Display for ArtistId {
 }
 
 /// Unique identifier for a playlist
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(sqlx::Type))]
+#[cfg_attr(not(target_arch = "wasm32"), sqlx(transparent))]
 pub struct PlaylistId(pub Uuid);
 
 impl PlaylistId {
@@ -124,7 +129,8 @@ impl fmt::Display for PlaylistId {
 // =============================================================================
 
 /// Music track with complete metadata
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(FromRow))]
 pub struct Track {
     /// Unique identifier
     pub id: String,
@@ -225,7 +231,8 @@ impl Track {
 }
 
 /// Album with metadata
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(FromRow))]
 pub struct Album {
     /// Unique identifier
     pub id: String,
@@ -295,7 +302,8 @@ impl Album {
 }
 
 /// Artist with metadata
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(FromRow))]
 pub struct Artist {
     /// Unique identifier
     pub id: String,
@@ -346,7 +354,8 @@ impl Artist {
 }
 
 /// Playlist with tracks
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(FromRow))]
 pub struct Playlist {
     /// Unique identifier
     pub id: String,
@@ -440,7 +449,8 @@ impl Playlist {
 }
 
 /// Folder in provider storage
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(FromRow))]
 pub struct Folder {
     /// Unique identifier
     pub id: String,
@@ -500,7 +510,8 @@ impl Folder {
 }
 
 /// Artwork/cover image
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(FromRow))]
 pub struct Artwork {
     /// Unique identifier
     pub id: String,
@@ -573,7 +584,8 @@ impl Artwork {
 }
 
 /// Track lyrics
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(FromRow))]
 pub struct Lyrics {
     /// Track this lyrics belongs to
     pub track_id: String,

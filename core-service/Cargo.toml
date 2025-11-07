@@ -12,10 +12,9 @@ core-library = { path = "../core-library" }
 core-metadata = { path = "../core-metadata" }
 core-playback = { path = "../core-playback" }
 bridge-traits = { path = "../bridge-traits" }
-bridge-desktop = { path = "../bridge-desktop", optional = true }
 
-provider-google-drive = { path = "../provider-google-drive" }
-provider-onedrive = { path = "../provider-onedrive" }
+provider-google-drive = { path = "../provider-google-drive", optional = true }
+provider-onedrive = { path = "../provider-onedrive", optional = true }
 
 core-async = { path = "../core-async" }
 async-trait = { workspace = true }
@@ -31,12 +30,23 @@ wasm-bindgen = { workspace = true, optional = true }
 
 [features]
 default = ["desktop-shims"]
-desktop-shims = ["bridge-desktop", "core-runtime/desktop-shims"]
+desktop-shims = [
+    "dep:bridge-desktop",
+    "dep:provider-google-drive",
+    "dep:provider-onedrive",
+    "core-runtime/desktop-shims",
+]
 ffi = ["uniffi"]
-wasm = ["wasm-bindgen"]
+wasm = ["wasm-bindgen", "dep:bridge-wasm"]
 lyrics = ["core-metadata/lyrics"]
 artwork-remote = ["core-metadata/artwork-remote"]
 offline-cache = ["core-playback/offline-cache"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bridge-desktop = { path = "../bridge-desktop", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bridge-wasm = { path = "../bridge-wasm", optional = true }
 
 [dev-dependencies]
 mockall = { workspace = true }

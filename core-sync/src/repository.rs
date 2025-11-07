@@ -14,83 +14,110 @@ use crate::{
     Result, SyncError, SyncJob, SyncJobId, SyncJobStats, SyncProgress, SyncStatus, SyncType,
 };
 use async_trait::async_trait;
+use bridge_traits::{
+    database::{DatabaseAdapter, QueryRow, QueryValue},
+    platform::PlatformSendSync,
+};
 use core_auth::ProviderKind;
-use sqlx::{FromRow, SqlitePool};
 
 // ============================================================================
 // Repository Trait
 // ============================================================================
 
 /// Repository trait for sync job persistence
-#[async_trait]
-pub trait SyncJobRepository: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SyncJobRepository: PlatformSendSync {
     /// Create or insert a new sync job
     ///
     /// # Errors
     ///
     /// Returns an error if the database operation fails
-    async fn insert(&self, job: &SyncJob) -> Result<()>;
+    async fn insert(&self, db: &dyn DatabaseAdapter, job: &SyncJob) -> Result<()>;
 
     /// Update an existing sync job
     ///
     /// # Errors
     ///
     /// Returns an error if the job doesn't exist or the database operation fails
-    async fn update(&self, job: &SyncJob) -> Result<()>;
+    async fn update(&self, db: &dyn DatabaseAdapter, job: &SyncJob) -> Result<()>;
 
     /// Find a sync job by ID
     ///
     /// # Errors
     ///
     /// Returns an error if the database operation fails
-    async fn find_by_id(&self, id: &SyncJobId) -> Result<Option<SyncJob>>;
+    async fn find_by_id(&self, db: &dyn DatabaseAdapter, id: &SyncJobId)
+        -> Result<Option<SyncJob>>;
 
     /// Get all sync jobs for a provider
     ///
     /// # Errors
     ///
     /// Returns an error if the database operation fails
-    async fn find_by_provider(&self, provider: ProviderKind) -> Result<Vec<SyncJob>>;
+    async fn find_by_provider(
+        &self,
+        db: &dyn DatabaseAdapter,
+        provider: ProviderKind,
+    ) -> Result<Vec<SyncJob>>;
 
     /// Get sync jobs by status
     ///
     /// # Errors
     ///
     /// Returns an error if the database operation fails
-    async fn find_by_status(&self, status: SyncStatus) -> Result<Vec<SyncJob>>;
+    async fn find_by_status(
+        &self,
+        db: &dyn DatabaseAdapter,
+        status: SyncStatus,
+    ) -> Result<Vec<SyncJob>>;
 
     /// Get the most recent sync job for a provider
     ///
     /// # Errors
     ///
     /// Returns an error if the database operation fails
-    async fn find_latest_by_provider(&self, provider: ProviderKind) -> Result<Option<SyncJob>>;
+    async fn find_latest_by_provider(
+        &self,
+        db: &dyn DatabaseAdapter,
+        provider: ProviderKind,
+    ) -> Result<Option<SyncJob>>;
 
     /// Get sync job history for a provider (most recent first)
     ///
     /// # Arguments
     ///
+    /// * `db` - Database adapter
     /// * `provider` - The provider to get history for
     /// * `limit` - Maximum number of jobs to return
     ///
     /// # Errors
     ///
     /// Returns an error if the database operation fails
-    async fn get_history(&self, provider: ProviderKind, limit: u32) -> Result<Vec<SyncJob>>;
+    async fn get_history(
+        &self,
+        db: &dyn DatabaseAdapter,
+        provider: ProviderKind,
+        limit: u32,
+    ) -> Result<Vec<SyncJob>>;
 
     /// Delete a sync job
     ///
     /// # Errors
     ///
     /// Returns an error if the database operation fails
-    async fn delete(&self, id: &SyncJobId) -> Result<()>;
+    async fn delete(&self, db: &dyn DatabaseAdapter, id: &SyncJobId) -> Result<()>;
 
     /// Check if there's an active (pending or running) sync for a provider
     ///
     /// # Errors
     ///
     /// Returns an error if the database operation fails
-    async fn has_active_sync(&self, provider: ProviderKind) -> Result<bool>;
+    async fn has_active_sync(
+        &self,
+        db: &dyn DatabaseAdapter,
+        provider: ProviderKind,
+    ) -> Result<bool>;
 }
 
 // ============================================================================
@@ -98,96 +125,147 @@ pub trait SyncJobRepository: Send + Sync {
 // ============================================================================
 
 /// SQLite implementation of SyncJobRepository
-pub struct SqliteSyncJobRepository {
-    pool: SqlitePool,
-}
+///
+/// Uses DatabaseAdapter for platform-agnostic database operations
+pub struct SqliteSyncJobRepository;
 
 impl SqliteSyncJobRepository {
     /// Create a new SQLite sync job repository
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new() -> Self {
+        Self
     }
 }
 
-/// Database row representation of a sync job
-#[derive(Debug, FromRow)]
-struct SyncJobRow {
-    id: String,
-    provider_id: String,
-    status: String,
-    sync_type: String,
-    items_discovered: i64,
-    items_processed: i64,
-    items_failed: i64,
-    items_added: i64,
-    items_updated: i64,
-    items_deleted: i64,
-    error_message: Option<String>,
-    error_details: Option<String>,
-    cursor: Option<String>,
-    started_at: Option<i64>,
-    completed_at: Option<i64>,
-    created_at: i64,
+impl Default for SqliteSyncJobRepository {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-impl TryFrom<SyncJobRow> for SyncJob {
-    type Error = SyncError;
+// ============================================================================
+// Helper Functions for Row Parsing
+// ============================================================================
 
-    fn try_from(row: SyncJobRow) -> Result<Self> {
-        let provider_id = ProviderKind::parse(&row.provider_id).ok_or_else(|| {
-            SyncError::Database(format!("Invalid provider_id: {}", row.provider_id))
-        })?;
+/// Parse a QueryRow into a SyncJob
+fn row_to_sync_job(row: &QueryRow) -> Result<SyncJob> {
+    let provider_id_str = get_string(row, "provider_id")?;
+    let provider_id = ProviderKind::parse(&provider_id_str)
+        .ok_or_else(|| SyncError::Database(format!("Invalid provider_id: {}", provider_id_str)))?;
 
-        let status: SyncStatus = row.status.parse()?;
-        let sync_type: SyncType = row.sync_type.parse()?;
+    let status_str = get_string(row, "status")?;
+    let status: SyncStatus = status_str.parse()?;
 
-        // Calculate progress percentage
-        let percent = if row.items_discovered > 0 {
-            ((row.items_processed as f64 / row.items_discovered as f64) * 100.0).min(100.0) as u8
-        } else {
-            0
-        };
+    let sync_type_str = get_string(row, "sync_type")?;
+    let sync_type: SyncType = sync_type_str.parse()?;
 
-        let progress = SyncProgress {
-            items_discovered: row.items_discovered as u64,
-            items_processed: row.items_processed as u64,
-            items_failed: row.items_failed as u64,
-            percent,
-            phase: status.as_str().to_string(),
-        };
+    let items_discovered = get_i64(row, "items_discovered")? as u64;
+    let items_processed = get_i64(row, "items_processed")? as u64;
+    let items_failed = get_i64(row, "items_failed")? as u64;
 
-        let stats = if status == SyncStatus::Completed {
-            Some(SyncJobStats {
-                items_added: row.items_added as u64,
-                items_updated: row.items_updated as u64,
-                items_deleted: row.items_deleted as u64,
-                items_failed: row.items_failed as u64,
-            })
-        } else {
-            None
-        };
+    // Calculate progress percentage
+    let percent = if items_discovered > 0 {
+        ((items_processed as f64 / items_discovered as f64) * 100.0).min(100.0) as u8
+    } else {
+        0
+    };
 
-        Ok(SyncJob {
-            id: SyncJobId::from_string(&row.id)?,
-            provider_id,
-            status,
-            sync_type,
-            progress,
-            stats,
-            cursor: row.cursor,
-            error_message: row.error_message,
-            error_details: row.error_details,
-            created_at: row.created_at,
-            started_at: row.started_at,
-            completed_at: row.completed_at,
+    let progress = SyncProgress {
+        items_discovered,
+        items_processed,
+        items_failed,
+        percent,
+        phase: status.as_str().to_string(),
+    };
+
+    let stats = if status == SyncStatus::Completed {
+        Some(SyncJobStats {
+            items_added: get_i64(row, "items_added")? as u64,
+            items_updated: get_i64(row, "items_updated")? as u64,
+            items_deleted: get_i64(row, "items_deleted")? as u64,
+            items_failed,
         })
-    }
+    } else {
+        None
+    };
+
+    Ok(SyncJob {
+        id: SyncJobId::from_string(&get_string(row, "id")?)?,
+        provider_id,
+        status,
+        sync_type,
+        progress,
+        stats,
+        cursor: get_optional_string(row, "cursor")?,
+        error_message: get_optional_string(row, "error_message")?,
+        error_details: get_optional_string(row, "error_details")?,
+        created_at: get_i64(row, "created_at")?,
+        started_at: get_optional_i64(row, "started_at")?,
+        completed_at: get_optional_i64(row, "completed_at")?,
+    })
 }
 
-#[async_trait]
+fn get_string(row: &QueryRow, key: &str) -> Result<String> {
+    row.get(key)
+        .and_then(|value| value.as_string())
+        .ok_or_else(|| SyncError::Database(format!("Missing column: {}", key)))
+}
+
+fn get_optional_string(row: &QueryRow, key: &str) -> Result<Option<String>> {
+    Ok(match row.get(key) {
+        Some(QueryValue::Null) | None => None,
+        Some(value) => Some(
+            value
+                .as_string()
+                .ok_or_else(|| SyncError::Database(format!("Invalid type for column: {}", key)))?,
+        ),
+    })
+}
+
+fn get_i64(row: &QueryRow, key: &str) -> Result<i64> {
+    row.get(key)
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| SyncError::Database(format!("Missing column: {}", key)))
+}
+
+fn get_optional_i64(row: &QueryRow, key: &str) -> Result<Option<i64>> {
+    Ok(match row.get(key) {
+        Some(QueryValue::Null) | None => None,
+        Some(value) => Some(
+            value
+                .as_i64()
+                .ok_or_else(|| SyncError::Database(format!("Invalid type for column: {}", key)))?,
+        ),
+    })
+}
+
+fn opt_text(value: &Option<String>) -> QueryValue {
+    value
+        .as_ref()
+        .map(|v| QueryValue::Text(v.clone()))
+        .unwrap_or(QueryValue::Null)
+}
+
+fn opt_i64(value: Option<i64>) -> QueryValue {
+    value.map(QueryValue::Integer).unwrap_or(QueryValue::Null)
+}
+
+// ============================================================================
+// Repository Implementation
+// ============================================================================
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl SyncJobRepository for SqliteSyncJobRepository {
-    async fn insert(&self, job: &SyncJob) -> Result<()> {
-        sqlx::query(
+    async fn insert(&self, db: &dyn DatabaseAdapter, job: &SyncJob) -> Result<()> {
+        let items_failed = job
+            .stats
+            .as_ref()
+            .map_or(job.progress.items_failed, |s| s.items_failed);
+        let items_added = job.stats.as_ref().map_or(0, |s| s.items_added);
+        let items_updated = job.stats.as_ref().map_or(0, |s| s.items_updated);
+        let items_deleted = job.stats.as_ref().map_or(0, |s| s.items_deleted);
+
+        db.execute(
             r#"
             INSERT INTO sync_jobs (
                 id, provider_id, status, sync_type,
@@ -197,38 +275,43 @@ impl SyncJobRepository for SqliteSyncJobRepository {
                 started_at, completed_at, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
+            &[
+                QueryValue::Text(job.id.as_str().to_string()),
+                QueryValue::Text(job.provider_id.as_str().to_string()),
+                QueryValue::Text(job.status.as_str().to_string()),
+                QueryValue::Text(job.sync_type.as_str().to_string()),
+                QueryValue::Integer(job.progress.items_discovered as i64),
+                QueryValue::Integer(job.progress.items_processed as i64),
+                QueryValue::Integer(items_failed as i64),
+                QueryValue::Integer(items_added as i64),
+                QueryValue::Integer(items_updated as i64),
+                QueryValue::Integer(items_deleted as i64),
+                opt_text(&job.error_message),
+                opt_text(&job.error_details),
+                opt_text(&job.cursor),
+                opt_i64(job.started_at),
+                opt_i64(job.completed_at),
+                QueryValue::Integer(job.created_at),
+            ],
         )
-        .bind(job.id.as_str())
-        .bind(job.provider_id.as_str())
-        .bind(job.status.as_str())
-        .bind(job.sync_type.as_str())
-        .bind(job.progress.items_discovered as i64)
-        .bind(job.progress.items_processed as i64)
-        // Use stats.items_failed if available (for completed jobs), otherwise use progress.items_failed
-        .bind(
-            job.stats
-                .as_ref()
-                .map_or(job.progress.items_failed as i64, |s| s.items_failed as i64),
-        )
-        .bind(job.stats.as_ref().map_or(0, |s| s.items_added as i64))
-        .bind(job.stats.as_ref().map_or(0, |s| s.items_updated as i64))
-        .bind(job.stats.as_ref().map_or(0, |s| s.items_deleted as i64))
-        .bind(&job.error_message)
-        .bind(&job.error_details)
-        .bind(&job.cursor)
-        .bind(job.started_at)
-        .bind(job.completed_at)
-        .bind(job.created_at)
-        .execute(&self.pool)
         .await
         .map_err(|e| SyncError::Database(e.to_string()))?;
 
         Ok(())
     }
 
-    async fn update(&self, job: &SyncJob) -> Result<()> {
-        let result = sqlx::query(
-            r#"
+    async fn update(&self, db: &dyn DatabaseAdapter, job: &SyncJob) -> Result<()> {
+        let items_failed = job
+            .stats
+            .as_ref()
+            .map_or(job.progress.items_failed, |s| s.items_failed);
+        let items_added = job.stats.as_ref().map_or(0, |s| s.items_added);
+        let items_updated = job.stats.as_ref().map_or(0, |s| s.items_updated);
+        let items_deleted = job.stats.as_ref().map_or(0, |s| s.items_deleted);
+
+        let affected = db
+            .execute(
+                r#"
             UPDATE sync_jobs SET
                 status = ?,
                 items_discovered = ?,
@@ -244,30 +327,26 @@ impl SyncJobRepository for SqliteSyncJobRepository {
                 completed_at = ?
             WHERE id = ?
             "#,
-        )
-        .bind(job.status.as_str())
-        .bind(job.progress.items_discovered as i64)
-        .bind(job.progress.items_processed as i64)
-        // Use stats.items_failed if available (for completed jobs), otherwise use progress.items_failed
-        .bind(
-            job.stats
-                .as_ref()
-                .map_or(job.progress.items_failed as i64, |s| s.items_failed as i64),
-        )
-        .bind(job.stats.as_ref().map_or(0, |s| s.items_added as i64))
-        .bind(job.stats.as_ref().map_or(0, |s| s.items_updated as i64))
-        .bind(job.stats.as_ref().map_or(0, |s| s.items_deleted as i64))
-        .bind(&job.error_message)
-        .bind(&job.error_details)
-        .bind(&job.cursor)
-        .bind(job.started_at)
-        .bind(job.completed_at)
-        .bind(job.id.as_str())
-        .execute(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[
+                    QueryValue::Text(job.status.as_str().to_string()),
+                    QueryValue::Integer(job.progress.items_discovered as i64),
+                    QueryValue::Integer(job.progress.items_processed as i64),
+                    QueryValue::Integer(items_failed as i64),
+                    QueryValue::Integer(items_added as i64),
+                    QueryValue::Integer(items_updated as i64),
+                    QueryValue::Integer(items_deleted as i64),
+                    opt_text(&job.error_message),
+                    opt_text(&job.error_details),
+                    opt_text(&job.cursor),
+                    opt_i64(job.started_at),
+                    opt_i64(job.completed_at),
+                    QueryValue::Text(job.id.as_str().to_string()),
+                ],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        if result.rows_affected() == 0 {
+        if affected == 0 {
             return Err(SyncError::JobNotFound {
                 job_id: job.id.to_string(),
             });
@@ -276,9 +355,14 @@ impl SyncJobRepository for SqliteSyncJobRepository {
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &SyncJobId) -> Result<Option<SyncJob>> {
-        let row = sqlx::query_as::<_, SyncJobRow>(
-            r#"
+    async fn find_by_id(
+        &self,
+        db: &dyn DatabaseAdapter,
+        id: &SyncJobId,
+    ) -> Result<Option<SyncJob>> {
+        let row = db
+            .query_one_optional(
+                r#"
             SELECT id, provider_id, status, sync_type,
                    items_discovered, items_processed, items_failed,
                    items_added, items_updated, items_deleted,
@@ -287,18 +371,22 @@ impl SyncJobRepository for SqliteSyncJobRepository {
             FROM sync_jobs
             WHERE id = ?
             "#,
-        )
-        .bind(id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[QueryValue::Text(id.as_str().to_string())],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        row.map(SyncJob::try_from).transpose()
+        row.map(|r| row_to_sync_job(&r)).transpose()
     }
 
-    async fn find_by_provider(&self, provider: ProviderKind) -> Result<Vec<SyncJob>> {
-        let rows = sqlx::query_as::<_, SyncJobRow>(
-            r#"
+    async fn find_by_provider(
+        &self,
+        db: &dyn DatabaseAdapter,
+        provider: ProviderKind,
+    ) -> Result<Vec<SyncJob>> {
+        let rows = db
+            .query(
+                r#"
             SELECT id, provider_id, status, sync_type,
                    items_discovered, items_processed, items_failed,
                    items_added, items_updated, items_deleted,
@@ -308,20 +396,22 @@ impl SyncJobRepository for SqliteSyncJobRepository {
             WHERE provider_id = ?
             ORDER BY created_at DESC
             "#,
-        )
-        .bind(provider.as_str())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[QueryValue::Text(provider.as_str().to_string())],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        rows.into_iter()
-            .map(SyncJob::try_from)
-            .collect::<Result<Vec<_>>>()
+        rows.iter().map(row_to_sync_job).collect()
     }
 
-    async fn find_by_status(&self, status: SyncStatus) -> Result<Vec<SyncJob>> {
-        let rows = sqlx::query_as::<_, SyncJobRow>(
-            r#"
+    async fn find_by_status(
+        &self,
+        db: &dyn DatabaseAdapter,
+        status: SyncStatus,
+    ) -> Result<Vec<SyncJob>> {
+        let rows = db
+            .query(
+                r#"
             SELECT id, provider_id, status, sync_type,
                    items_discovered, items_processed, items_failed,
                    items_added, items_updated, items_deleted,
@@ -331,20 +421,22 @@ impl SyncJobRepository for SqliteSyncJobRepository {
             WHERE status = ?
             ORDER BY created_at DESC
             "#,
-        )
-        .bind(status.as_str())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[QueryValue::Text(status.as_str().to_string())],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        rows.into_iter()
-            .map(SyncJob::try_from)
-            .collect::<Result<Vec<_>>>()
+        rows.iter().map(row_to_sync_job).collect()
     }
 
-    async fn find_latest_by_provider(&self, provider: ProviderKind) -> Result<Option<SyncJob>> {
-        let row = sqlx::query_as::<_, SyncJobRow>(
-            r#"
+    async fn find_latest_by_provider(
+        &self,
+        db: &dyn DatabaseAdapter,
+        provider: ProviderKind,
+    ) -> Result<Option<SyncJob>> {
+        let row = db
+            .query_one_optional(
+                r#"
             SELECT id, provider_id, status, sync_type,
                    items_discovered, items_processed, items_failed,
                    items_added, items_updated, items_deleted,
@@ -355,18 +447,23 @@ impl SyncJobRepository for SqliteSyncJobRepository {
             ORDER BY created_at DESC
             LIMIT 1
             "#,
-        )
-        .bind(provider.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[QueryValue::Text(provider.as_str().to_string())],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        row.map(SyncJob::try_from).transpose()
+        row.map(|r| row_to_sync_job(&r)).transpose()
     }
 
-    async fn get_history(&self, provider: ProviderKind, limit: u32) -> Result<Vec<SyncJob>> {
-        let rows = sqlx::query_as::<_, SyncJobRow>(
-            r#"
+    async fn get_history(
+        &self,
+        db: &dyn DatabaseAdapter,
+        provider: ProviderKind,
+        limit: u32,
+    ) -> Result<Vec<SyncJob>> {
+        let rows = db
+            .query(
+                r#"
             SELECT id, provider_id, status, sync_type,
                    items_discovered, items_processed, items_failed,
                    items_added, items_updated, items_deleted,
@@ -377,26 +474,27 @@ impl SyncJobRepository for SqliteSyncJobRepository {
             ORDER BY created_at DESC
             LIMIT ?
             "#,
-        )
-        .bind(provider.as_str())
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
-
-        rows.into_iter()
-            .map(SyncJob::try_from)
-            .collect::<Result<Vec<_>>>()
-    }
-
-    async fn delete(&self, id: &SyncJobId) -> Result<()> {
-        let result = sqlx::query("DELETE FROM sync_jobs WHERE id = ?")
-            .bind(id.as_str())
-            .execute(&self.pool)
+                &[
+                    QueryValue::Text(provider.as_str().to_string()),
+                    QueryValue::Integer(limit as i64),
+                ],
+            )
             .await
             .map_err(|e| SyncError::Database(e.to_string()))?;
 
-        if result.rows_affected() == 0 {
+        rows.iter().map(row_to_sync_job).collect()
+    }
+
+    async fn delete(&self, db: &dyn DatabaseAdapter, id: &SyncJobId) -> Result<()> {
+        let affected = db
+            .execute(
+                "DELETE FROM sync_jobs WHERE id = ?",
+                &[QueryValue::Text(id.as_str().to_string())],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
+
+        if affected == 0 {
             return Err(SyncError::JobNotFound {
                 job_id: id.to_string(),
             });
@@ -405,19 +503,24 @@ impl SyncJobRepository for SqliteSyncJobRepository {
         Ok(())
     }
 
-    async fn has_active_sync(&self, provider: ProviderKind) -> Result<bool> {
-        let count = sqlx::query_scalar::<_, i64>(
-            r#"
-            SELECT COUNT(*)
+    async fn has_active_sync(
+        &self,
+        db: &dyn DatabaseAdapter,
+        provider: ProviderKind,
+    ) -> Result<bool> {
+        let row = db
+            .query_one(
+                r#"
+            SELECT COUNT(*) as count
             FROM sync_jobs
             WHERE provider_id = ? AND status IN ('pending', 'running')
             "#,
-        )
-        .bind(provider.as_str())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| SyncError::Database(e.to_string()))?;
+                &[QueryValue::Text(provider.as_str().to_string())],
+            )
+            .await
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
+        let count = get_i64(&row, "count")?;
         Ok(count > 0)
     }
 }
@@ -430,10 +533,11 @@ impl SyncJobRepository for SqliteSyncJobRepository {
 mod tests {
     use super::*;
     use core_async::time::{sleep, Duration};
-    use sqlx::SqlitePool;
+    use core_library::adapters::sqlite_native::SqliteAdapter;
+    use std::sync::Arc;
 
-    async fn create_test_pool() -> SqlitePool {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
+    async fn create_test_adapter() -> Arc<dyn DatabaseAdapter> {
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
 
         // Create sync_jobs table
         sqlx::query(
@@ -468,20 +572,20 @@ mod tests {
         .await
         .unwrap();
 
-        pool
+        Arc::new(SqliteAdapter::from_pool(pool))
     }
 
     #[core_async::test]
     async fn test_insert_and_find_by_id() {
-        let pool = create_test_pool().await;
-        let repo = SqliteSyncJobRepository::new(pool);
+        let db = create_test_adapter().await;
+        let repo = SqliteSyncJobRepository::new();
 
         let job = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
         let job_id = job.id;
 
-        repo.insert(&job).await.unwrap();
+        repo.insert(db.as_ref(), &job).await.unwrap();
 
-        let found = repo.find_by_id(&job_id).await.unwrap();
+        let found = repo.find_by_id(db.as_ref(), &job_id).await.unwrap();
         assert!(found.is_some());
 
         let found_job = found.unwrap();
@@ -492,20 +596,24 @@ mod tests {
 
     #[core_async::test]
     async fn test_update_job() {
-        let pool = create_test_pool().await;
-        let repo = SqliteSyncJobRepository::new(pool);
+        let db = create_test_adapter().await;
+        let repo = SqliteSyncJobRepository::new();
 
         let job = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
         let job_id = job.id;
-        repo.insert(&job).await.unwrap();
+        repo.insert(db.as_ref(), &job).await.unwrap();
 
         // Start the job
         let mut job = job.start().unwrap();
         job.update_progress(50, 100, "Processing").unwrap();
-        repo.update(&job).await.unwrap();
+        repo.update(db.as_ref(), &job).await.unwrap();
 
         // Verify update
-        let found = repo.find_by_id(&job_id).await.unwrap().unwrap();
+        let found = repo
+            .find_by_id(db.as_ref(), &job_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.status, SyncStatus::Running);
         assert_eq!(found.progress.items_processed, 50);
         assert_eq!(found.progress.items_discovered, 100);
@@ -513,94 +621,103 @@ mod tests {
 
     #[core_async::test]
     async fn test_find_by_provider() {
-        let pool = create_test_pool().await;
-        let repo = SqliteSyncJobRepository::new(pool);
+        let db = create_test_adapter().await;
+        let repo = SqliteSyncJobRepository::new();
 
         // Insert multiple jobs
         let job1 = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
         let job2 = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Incremental);
         let job3 = SyncJob::new(ProviderKind::OneDrive, SyncType::Full);
 
-        repo.insert(&job1).await.unwrap();
-        repo.insert(&job2).await.unwrap();
-        repo.insert(&job3).await.unwrap();
+        repo.insert(db.as_ref(), &job1).await.unwrap();
+        repo.insert(db.as_ref(), &job2).await.unwrap();
+        repo.insert(db.as_ref(), &job3).await.unwrap();
 
         let google_jobs = repo
-            .find_by_provider(ProviderKind::GoogleDrive)
+            .find_by_provider(db.as_ref(), ProviderKind::GoogleDrive)
             .await
             .unwrap();
         assert_eq!(google_jobs.len(), 2);
 
-        let onedrive_jobs = repo.find_by_provider(ProviderKind::OneDrive).await.unwrap();
+        let onedrive_jobs = repo
+            .find_by_provider(db.as_ref(), ProviderKind::OneDrive)
+            .await
+            .unwrap();
         assert_eq!(onedrive_jobs.len(), 1);
     }
 
     #[core_async::test]
     async fn test_find_by_status() {
-        let pool = create_test_pool().await;
-        let repo = SqliteSyncJobRepository::new(pool);
+        let db = create_test_adapter().await;
+        let repo = SqliteSyncJobRepository::new();
 
         let job1 = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
         let job2 = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
         let job2 = job2.start().unwrap();
 
-        repo.insert(&job1).await.unwrap();
-        repo.insert(&job2).await.unwrap();
+        repo.insert(db.as_ref(), &job1).await.unwrap();
+        repo.insert(db.as_ref(), &job2).await.unwrap();
 
-        let pending = repo.find_by_status(SyncStatus::Pending).await.unwrap();
+        let pending = repo
+            .find_by_status(db.as_ref(), SyncStatus::Pending)
+            .await
+            .unwrap();
         assert_eq!(pending.len(), 1);
 
-        let running = repo.find_by_status(SyncStatus::Running).await.unwrap();
+        let running = repo
+            .find_by_status(db.as_ref(), SyncStatus::Running)
+            .await
+            .unwrap();
         assert_eq!(running.len(), 1);
     }
 
     #[core_async::test]
     async fn test_has_active_sync() {
-        let pool = create_test_pool().await;
-        let repo = SqliteSyncJobRepository::new(pool);
+        let db = create_test_adapter().await;
+        let repo = SqliteSyncJobRepository::new();
 
         // No active sync initially
         assert!(!repo
-            .has_active_sync(ProviderKind::GoogleDrive)
+            .has_active_sync(db.as_ref(), ProviderKind::GoogleDrive)
             .await
             .unwrap());
 
         // Add pending job
         let job = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
-        repo.insert(&job).await.unwrap();
+        repo.insert(db.as_ref(), &job).await.unwrap();
 
         assert!(repo
-            .has_active_sync(ProviderKind::GoogleDrive)
+            .has_active_sync(db.as_ref(), ProviderKind::GoogleDrive)
             .await
             .unwrap());
 
         // Complete the job
         let job = job.start().unwrap();
         let job = job.complete(SyncJobStats::new()).unwrap();
-        repo.update(&job).await.unwrap();
+        repo.update(db.as_ref(), &job).await.unwrap();
 
         // No longer active
         assert!(!repo
-            .has_active_sync(ProviderKind::GoogleDrive)
+            .has_active_sync(db.as_ref(), ProviderKind::GoogleDrive)
             .await
             .unwrap());
     }
 
     #[core_async::test]
     async fn test_get_history() {
-        let pool = create_test_pool().await;
-        let repo = SqliteSyncJobRepository::new(pool);
+        let db = create_test_adapter().await;
+        let repo = SqliteSyncJobRepository::new();
 
         // Create multiple jobs
         for _i in 0..5 {
             let job = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
-            repo.insert(&job).await.unwrap();
+            repo.insert(db.as_ref(), &job).await.unwrap();
             // Small delay to ensure different created_at times
             sleep(Duration::from_millis(10)).await;
         }
 
         let history = repo
-            .get_history(ProviderKind::GoogleDrive, 3)
+            .get_history(db.as_ref(), ProviderKind::GoogleDrive, 3)
             .await
             .unwrap();
         assert_eq!(history.len(), 3);
@@ -613,23 +730,31 @@ mod tests {
 
     #[core_async::test]
     async fn test_delete_job() {
-        let pool = create_test_pool().await;
-        let repo = SqliteSyncJobRepository::new(pool);
+        let db = create_test_adapter().await;
+        let repo = SqliteSyncJobRepository::new();
 
         let job = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
         let job_id = job.id;
 
-        repo.insert(&job).await.unwrap();
-        assert!(repo.find_by_id(&job_id).await.unwrap().is_some());
+        repo.insert(db.as_ref(), &job).await.unwrap();
+        assert!(repo
+            .find_by_id(db.as_ref(), &job_id)
+            .await
+            .unwrap()
+            .is_some());
 
-        repo.delete(&job_id).await.unwrap();
-        assert!(repo.find_by_id(&job_id).await.unwrap().is_none());
+        repo.delete(db.as_ref(), &job_id).await.unwrap();
+        assert!(repo
+            .find_by_id(db.as_ref(), &job_id)
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[core_async::test]
     async fn test_complete_job_with_stats() {
-        let pool = create_test_pool().await;
-        let repo = SqliteSyncJobRepository::new(pool);
+        let db = create_test_adapter().await;
+        let repo = SqliteSyncJobRepository::new();
 
         let job = SyncJob::new(ProviderKind::GoogleDrive, SyncType::Full);
         let job_id = job.id;
@@ -643,9 +768,13 @@ mod tests {
         };
 
         let job = job.complete(stats).unwrap();
-        repo.insert(&job).await.unwrap();
+        repo.insert(db.as_ref(), &job).await.unwrap();
 
-        let found = repo.find_by_id(&job_id).await.unwrap().unwrap();
+        let found = repo
+            .find_by_id(db.as_ref(), &job_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.status, SyncStatus::Completed);
         assert!(found.stats.is_some());
 

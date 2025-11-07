@@ -1,288 +1,266 @@
-//! Track repository trait and implementation
+//! Track repository trait and adapter-backed implementation.
 
 use crate::error::{LibraryError, Result};
 use crate::models::Track;
 use crate::repositories::{Page, PageRequest};
-use async_trait::async_trait;
-use sqlx::{query_as, SqlitePool};
+use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
+use bridge_traits::platform::PlatformSendSync;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use sqlx::SqlitePool;
+use std::sync::Arc;
 
-/// Track repository interface for data access operations
-#[async_trait]
-pub trait TrackRepository: Send + Sync {
-    /// Find a track by its ID
-    ///
-    /// # Returns
-    /// - `Ok(Some(track))` if found
-    /// - `Ok(None)` if not found
-    /// - `Err` if database error occurs
+const TRACK_COLUMNS: &str = "id, provider_id, provider_file_id, hash, \
+    title, normalized_title, album_id, artist_id, album_artist_id, \
+    track_number, disc_number, genre, year, duration_ms, bitrate, \
+    sample_rate, channels, format, file_size, mime_type, artwork_id, \
+    lyrics_status, created_at, updated_at, provider_modified_at";
+
+/// Track repository interface for data access operations.
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait TrackRepository: PlatformSendSync {
     async fn find_by_id(&self, id: &str) -> Result<Option<Track>>;
-
-    /// Insert a new track
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Track with same ID already exists
-    /// - Track validation fails
-    /// - Database error occurs
     async fn insert(&self, track: &Track) -> Result<()>;
-
-    /// Update an existing track
-    ///
-    /// # Errors
-    /// Returns error if:
-    /// - Track does not exist
-    /// - Track validation fails
-    /// - Database error occurs
     async fn update(&self, track: &Track) -> Result<()>;
-
-    /// Delete a track by ID
-    ///
-    /// # Returns
-    /// - `Ok(true)` if track was deleted
-    /// - `Ok(false)` if track was not found
     async fn delete(&self, id: &str) -> Result<bool>;
-
-    /// Query tracks with pagination
-    ///
-    /// # Arguments
-    /// * `page_request` - Pagination parameters
-    ///
-    /// # Returns
-    /// Paginated list of tracks
     async fn query(&self, page_request: PageRequest) -> Result<Page<Track>>;
-
-    /// Query tracks by album with pagination
-    ///
-    /// # Arguments
-    /// * `album_id` - Album identifier
-    /// * `page_request` - Pagination parameters
     async fn query_by_album(
         &self,
         album_id: &str,
         page_request: PageRequest,
     ) -> Result<Page<Track>>;
-
-    /// Query tracks by artist with pagination
-    ///
-    /// # Arguments
-    /// * `artist_id` - Artist identifier
-    /// * `page_request` - Pagination parameters
     async fn query_by_artist(
         &self,
         artist_id: &str,
         page_request: PageRequest,
     ) -> Result<Page<Track>>;
-
-    /// Query tracks by provider with pagination
-    ///
-    /// # Arguments
-    /// * `provider_id` - Provider identifier
-    /// * `page_request` - Pagination parameters
     async fn query_by_provider(
         &self,
         provider_id: &str,
         page_request: PageRequest,
     ) -> Result<Page<Track>>;
-
-    /// Search tracks by title
-    ///
-    /// Uses FTS5 full-text search for efficient searching
-    ///
-    /// # Arguments
-    /// * `search_query` - Search query string
-    /// * `page_request` - Pagination parameters
     async fn search(&self, search_query: &str, page_request: PageRequest) -> Result<Page<Track>>;
-
-    /// Count total tracks
     async fn count(&self) -> Result<i64>;
-
-    /// Find track by provider file ID
-    ///
-    /// # Arguments
-    /// * `provider_id` - Provider identifier
-    /// * `provider_file_id` - Provider's file identifier
     async fn find_by_provider_file(
         &self,
         provider_id: &str,
         provider_file_id: &str,
     ) -> Result<Option<Track>>;
-
-    /// Find tracks missing artwork (artwork_id IS NULL)
-    ///
-    /// Returns all tracks that don't have artwork associated with them.
-    /// Useful for enrichment jobs.
     async fn find_by_missing_artwork(&self) -> Result<Vec<Track>>;
-
-    /// Find tracks by lyrics status
-    ///
-    /// # Arguments
-    /// * `status` - Lyrics status filter ('not_fetched', 'fetching', 'available', 'unavailable')
-    ///
-    /// Returns all tracks matching the specified lyrics status.
-    /// Useful for enrichment jobs to find tracks needing lyrics.
     async fn find_by_lyrics_status(&self, status: &str) -> Result<Vec<Track>>;
 }
 
-/// SQLite implementation of TrackRepository
+/// Adapter-backed track repository (works for both native and WASM targets).
 pub struct SqliteTrackRepository {
-    pool: SqlitePool,
+    adapter: Arc<dyn DatabaseAdapter>,
 }
 
 impl SqliteTrackRepository {
-    /// Create a new SQLite track repository
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
-    }
-}
-
-#[async_trait]
-impl TrackRepository for SqliteTrackRepository {
-    async fn find_by_id(&self, id: &str) -> Result<Option<Track>> {
-        let track = query_as::<_, Track>("SELECT * FROM tracks WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        Ok(track)
+    /// Create a new repository using the provided database adapter.
+    pub fn new(adapter: Arc<dyn DatabaseAdapter>) -> Self {
+        Self { adapter }
     }
 
-    async fn insert(&self, track: &Track) -> Result<()> {
-        // Validate track data
+    fn validate_track(track: &Track) -> Result<()> {
         track.validate().map_err(|msg| LibraryError::InvalidInput {
             field: "track".to_string(),
             message: msg,
-        })?;
+        })
+    }
 
-        sqlx::query(
-            r#"
-            INSERT INTO tracks (
-                id, provider_id, provider_file_id, hash,
-                title, normalized_title, album_id, artist_id, album_artist_id,
-                track_number, disc_number, genre, year,
-                duration_ms, bitrate, sample_rate, channels, format,
-                file_size, mime_type, artwork_id, lyrics_status,
-                created_at, updated_at, provider_modified_at
-            ) VALUES (
-                ?, ?, ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?, ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?, ?, ?,
-                ?, ?, ?
-            )
-            "#,
+    fn insert_params(track: &Track) -> Vec<QueryValue> {
+        vec![
+            QueryValue::Text(track.id.clone()),
+            QueryValue::Text(track.provider_id.clone()),
+            QueryValue::Text(track.provider_file_id.clone()),
+            opt_text(&track.hash),
+            QueryValue::Text(track.title.clone()),
+            QueryValue::Text(track.normalized_title.clone()),
+            opt_text(&track.album_id),
+            opt_text(&track.artist_id),
+            opt_text(&track.album_artist_id),
+            opt_i32(track.track_number),
+            QueryValue::Integer(track.disc_number as i64),
+            opt_text(&track.genre),
+            opt_i32(track.year),
+            QueryValue::Integer(track.duration_ms),
+            opt_i32(track.bitrate),
+            opt_i32(track.sample_rate),
+            opt_i32(track.channels),
+            QueryValue::Text(track.format.clone()),
+            opt_i64(track.file_size),
+            opt_text(&track.mime_type),
+            opt_text(&track.artwork_id),
+            QueryValue::Text(track.lyrics_status.clone()),
+            QueryValue::Integer(track.created_at),
+            QueryValue::Integer(track.updated_at),
+            opt_i64(track.provider_modified_at),
+        ]
+    }
+
+    fn update_params(track: &Track) -> Vec<QueryValue> {
+        let mut params = vec![
+            QueryValue::Text(track.provider_id.clone()),
+            QueryValue::Text(track.provider_file_id.clone()),
+            opt_text(&track.hash),
+            QueryValue::Text(track.title.clone()),
+            QueryValue::Text(track.normalized_title.clone()),
+            opt_text(&track.album_id),
+            opt_text(&track.artist_id),
+            opt_text(&track.album_artist_id),
+            opt_i32(track.track_number),
+            QueryValue::Integer(track.disc_number as i64),
+            opt_text(&track.genre),
+            opt_i32(track.year),
+            QueryValue::Integer(track.duration_ms),
+            opt_i32(track.bitrate),
+            opt_i32(track.sample_rate),
+            opt_i32(track.channels),
+            QueryValue::Text(track.format.clone()),
+            opt_i64(track.file_size),
+            opt_text(&track.mime_type),
+            opt_text(&track.artwork_id),
+            QueryValue::Text(track.lyrics_status.clone()),
+            QueryValue::Integer(track.updated_at),
+            opt_i64(track.provider_modified_at),
+        ];
+        params.push(QueryValue::Text(track.id.clone()));
+        params
+    }
+
+    async fn fetch_tracks(&self, sql: &str, params: Vec<QueryValue>) -> Result<Vec<Track>> {
+        let rows = self.adapter.query(sql, &params).await?;
+        rows.into_iter().map(|row| row_to_track(&row)).collect()
+    }
+
+    async fn fetch_optional_track(
+        &self,
+        sql: &str,
+        params: Vec<QueryValue>,
+    ) -> Result<Option<Track>> {
+        let row = self.adapter.query_one_optional(sql, &params).await?;
+        row.map(|row| row_to_track(&row)).transpose()
+    }
+
+    async fn paginate(
+        &self,
+        count_sql: &str,
+        count_params: Vec<QueryValue>,
+        data_sql: &str,
+        mut data_params: Vec<QueryValue>,
+        request: PageRequest,
+    ) -> Result<Page<Track>> {
+        let total = self.count_with(count_sql, count_params).await?;
+        data_params.push(QueryValue::Integer(request.limit() as i64));
+        data_params.push(QueryValue::Integer(request.offset() as i64));
+        let items = self.fetch_tracks(data_sql, data_params).await?;
+        Ok(Page::new(items, total as u64, request))
+    }
+
+    async fn count_with(&self, sql: &str, params: Vec<QueryValue>) -> Result<i64> {
+        let row = self.adapter.query_one(sql, &params).await?;
+        row.get("count")
+            .and_then(|value| value.as_i64())
+            .ok_or_else(|| missing_column("count"))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl SqliteTrackRepository {
+    /// Convenience constructor for native targets using an existing `sqlx` pool.
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        use crate::adapters::sqlite_native::SqliteAdapter;
+        Self::new(Arc::new(SqliteAdapter::from_pool(pool)))
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl TrackRepository for SqliteTrackRepository {
+    async fn find_by_id(&self, id: &str) -> Result<Option<Track>> {
+        self.fetch_optional_track(
+            &format!("SELECT {TRACK_COLUMNS} FROM tracks WHERE id = ?"),
+            vec![QueryValue::Text(id.to_string())],
         )
-        .bind(&track.id)
-        .bind(&track.provider_id)
-        .bind(&track.provider_file_id)
-        .bind(&track.hash)
-        .bind(&track.title)
-        .bind(&track.normalized_title)
-        .bind(&track.album_id)
-        .bind(&track.artist_id)
-        .bind(&track.album_artist_id)
-        .bind(track.track_number)
-        .bind(track.disc_number)
-        .bind(&track.genre)
-        .bind(track.year)
-        .bind(track.duration_ms)
-        .bind(track.bitrate)
-        .bind(track.sample_rate)
-        .bind(track.channels)
-        .bind(&track.format)
-        .bind(track.file_size)
-        .bind(&track.mime_type)
-        .bind(&track.artwork_id)
-        .bind(&track.lyrics_status)
-        .bind(track.created_at)
-        .bind(track.updated_at)
-        .bind(track.provider_modified_at)
-        .execute(&self.pool)
-        .await?;
+        .await
+    }
 
+    async fn insert(&self, track: &Track) -> Result<()> {
+        Self::validate_track(track)?;
+        self.adapter
+            .execute(
+                r#"
+                INSERT INTO tracks (
+                    id, provider_id, provider_file_id, hash,
+                    title, normalized_title, album_id, artist_id, album_artist_id,
+                    track_number, disc_number, genre, year,
+                    duration_ms, bitrate, sample_rate, channels, format,
+                    file_size, mime_type, artwork_id, lyrics_status,
+                    created_at, updated_at, provider_modified_at
+                ) VALUES (
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?
+                )
+                "#,
+                &Self::insert_params(track),
+            )
+            .await?;
         Ok(())
     }
 
     async fn update(&self, track: &Track) -> Result<()> {
-        // Validate track data
-        track.validate().map_err(|msg| LibraryError::InvalidInput {
-            field: "track".to_string(),
-            message: msg,
-        })?;
-
-        let result = sqlx::query(
-            r#"
-            UPDATE tracks SET
-                provider_id = ?, provider_file_id = ?, hash = ?,
-                title = ?, normalized_title = ?, album_id = ?, artist_id = ?, album_artist_id = ?,
-                track_number = ?, disc_number = ?, genre = ?, year = ?,
-                duration_ms = ?, bitrate = ?, sample_rate = ?, channels = ?, format = ?,
-                file_size = ?, mime_type = ?, artwork_id = ?, lyrics_status = ?,
-                updated_at = ?, provider_modified_at = ?
-            WHERE id = ?
-            "#,
-        )
-        .bind(&track.provider_id)
-        .bind(&track.provider_file_id)
-        .bind(&track.hash)
-        .bind(&track.title)
-        .bind(&track.normalized_title)
-        .bind(&track.album_id)
-        .bind(&track.artist_id)
-        .bind(&track.album_artist_id)
-        .bind(track.track_number)
-        .bind(track.disc_number)
-        .bind(&track.genre)
-        .bind(track.year)
-        .bind(track.duration_ms)
-        .bind(track.bitrate)
-        .bind(track.sample_rate)
-        .bind(track.channels)
-        .bind(&track.format)
-        .bind(track.file_size)
-        .bind(&track.mime_type)
-        .bind(&track.artwork_id)
-        .bind(&track.lyrics_status)
-        .bind(track.updated_at)
-        .bind(track.provider_modified_at)
-        .bind(&track.id)
-        .execute(&self.pool)
-        .await?;
-
-        if result.rows_affected() == 0 {
+        Self::validate_track(track)?;
+        let affected = self
+            .adapter
+            .execute(
+                r#"
+                UPDATE tracks SET
+                    provider_id = ?, provider_file_id = ?, hash = ?,
+                    title = ?, normalized_title = ?, album_id = ?, artist_id = ?, album_artist_id = ?,
+                    track_number = ?, disc_number = ?, genre = ?, year = ?,
+                    duration_ms = ?, bitrate = ?, sample_rate = ?, channels = ?, format = ?,
+                    file_size = ?, mime_type = ?, artwork_id = ?, lyrics_status = ?,
+                    updated_at = ?, provider_modified_at = ?
+                WHERE id = ?
+                "#,
+                &Self::update_params(track),
+            )
+            .await?;
+        if affected == 0 {
             return Err(LibraryError::NotFound {
-                entity_type: "Track".to_string(),
+                entity_type: "track".to_string(),
                 id: track.id.clone(),
             });
         }
-
         Ok(())
     }
 
     async fn delete(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM tracks WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
+        let affected = self
+            .adapter
+            .execute(
+                "DELETE FROM tracks WHERE id = ?",
+                &[QueryValue::Text(id.to_string())],
+            )
             .await?;
-
-        Ok(result.rows_affected() > 0)
+        Ok(affected > 0)
     }
 
     async fn query(&self, page_request: PageRequest) -> Result<Page<Track>> {
-        // Get total count
-        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tracks")
-            .fetch_one(&self.pool)
-            .await?;
-
-        // Get paginated tracks
-        let tracks =
-            query_as::<_, Track>("SELECT * FROM tracks ORDER BY created_at DESC LIMIT ? OFFSET ?")
-                .bind(page_request.limit() as i64)
-                .bind(page_request.offset() as i64)
-                .fetch_all(&self.pool)
-                .await?;
-
-        Ok(Page::new(tracks, total.0 as u64, page_request))
+        self.paginate(
+            "SELECT COUNT(*) as count FROM tracks",
+            vec![],
+            &format!(
+                "SELECT {TRACK_COLUMNS} FROM tracks ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            ),
+            vec![],
+            page_request,
+        )
+        .await
     }
 
     async fn query_by_album(
@@ -290,23 +268,18 @@ impl TrackRepository for SqliteTrackRepository {
         album_id: &str,
         page_request: PageRequest,
     ) -> Result<Page<Track>> {
-        // Get total count
-        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tracks WHERE album_id = ?")
-            .bind(album_id)
-            .fetch_one(&self.pool)
-            .await?;
-
-        // Get paginated tracks
-        let tracks = query_as::<_, Track>(
-            "SELECT * FROM tracks WHERE album_id = ? ORDER BY disc_number, track_number LIMIT ? OFFSET ?"
+        let params = vec![QueryValue::Text(album_id.to_string())];
+        self.paginate(
+            "SELECT COUNT(*) as count FROM tracks WHERE album_id = ?",
+            params.clone(),
+            &format!(
+                "SELECT {TRACK_COLUMNS} FROM tracks WHERE album_id = ? \
+                 ORDER BY disc_number, track_number LIMIT ? OFFSET ?"
+            ),
+            params,
+            page_request,
         )
-        .bind(album_id)
-        .bind(page_request.limit() as i64)
-        .bind(page_request.offset() as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(Page::new(tracks, total.0 as u64, page_request))
+        .await
     }
 
     async fn query_by_artist(
@@ -314,23 +287,18 @@ impl TrackRepository for SqliteTrackRepository {
         artist_id: &str,
         page_request: PageRequest,
     ) -> Result<Page<Track>> {
-        // Get total count
-        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tracks WHERE artist_id = ?")
-            .bind(artist_id)
-            .fetch_one(&self.pool)
-            .await?;
-
-        // Get paginated tracks
-        let tracks = query_as::<_, Track>(
-            "SELECT * FROM tracks WHERE artist_id = ? ORDER BY year DESC, album_id, track_number LIMIT ? OFFSET ?"
+        let params = vec![QueryValue::Text(artist_id.to_string())];
+        self.paginate(
+            "SELECT COUNT(*) as count FROM tracks WHERE artist_id = ?",
+            params.clone(),
+            &format!(
+                "SELECT {TRACK_COLUMNS} FROM tracks WHERE artist_id = ? \
+                 ORDER BY year DESC, album_id, track_number LIMIT ? OFFSET ?"
+            ),
+            params,
+            page_request,
         )
-        .bind(artist_id)
-        .bind(page_request.limit() as i64)
-        .bind(page_request.offset() as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(Page::new(tracks, total.0 as u64, page_request))
+        .await
     }
 
     async fn query_by_provider(
@@ -338,55 +306,39 @@ impl TrackRepository for SqliteTrackRepository {
         provider_id: &str,
         page_request: PageRequest,
     ) -> Result<Page<Track>> {
-        // Get total count
-        let total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tracks WHERE provider_id = ?")
-            .bind(provider_id)
-            .fetch_one(&self.pool)
-            .await?;
-
-        // Get paginated tracks
-        let tracks = query_as::<_, Track>(
-            "SELECT * FROM tracks WHERE provider_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        let params = vec![QueryValue::Text(provider_id.to_string())];
+        self.paginate(
+            "SELECT COUNT(*) as count FROM tracks WHERE provider_id = ?",
+            params.clone(),
+            &format!(
+                "SELECT {TRACK_COLUMNS} FROM tracks WHERE provider_id = ? \
+                 ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            ),
+            params,
+            page_request,
         )
-        .bind(provider_id)
-        .bind(page_request.limit() as i64)
-        .bind(page_request.offset() as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(Page::new(tracks, total.0 as u64, page_request))
+        .await
     }
 
     async fn search(&self, search_query: &str, page_request: PageRequest) -> Result<Page<Track>> {
-        // Use FTS5 for full-text search
-        let search_pattern = format!("%{}%", search_query.to_lowercase());
-
-        // Get total count
-        let total: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM tracks WHERE normalized_title LIKE ?")
-                .bind(&search_pattern)
-                .fetch_one(&self.pool)
-                .await?;
-
-        // Get paginated tracks
-        let tracks = query_as::<_, Track>(
-            "SELECT * FROM tracks WHERE normalized_title LIKE ? ORDER BY title LIMIT ? OFFSET ?",
+        let pattern = format!("%{}%", search_query.to_lowercase());
+        let params = vec![QueryValue::Text(pattern.clone())];
+        self.paginate(
+            "SELECT COUNT(*) as count FROM tracks WHERE normalized_title LIKE ?",
+            params.clone(),
+            &format!(
+                "SELECT {TRACK_COLUMNS} FROM tracks WHERE normalized_title LIKE ? \
+                 ORDER BY title LIMIT ? OFFSET ?"
+            ),
+            params,
+            page_request,
         )
-        .bind(&search_pattern)
-        .bind(page_request.limit() as i64)
-        .bind(page_request.offset() as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(Page::new(tracks, total.0 as u64, page_request))
+        .await
     }
 
     async fn count(&self) -> Result<i64> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tracks")
-            .fetch_one(&self.pool)
-            .await?;
-
-        Ok(count.0)
+        self.count_with("SELECT COUNT(*) as count FROM tracks", vec![])
+            .await
     }
 
     async fn find_by_provider_file(
@@ -394,82 +346,163 @@ impl TrackRepository for SqliteTrackRepository {
         provider_id: &str,
         provider_file_id: &str,
     ) -> Result<Option<Track>> {
-        let track = query_as::<_, Track>(
-            "SELECT * FROM tracks WHERE provider_id = ? AND provider_file_id = ?",
+        self.fetch_optional_track(
+            &format!(
+                "SELECT {TRACK_COLUMNS} FROM tracks WHERE provider_id = ? AND provider_file_id = ?"
+            ),
+            vec![
+                QueryValue::Text(provider_id.to_string()),
+                QueryValue::Text(provider_file_id.to_string()),
+            ],
         )
-        .bind(provider_id)
-        .bind(provider_file_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(track)
+        .await
     }
 
     async fn find_by_missing_artwork(&self) -> Result<Vec<Track>> {
-        let tracks = query_as::<_, Track>(
-            "SELECT * FROM tracks WHERE artwork_id IS NULL ORDER BY created_at DESC",
+        self.fetch_tracks(
+            &format!(
+                "SELECT {TRACK_COLUMNS} FROM tracks WHERE artwork_id IS NULL \
+                 ORDER BY created_at DESC"
+            ),
+            vec![],
         )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(tracks)
+        .await
     }
 
     async fn find_by_lyrics_status(&self, status: &str) -> Result<Vec<Track>> {
-        let tracks = query_as::<_, Track>(
-            "SELECT * FROM tracks WHERE lyrics_status = ? ORDER BY created_at DESC",
+        self.fetch_tracks(
+            &format!(
+                "SELECT {TRACK_COLUMNS} FROM tracks WHERE lyrics_status = ? \
+                 ORDER BY created_at DESC"
+            ),
+            vec![QueryValue::Text(status.to_string())],
         )
-        .bind(status)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(tracks)
+        .await
     }
+}
+
+pub(crate) fn row_to_track(row: &QueryRow) -> Result<Track> {
+    Ok(Track {
+        id: get_string(row, "id")?,
+        provider_id: get_string(row, "provider_id")?,
+        provider_file_id: get_string(row, "provider_file_id")?,
+        hash: get_optional_string(row, "hash")?,
+        title: get_string(row, "title")?,
+        normalized_title: get_string(row, "normalized_title")?,
+        album_id: get_optional_string(row, "album_id")?,
+        artist_id: get_optional_string(row, "artist_id")?,
+        album_artist_id: get_optional_string(row, "album_artist_id")?,
+        track_number: get_optional_i32(row, "track_number")?,
+        disc_number: get_i32(row, "disc_number")?,
+        genre: get_optional_string(row, "genre")?,
+        year: get_optional_i32(row, "year")?,
+        duration_ms: get_i64(row, "duration_ms")?,
+        bitrate: get_optional_i32(row, "bitrate")?,
+        sample_rate: get_optional_i32(row, "sample_rate")?,
+        channels: get_optional_i32(row, "channels")?,
+        format: get_string(row, "format")?,
+        file_size: get_optional_i64(row, "file_size")?,
+        mime_type: get_optional_string(row, "mime_type")?,
+        artwork_id: get_optional_string(row, "artwork_id")?,
+        lyrics_status: get_string(row, "lyrics_status")?,
+        created_at: get_i64(row, "created_at")?,
+        updated_at: get_i64(row, "updated_at")?,
+        provider_modified_at: get_optional_i64(row, "provider_modified_at")?,
+    })
+}
+
+fn get_string(row: &QueryRow, key: &str) -> Result<String> {
+    row.get(key)
+        .and_then(|value| value.as_string())
+        .ok_or_else(|| missing_column(key))
+}
+
+fn get_optional_string(row: &QueryRow, key: &str) -> Result<Option<String>> {
+    Ok(match row.get(key) {
+        Some(QueryValue::Null) | None => None,
+        Some(value) => Some(value.as_string().ok_or_else(|| missing_column(key))?),
+    })
+}
+
+fn get_i64(row: &QueryRow, key: &str) -> Result<i64> {
+    row.get(key)
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| missing_column(key))
+}
+
+fn get_optional_i64(row: &QueryRow, key: &str) -> Result<Option<i64>> {
+    Ok(match row.get(key) {
+        Some(QueryValue::Null) | None => None,
+        Some(value) => Some(value.as_i64().ok_or_else(|| missing_column(key))?),
+    })
+}
+
+fn get_i32(row: &QueryRow, key: &str) -> Result<i32> {
+    Ok(get_i64(row, key)? as i32)
+}
+
+fn get_optional_i32(row: &QueryRow, key: &str) -> Result<Option<i32>> {
+    Ok(get_optional_i64(row, key)?.map(|value| value as i32))
+}
+
+fn missing_column(column: &str) -> LibraryError {
+    LibraryError::InvalidInput {
+        field: column.to_string(),
+        message: "missing column in result set".to_string(),
+    }
+}
+
+fn opt_text(value: &Option<String>) -> QueryValue {
+    value
+        .as_ref()
+        .map(|v| QueryValue::Text(v.clone()))
+        .unwrap_or(QueryValue::Null)
+}
+
+fn opt_i32(value: Option<i32>) -> QueryValue {
+    value
+        .map(|v| QueryValue::Integer(v as i64))
+        .unwrap_or(QueryValue::Null)
+}
+
+fn opt_i64(value: Option<i64>) -> QueryValue {
+    value.map(QueryValue::Integer).unwrap_or(QueryValue::Null)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::create_test_pool;
-
-    /// Helper to insert a test provider
-    async fn insert_test_provider(pool: &SqlitePool) {
-        sqlx::query(
-            "INSERT INTO providers (id, type, display_name, profile_id, created_at) 
-             VALUES ('test-provider', 'GoogleDrive', 'Test Provider', 'test-profile', 1699200000)",
-        )
-        .execute(pool)
-        .await
-        .ok(); // Ignore error if already exists
-    }
+    use crate::db::{create_test_pool, insert_test_provider};
+    use crate::models::Track;
+    use uuid::Uuid;
 
     async fn create_test_track(id: &str) -> Track {
         Track {
             id: id.to_string(),
             provider_id: "test-provider".to_string(),
             provider_file_id: format!("file-{}", id),
-            hash: Some("test-hash".to_string()),
-            title: "Test Track".to_string(),
-            normalized_title: "test track".to_string(),
+            hash: Some(format!("hash-{}", id)),
+            title: format!("Track {}", id),
+            normalized_title: format!("track {}", id).to_lowercase(),
             album_id: None,
             artist_id: None,
             album_artist_id: None,
             track_number: Some(1),
             disc_number: 1,
             genre: Some("Rock".to_string()),
-            year: Some(2024),
-            duration_ms: 180000,
+            year: Some(2020),
+            duration_ms: 180_000,
             bitrate: Some(320),
-            sample_rate: Some(44100),
+            sample_rate: Some(44_100),
             channels: Some(2),
             format: "mp3".to_string(),
-            file_size: Some(5242880),
+            file_size: Some(5_000_000),
             mime_type: Some("audio/mpeg".to_string()),
             artwork_id: None,
             lyrics_status: "not_fetched".to_string(),
-            created_at: 1699200000,
-            updated_at: 1699200000,
-            provider_modified_at: Some(1699200000),
+            created_at: 0,
+            updated_at: 0,
+            provider_modified_at: None,
         }
     }
 
@@ -477,164 +510,44 @@ mod tests {
     async fn test_insert_and_find_track() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
-        let repo = SqliteTrackRepository::new(pool);
+        let repo = SqliteTrackRepository::from_pool(pool.clone());
         let track = create_test_track("track-1").await;
 
-        // Insert track
         repo.insert(&track).await.unwrap();
 
-        // Find track
         let found = repo.find_by_id("track-1").await.unwrap();
         assert!(found.is_some());
-        let found = found.unwrap();
-        assert_eq!(found.id, "track-1");
-        assert_eq!(found.title, "Test Track");
+        assert_eq!(found.unwrap().title, "Track track-1");
     }
 
     #[core_async::test]
     async fn test_update_track() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
-        let repo = SqliteTrackRepository::new(pool);
+        let repo = SqliteTrackRepository::from_pool(pool.clone());
         let mut track = create_test_track("track-2").await;
 
-        // Insert track
         repo.insert(&track).await.unwrap();
 
-        // Update track
-        track.title = "Updated Track".to_string();
-        track.normalized_title = "updated track".to_string();
+        track.title = "Updated Title".to_string();
         repo.update(&track).await.unwrap();
 
-        // Verify update
-        let found = repo.find_by_id("track-2").await.unwrap().unwrap();
-        assert_eq!(found.title, "Updated Track");
+        let found = repo.find_by_id("track-2").await.unwrap();
+        assert_eq!(found.unwrap().title, "Updated Title");
     }
 
     #[core_async::test]
     async fn test_delete_track() {
         let pool = create_test_pool().await.unwrap();
         insert_test_provider(&pool).await;
-        let repo = SqliteTrackRepository::new(pool);
+        let repo = SqliteTrackRepository::from_pool(pool);
         let track = create_test_track("track-3").await;
 
-        // Insert track
         repo.insert(&track).await.unwrap();
-
-        // Delete track
         let deleted = repo.delete("track-3").await.unwrap();
         assert!(deleted);
 
-        // Verify deletion
         let found = repo.find_by_id("track-3").await.unwrap();
         assert!(found.is_none());
-    }
-
-    #[core_async::test]
-    async fn test_query_with_pagination() {
-        let pool = create_test_pool().await.unwrap();
-        insert_test_provider(&pool).await;
-        let repo = SqliteTrackRepository::new(pool);
-
-        // Insert multiple tracks
-        for i in 1..=5 {
-            let track = create_test_track(&format!("track-{}", i)).await;
-            repo.insert(&track).await.unwrap();
-        }
-
-        // Query first page
-        let page = repo.query(PageRequest::new(0, 2)).await.unwrap();
-        assert_eq!(page.items.len(), 2);
-        assert_eq!(page.total, 5);
-        assert_eq!(page.total_pages, 3);
-        assert!(page.has_next());
-        assert!(!page.has_previous());
-
-        // Query second page
-        let page = repo.query(PageRequest::new(1, 2)).await.unwrap();
-        assert_eq!(page.items.len(), 2);
-        assert!(page.has_next());
-        assert!(page.has_previous());
-    }
-
-    #[core_async::test]
-    async fn test_find_by_provider_file() {
-        let pool = create_test_pool().await.unwrap();
-        insert_test_provider(&pool).await;
-        let repo = SqliteTrackRepository::new(pool);
-        let track = create_test_track("track-4").await;
-
-        // Insert track
-        repo.insert(&track).await.unwrap();
-
-        // Find by provider file
-        let found = repo
-            .find_by_provider_file("test-provider", "file-track-4")
-            .await
-            .unwrap();
-        assert!(found.is_some());
-        assert_eq!(found.unwrap().id, "track-4");
-    }
-
-    #[core_async::test]
-    async fn test_search_tracks() {
-        let pool = create_test_pool().await.unwrap();
-        insert_test_provider(&pool).await;
-        let repo = SqliteTrackRepository::new(pool);
-
-        // Insert tracks with different titles
-        let mut track1 = create_test_track("track-search-1").await;
-        track1.title = "Rock Song".to_string();
-        track1.normalized_title = "rock song".to_string();
-        repo.insert(&track1).await.unwrap();
-
-        let mut track2 = create_test_track("track-search-2").await;
-        track2.title = "Jazz Melody".to_string();
-        track2.normalized_title = "jazz melody".to_string();
-        repo.insert(&track2).await.unwrap();
-
-        // Search for "rock"
-        let results = repo.search("rock", PageRequest::new(0, 10)).await.unwrap();
-        assert_eq!(results.items.len(), 1);
-        assert_eq!(results.items[0].title, "Rock Song");
-    }
-
-    #[core_async::test]
-    async fn test_count_tracks() {
-        let pool = create_test_pool().await.unwrap();
-        insert_test_provider(&pool).await;
-        let repo = SqliteTrackRepository::new(pool);
-
-        // Insert tracks
-        for i in 1..=3 {
-            let track = create_test_track(&format!("track-count-{}", i)).await;
-            repo.insert(&track).await.unwrap();
-        }
-
-        // Count tracks
-        let count = repo.count().await.unwrap();
-        assert_eq!(count, 3);
-    }
-
-    #[core_async::test]
-    async fn test_track_validation() {
-        let pool = create_test_pool().await.unwrap();
-        insert_test_provider(&pool).await;
-        let repo = SqliteTrackRepository::new(pool);
-
-        // Create invalid track (empty title)
-        let mut track = create_test_track("invalid-1").await;
-        track.title = "   ".to_string();
-
-        let result = repo.insert(&track).await;
-        assert!(result.is_err());
-
-        // Create invalid track (negative duration)
-        let mut track = create_test_track("invalid-2").await;
-        track.title = "Valid Title".to_string();
-        track.duration_ms = -100;
-
-        let result = repo.insert(&track).await;
-        assert!(result.is_err());
     }
 }

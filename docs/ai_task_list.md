@@ -1529,6 +1529,14 @@ During initial implementation (TASK-204), domain models were designed with addit
   - Ready to replace TODO in coordinator.rs line 696
   - Will receive file path from StorageProvider download
   - Returns structured ExtractedMetadata for database persistence
+- **FileSystemAccess Refactoring** (November 6, 2025):
+  - ✅ Refactored `extract_from_file()` to use FileSystemAccess trait pattern
+  - ✅ Native platform: Uses `core_async::fs::read()` directly
+  - ✅ WASM platform: Accepts `FileSystemAccess` trait parameter (from bridge-wasm)
+  - ✅ Created shared `extract_from_bytes()` method for platform-agnostic parsing
+  - ✅ Verified WASM compilation succeeds
+  - ✅ Pattern documented in `docs/filesystem_abstraction_pattern.md`
+  - ✅ Both platforms now have full metadata extraction capability
 - **Next Steps**:
   - Integrate into SyncCoordinator (TASK-304 Phase 4)
   - Add ArtworkService to process extracted artwork (TASK-402)

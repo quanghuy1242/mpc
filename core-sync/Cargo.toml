@@ -12,15 +12,20 @@ core-library = { path = "../core-library" }
 core-metadata = { path = "../core-metadata" }
 core-async = { path = "../core-async" }
 
-tokio-util = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
-sqlx = { workspace = true }
 chrono = { workspace = true }
 bytes = { workspace = true }
 
+# Native-only dependencies (not available on WASM)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sqlx = { workspace = true }
+
 [dev-dependencies]
 mockall = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+bridge-desktop = { path = "../bridge-desktop" }

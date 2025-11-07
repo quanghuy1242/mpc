@@ -2,9 +2,10 @@
 //!
 //! Provides network connectivity and status information.
 
-use async_trait::async_trait;
-
-use crate::error::Result;
+use crate::{
+    error::Result,
+    platform::{PlatformSend, PlatformSendSync},
+};
 
 /// Network connection type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,8 +66,9 @@ pub struct NetworkInfo {
 ///     matches!(info.status, NetworkStatus::Connected) && !info.is_metered
 /// }
 /// ```
-#[async_trait]
-pub trait NetworkMonitor: Send + Sync {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait NetworkMonitor: PlatformSendSync {
     /// Get current network information
     async fn get_network_info(&self) -> Result<NetworkInfo>;
 
@@ -112,8 +114,9 @@ pub trait NetworkMonitor: Send + Sync {
 }
 
 /// Stream of network status changes
-#[async_trait]
-pub trait NetworkChangeStream: Send {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait NetworkChangeStream: PlatformSend {
     /// Get the next network info update
     ///
     /// Returns `None` when the stream is closed.

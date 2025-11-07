@@ -90,6 +90,7 @@
 use crate::enrichment_service::{EnrichmentRequest, EnrichmentResponse, EnrichmentService};
 use crate::error::{MetadataError, Result};
 use bridge_traits::network::{NetworkMonitor, NetworkType};
+#[cfg(not(target_arch = "wasm32"))]
 use core_async::sync::Semaphore;
 use core_async::time::sleep;
 use core_library::models::Track;
@@ -442,6 +443,7 @@ impl EnrichmentJob {
     }
 
     /// Process tracks in batches with concurrency control
+    #[cfg(not(target_arch = "wasm32"))]
     async fn process_tracks(
         &self,
         tracks: Vec<Track>,
@@ -511,6 +513,51 @@ impl EnrichmentJob {
 
             // Small delay between batches to avoid overwhelming services
             sleep(Duration::from_millis(100)).await;
+        }
+
+        results
+    }
+
+    /// Process tracks sequentially on WASM (no true parallelism available)
+    #[cfg(target_arch = "wasm32")]
+    async fn process_tracks(
+        &self,
+        tracks: Vec<Track>,
+        progress: &mut EnrichmentProgress,
+    ) -> Vec<EnrichmentResult> {
+        let mut results = Vec::new();
+
+        // Process sequentially on WASM
+        for (idx, track) in tracks.iter().enumerate() {
+            progress.phase = format!("Processing track {}/{}", idx + 1, tracks.len());
+
+            let result = self.enrich_track(track).await;
+
+            // Update progress
+            progress.processed += 1;
+
+            if result.artwork_fetched {
+                progress.artwork_fetched += 1;
+            }
+
+            if result.lyrics_fetched {
+                progress.lyrics_fetched += 1;
+            }
+
+            if result.error.is_some() {
+                progress.failed += 1;
+            }
+
+            results.push(result);
+
+            // Update progress percentage
+            progress.update();
+
+            // Emit progress update
+            self.emit_progress(progress);
+
+            // Yield to browser event loop
+            core_async::task::yield_now().await;
         }
 
         results
@@ -728,12 +775,12 @@ mod tests {
         let rt = Runtime::new().unwrap();
         let pool = rt.block_on(create_test_pool()).unwrap();
 
-        let artist_repo = Arc::new(SqliteArtistRepository::new(pool.clone()));
-        let album_repo = Arc::new(SqliteAlbumRepository::new(pool.clone()));
-        let artwork_repo = Arc::new(SqliteArtworkRepository::new(pool.clone()));
-        let lyrics_repo = Arc::new(SqliteLyricsRepository::new(pool.clone()));
+        let artist_repo = Arc::new(SqliteArtistRepository::from_pool(pool.clone()));
+        let album_repo = Arc::new(SqliteAlbumRepository::from_pool(pool.clone()));
+        let artwork_repo = Arc::new(SqliteArtworkRepository::from_pool(pool.clone()));
+        let lyrics_repo = Arc::new(SqliteLyricsRepository::from_pool(pool.clone()));
         let track_repo: Arc<dyn TrackRepository> =
-            Arc::new(SqliteTrackRepository::new(pool.clone()));
+            Arc::new(SqliteTrackRepository::from_pool(pool.clone()));
         let event_bus = Arc::new(EventBus::new(100));
 
         let artwork_service = Arc::new(ArtworkService::new(artwork_repo, 200 * 1024 * 1024));

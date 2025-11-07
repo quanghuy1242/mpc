@@ -19,7 +19,10 @@
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let extractor = MetadataExtractor::new();
-//! let metadata = extractor.extract_from_file(Path::new("song.mp3")).await?;
+//! let fs = bridge_desktop::TokioFileSystem::new();
+//! let metadata = extractor
+//!     .extract_from_filesystem(Path::new("song.mp3"), &fs)
+//!     .await?;
 //!
 //! println!("Title: {}", metadata.title.unwrap_or_default());
 //! println!("Artist: {}", metadata.artist.unwrap_or_default());
@@ -28,8 +31,8 @@
 //! # }
 //! ```
 
+use bridge_traits::storage::FileSystemAccess;
 use bytes::Bytes;
-use core_async::fs;
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::MimeType;
@@ -40,6 +43,9 @@ use std::path::Path;
 use tracing::{debug, warn};
 
 use crate::error::{MetadataError, Result};
+
+#[cfg(not(target_arch = "wasm32"))]
+use core_async::fs;
 
 /// Extracted metadata from an audio file
 #[derive(Debug, Clone)]
@@ -165,7 +171,7 @@ impl MetadataExtractor {
         Self { parse_options }
     }
 
-    /// Extract metadata from an audio file
+    /// Extract metadata from an audio file (native platform)
     ///
     /// # Arguments
     ///
@@ -192,17 +198,67 @@ impl MetadataExtractor {
     ///
     /// ```ignore
     /// let extractor = MetadataExtractor::new();
-    /// let metadata = extractor.extract_from_file(Path::new("song.flac")).await?;
+    /// let metadata = extractor
+    ///     .extract_from_filesystem(Path::new("song.flac"), &fs)
+    ///     .await?;
     /// assert!(metadata.duration_ms > 0);
     /// ```
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn extract_from_file(&self, path: &Path) -> Result<ExtractedMetadata> {
         debug!("Extracting metadata from: {}", path.display());
 
-        // Read file and calculate hash
         let file_data = fs::read(path)
             .await
             .map_err(|e| MetadataError::ExtractionFailed(format!("Failed to read file: {}", e)))?;
 
+        self.extract_from_bytes(&file_data, path).await
+    }
+
+    pub async fn extract_from_filesystem<F>(&self, path: &Path, fs: &F) -> Result<ExtractedMetadata>
+    where
+        F: FileSystemAccess + ?Sized,
+    {
+        debug!("Extracting metadata from: {}", path.display());
+
+        let file_data = fs
+            .read_file(path)
+            .await
+            .map_err(|e| MetadataError::ExtractionFailed(format!("Failed to read file: {}", e)))?;
+
+        self.extract_from_bytes(file_data.as_ref(), path).await
+    }
+
+    /// Extract metadata from in-memory audio bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_data` - Raw audio bytes
+    /// * `path` - Virtual path or identifier used for logging/debugging
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(ExtractedMetadata)` with as much metadata as could be extracted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - File cannot be opened or read
+    /// - File format is completely unsupported
+    /// - Critical parsing errors prevent any metadata extraction
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let extractor = MetadataExtractor::new();
+    /// let bytes = std::fs::read("song.flac")?;
+    /// let metadata = extractor.extract_from_bytes(&bytes, Path::new("song.flac")).await?;
+    /// assert!(metadata.duration_ms > 0);
+    /// ```
+    pub async fn extract_from_bytes(
+        &self,
+        file_data: &[u8],
+        path: &Path,
+    ) -> Result<ExtractedMetadata> {
         let file_size = file_data.len() as u64;
         let content_hash = self.calculate_hash(&file_data);
 

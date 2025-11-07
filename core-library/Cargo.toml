@@ -5,17 +5,20 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-core-runtime = { path = "../core-runtime" }
+bridge-traits = { path = "../bridge-traits" }
 core-async = { path = "../core-async" }
 
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
-sqlx = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 futures = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bridge-desktop = { path = "../bridge-desktop" }
+sqlx = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }

@@ -83,7 +83,7 @@ async fn test_query_tracks_missing_artwork() {
         .expect("Failed to create test pool");
     insert_test_provider(&pool).await;
 
-    let repository = SqliteTrackRepository::new(pool.clone());
+    let repository = SqliteTrackRepository::from_pool(pool.clone());
 
     // Insert tracks - all without artwork initially
     let track1 = create_test_track("track-1", "Track 1", None);
@@ -137,7 +137,7 @@ async fn test_query_tracks_by_lyrics_status() {
         .expect("Failed to create test pool");
     insert_test_provider(&pool).await;
 
-    let repository = SqliteTrackRepository::new(pool.clone());
+    let repository = SqliteTrackRepository::from_pool(pool.clone());
 
     // Insert tracks with different lyrics statuses
     let mut track1 = create_test_track("track-1", "Track 1", None);
@@ -189,13 +189,15 @@ async fn test_enrichment_job_initialization() {
         .await
         .expect("Failed to create test pool");
 
-    let artwork_repo = Arc::new(SqliteArtworkRepository::new(pool.clone()));
-    let lyrics_repo = Arc::new(SqliteLyricsRepository::new(pool.clone()));
-    let track_repo: Arc<dyn TrackRepository> = Arc::new(SqliteTrackRepository::new(pool.clone()));
-    let artist_repo =
-        Arc::new(core_library::repositories::artist::SqliteArtistRepository::new(pool.clone()));
+    let artwork_repo = Arc::new(SqliteArtworkRepository::from_pool(pool.clone()));
+    let lyrics_repo = Arc::new(SqliteLyricsRepository::from_pool(pool.clone()));
+    let track_repo: Arc<dyn TrackRepository> =
+        Arc::new(SqliteTrackRepository::from_pool(pool.clone()));
+    let artist_repo = Arc::new(
+        core_library::repositories::artist::SqliteArtistRepository::from_pool(pool.clone()),
+    );
     let album_repo =
-        Arc::new(core_library::repositories::album::SqliteAlbumRepository::new(pool.clone()));
+        Arc::new(core_library::repositories::album::SqliteAlbumRepository::from_pool(pool.clone()));
     let event_bus = Arc::new(EventBus::new(100));
 
     let artwork_service = Arc::new(ArtworkService::new(artwork_repo, 200 * 1024 * 1024));
