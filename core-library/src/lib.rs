@@ -40,6 +40,10 @@ pub mod models;
 pub mod query;
 pub mod repositories;
 
+// WASM bindings
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
+
 // Re-export database adapter
 #[cfg(not(target_arch = "wasm32"))]
 pub use adapters::SqliteAdapter;

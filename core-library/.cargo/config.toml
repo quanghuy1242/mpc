@@ -1,0 +1,22 @@
+# Cargo configuration for WASM builds
+
+[target.wasm32-unknown-unknown]
+# Use wasm-opt for additional size optimization
+# This requires wasm-opt to be installed (part of binaryen)
+runner = 'wasm-bindgen-test-runner'
+
+[build]
+# Enable incremental compilation for faster builds
+incremental = true
+
+[profile.release]
+# Optimize for size
+opt-level = "z"
+# Enable Link Time Optimization
+lto = true
+# Single codegen unit for better optimization
+codegen-units = 1
+# Strip debug symbols
+strip = true
+# Abort on panic instead of unwinding (smaller binary)
+panic = "abort"

@@ -120,7 +120,7 @@ impl GoogleDriveConnector {
                 url: url.clone(),
                 headers,
                 body: None,
-                timeout: Some(std::time::Duration::from_secs(30)),
+                timeout: Some(core_async::time::Duration::from_secs(30)),
             };
 
             match self.http_client.execute(request).await {
@@ -184,7 +184,8 @@ impl GoogleDriveConnector {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl StorageProvider for GoogleDriveConnector {
     #[instrument(skip(self))]
     async fn list_media(
@@ -267,7 +268,7 @@ impl StorageProvider for GoogleDriveConnector {
             url,
             headers,
             body: None,
-            timeout: Some(std::time::Duration::from_secs(60)),
+            timeout: Some(core_async::time::Duration::from_secs(60)),
         };
 
         let response = self.http_client.execute(request).await?;

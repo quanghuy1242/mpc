@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Core Library WASM Test Suite</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 30px; }
+        h1 { color: #333; margin-bottom: 10px; }
+        h2 { color: #666; margin-top: 30px; margin-bottom: 15px; border-bottom: 2px solid #007acc; padding-bottom: 5px; }
+        .test-group { margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 5px; }
+        .test-case { margin: 10px 0; padding: 10px; background: white; border-left: 4px solid #ccc; }
+        .test-case.pass { border-left-color: #28a745; }
+        .test-case.fail { border-left-color: #dc3545; background: #fff5f5; }
+        .test-name { font-weight: bold; margin-bottom: 5px; }
+        .test-result { font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; }
+        .summary { padding: 20px; background: #e8f4f8; border-radius: 5px; margin: 20px 0; }
+        .summary h3 { margin-bottom: 10px; }
+        .stats { display: flex; gap: 20px; }
+        .stat { padding: 10px 20px; background: white; border-radius: 5px; }
+        .stat.pass { border-left: 4px solid #28a745; }
+        .stat.fail { border-left: 4px solid #dc3545; }
+        button { background: #007acc; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; margin: 10px 10px 10px 0; }
+        button:hover { background: #005a9e; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        pre { background: #f4f4f4; padding: 10px; border-radius: 3px; overflow-x: auto; margin: 5px 0; }
+        .loading { color: #666; font-style: italic; }
+        .error { color: #dc3545; padding: 10px; background: #fff5f5; border-radius: 5px; margin: 10px 0; }
+        .success { color: #28a745; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Core Library WASM Test Suite</h1>
+        <p>Comprehensive tests to verify WASM module functionality</p>
+
+        <div id="status" class="loading">Loading WASM module...</div>
+
+        <div class="summary" id="summary" style="display: none;">
+            <h3>Test Summary</h3>
+            <div class="stats">
+                <div class="stat pass">
+                    <strong>Passed:</strong> <span id="passCount">0</span>
+                </div>
+                <div class="stat fail">
+                    <strong>Failed:</strong> <span id="failCount">0</span>
+                </div>
+                <div class="stat">
+                    <strong>Total:</strong> <span id="totalCount">0</span>
+                </div>
+            </div>
+        </div>
+
+        <button onclick="runAllTests()" id="runBtn" disabled>Run All Tests</button>
+        <button onclick="clearResults()">Clear Results</button>
+
+        <div id="results"></div>
+    </div>
+
+    <script type="module">
+        import init, { 
+            JsAlbum, 
+            JsArtist, 
+            JsPlaylist,
+            JsTrack,
+            JsTrackId,
+            JsAlbumId,
+            JsArtistId,
+            JsPlaylistId,
+            version,
+            name as libName
+        } from './pkg/core_library.js';
+
+        let wasm;
+        let testResults = [];
+
+        async function loadWasm() {
+            try {
+                wasm = await init();
+                document.getElementById('status').innerHTML = '<span class="success">✅ WASM module loaded successfully!</span>';
+                document.getElementById('runBtn').disabled = false;
+                console.log('WASM loaded:', { version: version(), name: libName() });
+            } catch (error) {
+                document.getElementById('status').innerHTML = `<div class="error">❌ Failed to load WASM: ${error.message}</div>`;
+                console.error('WASM load error:', error);
+            }
+        }
+
+        function test(name, fn) {
+            try {
+                fn();
+                testResults.push({ name, passed: true, message: 'Pass' });
+                return true;
+            } catch (error) {
+                testResults.push({ name, passed: false, message: error.message });
+                return false;
+            }
+        }
+
+        function assertEqual(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error(`${message}\nExpected: ${expected}\nActual: ${actual}`);
+            }
+        }
+
+        function assertTrue(value, message) {
+            if (!value) {
+                throw new Error(message);
+            }
+        }
+
+        function assertNotNull(value, message) {
+            if (value === null || value === undefined) {
+                throw new Error(message);
+            }
+        }
+
+        window.runAllTests = function() {
+            testResults = [];
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<div class="loading">Running tests...</div>';
+
+            setTimeout(() => {
+                // Artist Tests
+                runArtistTests();
+                
+                // Album Tests
+                runAlbumTests();
+                
+                // Playlist Tests
+                runPlaylistTests();
+                
+                // Track Tests
+                runTrackTests();
+                
+                // ID Tests
+                runIdTests();
+                
+                // Serialization Tests
+                runSerializationTests();
+                
+                displayResults();
+            }, 100);
+        };
+
+        function runArtistTests() {
+            test('Artist: Create new artist', () => {
+                const artist = new JsArtist("The Beatles");
+                assertNotNull(artist, 'Artist should be created');
+                assertEqual(artist.name(), "The Beatles", 'Artist name should match');
+            });
+
+            test('Artist: Normalized name generation', () => {
+                const artist = new JsArtist("The Beatles");
+                assertEqual(artist.normalizedName(), "the beatles", 'Normalized name should be lowercase');
+            });
+
+            test('Artist: ID generation', () => {
+                const artist = new JsArtist("Pink Floyd");
+                const idStr = artist.id();
+                assertTrue(idStr.length === 36, 'ID should be valid UUID string');
+                assertTrue(idStr.includes('-'), 'UUID should contain hyphens');
+            });
+
+            test('Artist: Timestamps', () => {
+                const artist = new JsArtist("Queen");
+                const obj = artist.toObject();
+                assertTrue(obj.created_at > 0, 'Created timestamp should be set');
+                assertTrue(obj.updated_at > 0, 'Updated timestamp should be set');
+                assertEqual(obj.created_at, obj.updated_at, 'Initial timestamps should match');
+            });
+
+            test('Artist: Validation', () => {
+                const artist = new JsArtist("Led Zeppelin");
+                artist.validate(); // Should not throw
+            });
+
+            test('Artist: toObject conversion', () => {
+                const artist = new JsArtist("Radiohead");
+                const obj = artist.toObject();
+                assertEqual(obj.name, "Radiohead", 'Object name should match');
+                assertNotNull(obj.id, 'Object should have ID');
+                assertNotNull(obj.normalized_name, 'Object should have normalized name');
+            });
+
+            test('Artist: toJson conversion', () => {
+                const artist = new JsArtist("Nirvana");
+                const json = artist.toJson();
+                const parsed = JSON.parse(json);
+                assertEqual(parsed.name, "Nirvana", 'JSON name should match');
+            });
+        }
+
+        function runAlbumTests() {
+            test('Album: Create new album', () => {
+                const album = new JsAlbum("Dark Side of the Moon", null);
+                assertNotNull(album, 'Album should be created');
+                assertEqual(album.name(), "Dark Side of the Moon", 'Album name should match');
+            });
+
+            test('Album: Normalize static method', () => {
+                const normalized = JsAlbum.normalize("  The WALL  ");
+                assertEqual(normalized, "the wall", 'Should normalize to lowercase and trim');
+            });
+
+            test('Album: With artist ID', () => {
+                const artist = new JsArtist("Pink Floyd");
+                const album = new JsAlbum("The Wall", artist.id());
+                const obj = album.toObject();
+                assertNotNull(obj.artist_id, 'Album should have artist ID');
+            });
+
+            test('Album: ID generation', () => {
+                const album = new JsAlbum("Wish You Were Here", null);
+                const idStr = album.id();
+                assertTrue(idStr.length === 36, 'Album ID should be valid UUID');
+            });
+        }
+
+        function runPlaylistTests() {
+            test('Playlist: Create user playlist', () => {
+                const playlist = new JsPlaylist("My Favorites");
+                assertEqual(playlist.name(), "My Favorites", 'Playlist name should match');
+                assertEqual(playlist.ownerType(), "user", 'Should be user playlist');
+            });
+
+            test('Playlist: Create system playlist', () => {
+                const playlist = JsPlaylist.newSystem("Recently Played", "recent");
+                assertEqual(playlist.ownerType(), "system", 'Should be system playlist');
+            });
+
+            test('Playlist: Track count', () => {
+                const playlist = new JsPlaylist("Test");
+                assertEqual(Number(playlist.trackCount()), 0, 'New playlist should have 0 tracks');
+            });
+
+            test('Playlist: ID generation', () => {
+                const playlist = new JsPlaylist("Test Playlist");
+                assertNotNull(playlist.id(), 'Playlist should have ID');
+            });
+        }
+
+        function runTrackTests() {
+            // Note: JsTrack has a private constructor, so we test via deserialization
+            test('Track: Deserialize from JSON', () => {
+                const trackJson = JSON.stringify({
+                    id: "550e8400-e29b-41d4-a716-446655440000",
+                    provider_id: "test_provider",
+                    provider_file_id: "file123",
+                    hash: null,
+                    title: "Test Song",
+                    normalized_title: "test song",
+                    album_id: "550e8400-e29b-41d4-a716-446655440002",
+                    artist_id: "550e8400-e29b-41d4-a716-446655440001",
+                    album_artist_id: null,
+                    track_number: 1,
+                    disc_number: 1,
+                    genre: null,
+                    year: null,
+                    duration_ms: 180000,
+                    bitrate: 320,
+                    sample_rate: 44100,
+                    channels: 2,
+                    format: "mp3",
+                    file_size: 5000000,
+                    mime_type: null,
+                    artwork_id: null,
+                    lyrics_status: "not_fetched",
+                    created_at: 1234567890,
+                    updated_at: 1234567890,
+                    provider_modified_at: null
+                });
+                const track = JsTrack.fromJson(trackJson);
+                assertEqual(track.title(), "Test Song", 'Track title should match');
+            });
+
+            test('Track: Deserialize from Object', () => {
+                const trackObj = {
+                    id: "550e8400-e29b-41d4-a716-446655440000",
+                    provider_id: "test_provider",
+                    provider_file_id: "file456",
+                    hash: null,
+                    title: "Bohemian Rhapsody",
+                    normalized_title: "bohemian rhapsody",
+                    album_id: "550e8400-e29b-41d4-a716-446655440002",
+                    artist_id: "550e8400-e29b-41d4-a716-446655440001",
+                    album_artist_id: null,
+                    track_number: 11,
+                    disc_number: 1,
+                    genre: "Rock",
+                    year: 1975,
+                    duration_ms: 355000,
+                    bitrate: 1411,
+                    sample_rate: 44100,
+                    channels: 2,
+                    format: "flac",
+                    file_size: 25000000,
+                    mime_type: "audio/flac",
+                    artwork_id: null,
+                    lyrics_status: "not_fetched",
+                    created_at: 1234567890,
+                    updated_at: 1234567890,
+                    provider_modified_at: null
+                };
+                const track = JsTrack.fromObject(trackObj);
+                assertEqual(track.title(), "Bohemian Rhapsody", 'Title should be deserialized');
+                assertEqual(track.format(), "flac", 'Format should match');
+            });
+        }
+
+        function runIdTests() {
+            test('ID: TrackId generation', () => {
+                const id = new JsTrackId();
+                assertNotNull(id, 'TrackId should be generated');
+                assertTrue(id.toString().length === 36, 'Should be valid UUID');
+            });
+
+            test('ID: AlbumId generation', () => {
+                const id = new JsAlbumId();
+                assertNotNull(id, 'AlbumId should be generated');
+            });
+
+            test('ID: ArtistId generation', () => {
+                const id = new JsArtistId();
+                assertNotNull(id, 'ArtistId should be generated');
+            });
+
+            test('ID: PlaylistId generation', () => {
+                const id = new JsPlaylistId();
+                assertNotNull(id, 'PlaylistId should be generated');
+            });
+
+            test('ID: Parse from string', () => {
+                const id1 = new JsArtistId();
+                const str = id1.toString();
+                const id2 = JsArtistId.fromString(str);
+                assertEqual(id2.toString(), str, 'Parsed ID should match original');
+            });
+
+            test('ID: Equality', () => {
+                const id1 = new JsTrackId();
+                const str = id1.toString();
+                const id2 = JsTrackId.fromString(str);
+                assertEqual(id1.toString(), id2.toString(), 'IDs should be equal');
+            });
+        }
+
+        function runSerializationTests() {
+            test('Serialization: Artist JSON round-trip', () => {
+                const artist1 = new JsArtist("Test Artist");
+                const json = artist1.toJson();
+                const artist2 = JsArtist.fromJson(json);
+                assertEqual(artist2.name(), artist1.name(), 'Name should match after round-trip');
+                assertEqual(artist2.id(), artist1.id(), 'ID should match after round-trip');
+            });
+
+            test('Serialization: Artist Object round-trip', () => {
+                const artist1 = new JsArtist("Another Artist");
+                const obj = artist1.toObject();
+                const artist2 = JsArtist.fromObject(obj);
+                assertEqual(artist2.name(), artist1.name(), 'Name should survive object conversion');
+            });
+
+            test('Serialization: Album JSON round-trip', () => {
+                const album1 = new JsAlbum("Test Album", null);
+                const json = album1.toJson();
+                const album2 = JsAlbum.fromJson(json);
+                assertEqual(album2.name(), album1.name(), 'Album name should match');
+            });
+
+            test('Serialization: Playlist JSON round-trip', () => {
+                const playlist1 = new JsPlaylist("Test Playlist");
+                const json = playlist1.toJson();
+                const playlist2 = JsPlaylist.fromJson(json);
+                assertEqual(playlist2.name(), playlist1.name(), 'Playlist name should match');
+            });
+
+            test('Serialization: Track JSON round-trip', () => {
+                const trackJson = JSON.stringify({
+                    id: "550e8400-e29b-41d4-a716-446655440000",
+                    provider_id: "test_provider",
+                    provider_file_id: "file789",
+                    hash: null,
+                    title: "Song",
+                    normalized_title: "song",
+                    album_id: "550e8400-e29b-41d4-a716-446655440002",
+                    artist_id: "550e8400-e29b-41d4-a716-446655440001",
+                    album_artist_id: null,
+                    track_number: 1,
+                    disc_number: 1,
+                    genre: null,
+                    year: null,
+                    duration_ms: 180000,
+                    bitrate: 320,
+                    sample_rate: 44100,
+                    channels: 2,
+                    format: "mp3",
+                    file_size: 5000000,
+                    mime_type: "audio/mpeg",
+                    artwork_id: null,
+                    lyrics_status: "not_fetched",
+                    created_at: 1234567890,
+                    updated_at: 1234567890,
+                    provider_modified_at: null
+                });
+                const track1 = JsTrack.fromJson(trackJson);
+                const json2 = track1.toJson();
+                const track2 = JsTrack.fromJson(json2);
+                assertEqual(track2.title(), track1.title(), 'Track title should match');
+            });
+
+            test('Serialization: Complex object with references', () => {
+                const artist = new JsArtist("Complete Artist");
+                const album = new JsAlbum("Complete Album", artist.id());
+                const albumObj = album.toObject();
+                
+                assertTrue(albumObj.artist_id !== null, 'Album should maintain artist reference');
+                assertEqual(albumObj.name, "Complete Album", 'Album name should be preserved');
+            });
+        }
+
+        function displayResults() {
+            const resultsDiv = document.getElementById('results');
+            const summaryDiv = document.getElementById('summary');
+            
+            const passed = testResults.filter(r => r.passed).length;
+            const failed = testResults.filter(r => r.passed === false).length;
+            
+            document.getElementById('passCount').textContent = passed;
+            document.getElementById('failCount').textContent = failed;
+            document.getElementById('totalCount').textContent = testResults.length;
+            summaryDiv.style.display = 'block';
+
+            let html = '';
+            const groups = {
+                'Artist': testResults.filter(t => t.name.startsWith('Artist:')),
+                'Album': testResults.filter(t => t.name.startsWith('Album:')),
+                'Playlist': testResults.filter(t => t.name.startsWith('Playlist:')),
+                'Track': testResults.filter(t => t.name.startsWith('Track:')),
+                'ID': testResults.filter(t => t.name.startsWith('ID:')),
+                'Serialization': testResults.filter(t => t.name.startsWith('Serialization:'))
+            };
+
+            for (const [groupName, tests] of Object.entries(groups)) {
+                if (tests.length === 0) continue;
+                
+                html += `<h2>${groupName} Tests (${tests.filter(t => t.passed).length}/${tests.length})</h2>`;
+                html += '<div class="test-group">';
+                
+                for (const test of tests) {
+                    const status = test.passed ? 'pass' : 'fail';
+                    const icon = test.passed ? '✅' : '❌';
+                    html += `
+                        <div class="test-case ${status}">
+                            <div class="test-name">${icon} ${test.name}</div>
+                            <div class="test-result">${test.message}</div>
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+            }
+
+            resultsDiv.innerHTML = html;
+        }
+
+        window.clearResults = function() {
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('summary').style.display = 'none';
+            testResults = [];
+        };
+
+        // Auto-load WASM on page load
+        loadWasm();
+    </script>
+</body>
+</html>

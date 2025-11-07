@@ -8,3 +8,6 @@ pub mod sqlite_native;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use sqlite_native::SqliteAdapter;
+
+#[cfg(target_arch = "wasm32")]
+pub use bridge_wasm::database::WasmDbAdapter;

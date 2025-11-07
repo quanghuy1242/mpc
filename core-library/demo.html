@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Core Library - Complete Demo</title>
+    <meta charset="utf-8">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+            margin: 10px 0;
+        }
+        
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .panels {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .panel {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .panel h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+        
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+        
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        button.secondary {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+        }
+        
+        button.success {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
+        }
+        
+        .output {
+            background: #1e1e1e;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            max-height: 400px;
+            overflow-y: auto;
+            box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+        
+        .output:empty::before {
+            content: 'Output will appear here...';
+            color: #666;
+            font-style: italic;
+        }
+        
+        .log-line {
+            margin-bottom: 8px;
+            padding: 4px 0;
+        }
+        
+        .log-time {
+            color: #888;
+            margin-right: 10px;
+        }
+        
+        .log-success { color: #4ade80; }
+        .log-error { color: #f87171; }
+        .log-info { color: #60a5fa; }
+        .log-warning { color: #fbbf24; }
+        
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 10px;
+            font-family: inherit;
+        }
+        
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+            font-size: 13px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .alert {
+            background: rgba(251, 191, 36, 0.1);
+            border-left: 4px solid #fbbf24;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            color: #92400e;
+        }
+        
+        .alert strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        @media (max-width: 1024px) {
+            .panels {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎵 Core Library Complete Demo</h1>
+            <div class="subtitle">Testing all models and database operations</div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-label">WASM Status</div>
+                <div class="stat-value" id="wasmStatus">⏳</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Database</div>
+                <div class="stat-value" id="dbStatus">⏳</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Artists</div>
+                <div class="stat-value" id="artistCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Operations</div>
+                <div class="stat-value" id="opCount">0</div>
+            </div>
+        </div>
+
+        <div class="panels">
+            <!-- Models Testing -->
+            <div class="panel">
+                <h2>📦 Model Testing</h2>
+                <div class="button-group">
+                    <button onclick="testArtistModel()">Test Artist</button>
+                    <button onclick="testAlbumModel()">Test Album</button>
+                    <button onclick="testTrackModel()">Test Track</button>
+                    <button onclick="testPlaylistModel()">Test Playlist</button>
+                    <button onclick="testAllModels()" class="success">Test All Models</button>
+                </div>
+                <div id="modelOutput" class="output"></div>
+            </div>
+
+            <!-- Database Operations -->
+            <div class="panel">
+                <h2>🗄️ Database Operations</h2>
+                <div class="alert" style="background: rgba(74, 222, 128, 0.1); border-left-color: #4ade80; color: #166534;">
+                    <strong>✅ JavaScript Bridge Active</strong>
+                    Using sql.js + IndexedDB for persistence. Data is automatically saved.
+                </div>
+                <div class="button-group">
+                    <button onclick="initDatabase()" id="initBtn">Initialize DB</button>
+                    <button onclick="testCRUD()" id="crudBtn" disabled>Test CRUD</button>
+                    <button onclick="testSearch()" id="searchBtn" disabled>Test Search</button>
+                    <button onclick="clearDatabase()" id="clearBtn" disabled class="secondary">Clear DB</button>
+                </div>
+                <div id="dbOutput" class="output"></div>
+            </div>
+
+            <!-- Create Artist -->
+            <div class="panel">
+                <h2>➕ Create Artist</h2>
+                <div class="form-group">
+                    <label>Artist Name</label>
+                    <input type="text" id="artistName" placeholder="Enter artist name" value="Pink Floyd">
+                </div>
+                <div class="form-group">
+                    <label>Biography (optional)</label>
+                    <textarea id="artistBio" rows="3" placeholder="Artist biography">Progressive rock pioneers from London</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Country (optional)</label>
+                    <input type="text" id="artistCountry" placeholder="Country code (e.g., GB)" value="GB">
+                </div>
+                <div class="button-group">
+                    <button onclick="createArtist()" id="createBtn" disabled>Create Artist</button>
+                    <button onclick="createSampleData()" id="sampleBtn" disabled class="success">Add Sample Data</button>
+                </div>
+            </div>
+
+            <!-- Query Artists -->
+            <div class="panel">
+                <h2>🔍 Query Artists</h2>
+                <div class="form-group">
+                    <label>Search Query</label>
+                    <input type="text" id="searchQuery" placeholder="Search artists..." value="pink">
+                </div>
+                <div class="button-group">
+                    <button onclick="listAllArtists()" id="listBtn" disabled>List All</button>
+                    <button onclick="searchArtists()" id="searchArtistsBtn" disabled>Search</button>
+                    <button onclick="getArtistCount()" id="countBtn" disabled>Get Count</button>
+                </div>
+                <div id="queryOutput" class="output"></div>
+            </div>
+
+            <!-- Full Console -->
+            <div class="panel full-width">
+                <h2>📋 Full Console Log</h2>
+                <button onclick="clearConsole()">Clear Console</button>
+                <button onclick="exportLog()" class="secondary">Export Log</button>
+                <div id="consoleOutput" class="output"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load the JavaScript bridge first -->
+    <script type="module" src="./bridge-db.js"></script>
+    
+    <script type="module">
+        import init, { 
+            JsArtist, JsAlbum, JsTrack, JsPlaylist,
+            JsDatabase,
+            version, name as libName
+        } from './pkg/core_library.js';
+
+        let wasm, db;
+        let opCount = 0;
+        let artistCount = 0;
+
+        // Logging utilities
+        function log(message, type = 'info', outputId = 'consoleOutput') {
+            const output = document.getElementById(outputId);
+            const time = new Date().toLocaleTimeString();
+            const line = document.createElement('div');
+            line.className = 'log-line';
+            line.innerHTML = `<span class="log-time">[${time}]</span><span class="log-${type}">${message}</span>`;
+            output.appendChild(line);
+            output.scrollTop = output.scrollHeight;
+            
+            // Also log to main console
+            if (outputId !== 'consoleOutput') {
+                log(message, type, 'consoleOutput');
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('opCount').textContent = opCount;
+            document.getElementById('artistCount').textContent = artistCount;
+        }
+
+        function enableDbButtons(enabled) {
+            ['crudBtn', 'searchBtn', 'clearBtn', 'createBtn', 'sampleBtn', 'listBtn', 'searchArtistsBtn', 'countBtn'].forEach(id => {
+                document.getElementById(id).disabled = !enabled;
+            });
+        }
+
+        // Initialize WASM
+        (async () => {
+            try {
+                wasm = await init();
+                document.getElementById('wasmStatus').textContent = '✅';
+                log(`✅ WASM loaded successfully!`, 'success');
+                log(`📦 Library: ${libName()} v${version()}`, 'info');
+                log(`📊 Size: 294 KB`, 'info');
+                log(``, 'info');
+                
+                // Check if bridge is loaded
+                if (window.bridgeWasmDb) {
+                    log(`✅ JavaScript bridge loaded (sql.js + IndexedDB)`, 'success');
+                } else {
+                    log(`⚠️  JavaScript bridge not loaded`, 'warning');
+                }
+                
+                log(``, 'info');
+                log(`✨ Ready! Try "Test All Models" or "Initialize DB"`, 'success');
+            } catch (error) {
+                document.getElementById('wasmStatus').textContent = '❌';
+                log(`❌ Failed to load WASM: ${error}`, 'error');
+            }
+        })();
+
+        // Model Testing
+        window.testArtistModel = function() {
+            try {
+                log('🎤 Testing Artist model...', 'info', 'modelOutput');
+                
+                const artist = new JsArtist('The Beatles');
+                log(`✓ Created: ${artist.name()}`, 'success', 'modelOutput');
+                log(`  ID: ${artist.id()}`, 'info', 'modelOutput');
+                log(`  Normalized: ${artist.normalizedName()}`, 'info', 'modelOutput');
+                
+                artist.validate();
+                log(`✓ Validation passed`, 'success', 'modelOutput');
+                
+                const json = artist.toJson();
+                log(`✓ JSON: ${json.substring(0, 50)}...`, 'success', 'modelOutput');
+                
+                const restored = JsArtist.fromJson(json);
+                log(`✓ Restored: ${restored.name()}`, 'success', 'modelOutput');
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Artist test failed: ${error}`, 'error', 'modelOutput');
+            }
+        };
+
+        window.testAlbumModel = function() {
+            try {
+                log('💿 Testing Album model...', 'info', 'modelOutput');
+                
+                const album = new JsAlbum('Dark Side of the Moon', null);
+                log(`✓ Created: ${album.name()}`, 'success', 'modelOutput');
+                log(`  ID: ${album.id()}`, 'info', 'modelOutput');
+                log(`  Tracks: ${album.trackCount()}`, 'info', 'modelOutput');
+                
+                album.validate();
+                log(`✓ Validation passed`, 'success', 'modelOutput');
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Album test failed: ${error}`, 'error', 'modelOutput');
+            }
+        };
+
+        window.testTrackModel = function() {
+            try {
+                log('🎵 Testing Track model...', 'info', 'modelOutput');
+                
+                const track = new JsTrack('Bohemian Rhapsody', 354000);
+                log(`✓ Created: ${track.title()}`, 'success', 'modelOutput');
+                log(`  Duration: ${(track.durationMs() / 1000).toFixed(0)}s`, 'info', 'modelOutput');
+                
+                track.validate();
+                log(`✓ Validation passed`, 'success', 'modelOutput');
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Track test failed: ${error}`, 'error', 'modelOutput');
+            }
+        };
+
+        window.testPlaylistModel = function() {
+            try {
+                log('📝 Testing Playlist model...', 'info', 'modelOutput');
+                
+                const playlist = new JsPlaylist('My Favorites');
+                log(`✓ Created: ${playlist.name()}`, 'success', 'modelOutput');
+                log(`  Type: ${playlist.ownerType()}`, 'info', 'modelOutput');
+                log(`  Tracks: ${playlist.trackCount()}`, 'info', 'modelOutput');
+                
+                playlist.validate();
+                log(`✓ Validation passed`, 'success', 'modelOutput');
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Playlist test failed: ${error}`, 'error', 'modelOutput');
+            }
+        };
+
+        window.testAllModels = async function() {
+            log('🚀 Running all model tests...', 'info', 'modelOutput');
+            testArtistModel();
+            await new Promise(r => setTimeout(r, 100));
+            testAlbumModel();
+            await new Promise(r => setTimeout(r, 100));
+            testTrackModel();
+            await new Promise(r => setTimeout(r, 100));
+            testPlaylistModel();
+            log('✅ All model tests completed!', 'success', 'modelOutput');
+        };
+
+        // Database Operations
+        window.initDatabase = async function() {
+            try {
+                log('🔧 Initializing database...', 'info', 'dbOutput');
+                
+                db = await JsDatabase.create('sqlite::memory:');
+                log('✅ Database instance created', 'success', 'dbOutput');
+                
+                await db.initialize();
+                log('✅ Database initialized (migrations run)', 'success', 'dbOutput');
+                
+                document.getElementById('dbStatus').textContent = '✅';
+                document.getElementById('initBtn').disabled = true;
+                enableDbButtons(true);
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Database initialization failed: ${error}`, 'error', 'dbOutput');
+                if (!window.bridgeWasmDb) {
+                    log(`   bridgeWasmDb not found - is bridge-db.js loaded?`, 'warning', 'dbOutput');
+                }
+                document.getElementById('dbStatus').textContent = '❌';
+            }
+        };
+
+        window.createArtist = async function() {
+            try {
+                const name = document.getElementById('artistName').value.trim();
+                const bio = document.getElementById('artistBio').value.trim();
+                const country = document.getElementById('artistCountry').value.trim();
+                
+                if (!name) {
+                    log('⚠️ Artist name is required', 'warning', 'dbOutput');
+                    return;
+                }
+                
+                log(`➕ Creating artist: ${name}...`, 'info', 'dbOutput');
+                
+                const artist = new JsArtist(name);
+                if (bio) {
+                    // Note: Would need to expose bio/country setters in Rust
+                    log('  (Bio and country not yet exposed to JS)', 'info', 'dbOutput');
+                }
+                
+                await db.insertArtist(artist);
+                log(`✅ Artist created: ${name}`, 'success', 'dbOutput');
+                log(`   ID: ${artist.id()}`, 'info', 'dbOutput');
+                
+                artistCount++;
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Failed to create artist: ${error}`, 'error', 'dbOutput');
+            }
+        };
+
+        window.createSampleData = async function() {
+            try {
+                const artists = [
+                    'The Beatles',
+                    'Pink Floyd',
+                    'Led Zeppelin',
+                    'Queen',
+                    'AC/DC',
+                    'The Rolling Stones',
+                    'Nirvana',
+                    'Radiohead'
+                ];
+                
+                log(`➕ Adding ${artists.length} sample artists...`, 'info', 'dbOutput');
+                
+                for (const name of artists) {
+                    const artist = new JsArtist(name);
+                    await db.insertArtist(artist);
+                    log(`  ✓ ${name}`, 'success', 'dbOutput');
+                }
+                
+                artistCount += artists.length;
+                opCount++;
+                updateStats();
+                log(`✅ Sample data added successfully!`, 'success', 'dbOutput');
+            } catch (error) {
+                log(`❌ Failed to add sample data: ${error}`, 'error', 'dbOutput');
+            }
+        };
+
+        window.listAllArtists = async function() {
+            try {
+                log('📋 Fetching all artists...', 'info', 'queryOutput');
+                
+                const artists = await db.listArtists();
+                artistCount = artists.length;
+                updateStats();
+                
+                log(`Found ${artists.length} artists:`, 'success', 'queryOutput');
+                artists.forEach((artist, index) => {
+                    log(`  ${index + 1}. ${artist.name()} (${artist.id()})`, 'info', 'queryOutput');
+                });
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Failed to list artists: ${error}`, 'error', 'queryOutput');
+            }
+        };
+
+        window.searchArtists = async function() {
+            try {
+                const query = document.getElementById('searchQuery').value.trim();
+                if (!query) {
+                    log('⚠️ Search query is required', 'warning', 'queryOutput');
+                    return;
+                }
+                
+                log(`🔍 Searching for: "${query}"...`, 'info', 'queryOutput');
+                
+                const artists = await db.searchArtists(query, 10);
+                log(`Found ${artists.length} matches:`, 'success', 'queryOutput');
+                artists.forEach((artist, index) => {
+                    log(`  ${index + 1}. ${artist.name()}`, 'info', 'queryOutput');
+                });
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Search failed: ${error}`, 'error', 'queryOutput');
+            }
+        };
+
+        window.getArtistCount = async function() {
+            try {
+                log('🔢 Counting artists...', 'info', 'queryOutput');
+                
+                const count = await db.countArtists();
+                artistCount = count;
+                updateStats();
+                
+                log(`Total artists: ${count}`, 'success', 'queryOutput');
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Count failed: ${error}`, 'error', 'queryOutput');
+            }
+        };
+
+        window.testCRUD = async function() {
+            try {
+                log('🧪 Testing CRUD operations...', 'info', 'dbOutput');
+                
+                // Create
+                log('1️⃣ CREATE...', 'info', 'dbOutput');
+                const artist = new JsArtist('Test Artist');
+                await db.insertArtist(artist);
+                log(`  ✓ Created: ${artist.name()} (${artist.id()})`, 'success', 'dbOutput');
+                
+                // Read
+                log('2️⃣ READ...', 'info', 'dbOutput');
+                const retrieved = await db.getArtist(artist.id());
+                if (retrieved) {
+                    log(`  ✓ Retrieved: ${retrieved.name()}`, 'success', 'dbOutput');
+                } else {
+                    throw new Error('Artist not found');
+                }
+                
+                // Update would go here (not yet exposed)
+                log('3️⃣ UPDATE...', 'info', 'dbOutput');
+                log(`  ⚠️ Update not yet exposed to JS`, 'warning', 'dbOutput');
+                
+                // Delete
+                log('4️⃣ DELETE...', 'info', 'dbOutput');
+                const deleted = await db.deleteArtist(artist.id());
+                log(`  ✓ Deleted: ${deleted}`, 'success', 'dbOutput');
+                
+                log('✅ CRUD test completed!', 'success', 'dbOutput');
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ CRUD test failed: ${error}`, 'error', 'dbOutput');
+            }
+        };
+
+        window.testSearch = async function() {
+            try {
+                log('🔍 Testing search functionality...', 'info', 'dbOutput');
+                
+                // Add test data
+                const testArtists = ['Pink Floyd', 'Pink Panther', 'The Beatles'];
+                for (const name of testArtists) {
+                    const artist = new JsArtist(name);
+                    await db.insertArtist(artist);
+                }
+                
+                // Search
+                const results = await db.searchArtists('pink', 10);
+                log(`Found ${results.length} artists matching "pink":`, 'success', 'dbOutput');
+                results.forEach(a => log(`  • ${a.name()}`, 'info', 'dbOutput'));
+                
+                opCount++;
+                updateStats();
+            } catch (error) {
+                log(`❌ Search test failed: ${error}`, 'error', 'dbOutput');
+            }
+        };
+
+        window.clearDatabase = async function() {
+            if (!confirm('Are you sure you want to clear all data?')) return;
+            
+            try {
+                log('🗑️ Clearing database...', 'info', 'dbOutput');
+                
+                const artists = await db.listArtists();
+                for (const artist of artists) {
+                    await db.deleteArtist(artist.id());
+                }
+                
+                artistCount = 0;
+                updateStats();
+                log('✅ Database cleared', 'success', 'dbOutput');
+            } catch (error) {
+                log(`❌ Failed to clear database: ${error}`, 'error', 'dbOutput');
+            }
+        };
+
+        window.clearConsole = function() {
+            document.getElementById('consoleOutput').innerHTML = '';
+        };
+
+        window.exportLog = function() {
+            const output = document.getElementById('consoleOutput').innerText;
+            const blob = new Blob([output], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `core-library-log-${Date.now()}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+
+        // Expose to window for easy debugging
+        window.wasm = wasm;
+        window.db = db;
+    </script>
+</body>
+</html>
