@@ -661,6 +661,11 @@ impl SyncCoordinator {
     }
 
     /// Execute the sync operation
+    ///
+    /// High-level orchestrator that coordinates the three main phases of sync:
+    /// 1. Discovery: List files (full) or get changes (incremental)
+    /// 2. Processing: Download and extract metadata
+    /// 3. Conflict Resolution: Handle duplicates and deletions
     #[instrument(skip(self, cancellation_token))]
     async fn execute_sync(
         &self,
@@ -695,10 +700,109 @@ impl SyncCoordinator {
                 job_id: job_id.to_string(),
             })?;
 
-        // Phase 1: List files
-        info!("Phase 1: Listing files from provider");
+        // Phase 1: Discovery
+        info!("Phase 1: Discovery - {} sync", job.sync_type);
+        let (audio_files, new_cursor, provider_file_ids) = self
+            .discovery_phase(&mut job, &provider, &cancellation_token)
+            .await?;
+
+        // Update cursor if we got a new one
+        if let Some(cursor) = new_cursor {
+            job.update_cursor(cursor)?;
+            self.job_repository.update(self.db.as_ref(), &job).await?;
+            info!("Updated sync cursor");
+        }
+
+        // Phase 2: Processing
+        info!("Phase 2: Processing {} audio files", audio_files.len());
+        let stats = self
+            .processing_phase(&mut job, &provider, &session.provider.to_string(), audio_files, &cancellation_token)
+            .await?;
+
+        // Phase 3: Conflict Resolution
+        info!("Phase 3: Resolving conflicts");
+        let conflict_stats = self
+            .conflict_resolution_phase(&job_id, &session.provider.to_string(), &provider_file_ids)
+            .await?;
+
+        // Combine stats
+        let final_stats = SyncJobStats {
+            items_added: stats.items_added,
+            items_updated: stats.items_updated,
+            items_deleted: conflict_stats.total_deleted(),
+            items_failed: stats.items_failed,
+        };
+
+        // Complete sync job
+        info!("Completing sync job");
+        let completed_job = job.complete(final_stats)?;
+        self.job_repository
+            .update(self.db.as_ref(), &completed_job)
+            .await?;
+        let duration_secs = chrono::Utc::now().timestamp() - completed_job.started_at.unwrap_or(0);
+
+        // Emit completion event
+        self.event_bus
+            .emit(CoreEvent::Sync(SyncEvent::Completed {
+                job_id: job_id.to_string(),
+                items_processed: stats.items_added + stats.items_updated,
+                items_added: stats.items_added,
+                items_updated: stats.items_updated,
+                items_deleted: conflict_stats.total_deleted(),
+                duration_secs: duration_secs.max(0) as u64,
+            }))
+            .ok();
+
+        info!(
+            "Sync job {} completed: {} added, {} updated, {} deleted, {} failed",
+            job_id, final_stats.items_added, final_stats.items_updated, final_stats.items_deleted, final_stats.items_failed
+        );
+
+        Ok(())
+    }
+
+    /// Phase 1: Discovery
+    ///
+    /// Discovers files to sync based on sync type:
+    /// - Full sync: Lists all media from provider
+    /// - Incremental sync: Gets changes since last cursor
+    ///
+    /// Returns: (audio_files, new_cursor, provider_file_ids)
+    #[instrument(skip(self, job, provider, cancellation_token))]
+    async fn discovery_phase(
+        &self,
+        job: &mut SyncJob,
+        provider: &Arc<dyn StorageProvider>,
+        cancellation_token: &CancellationToken,
+    ) -> Result<(
+        Vec<RemoteFile>,
+        Option<String>,
+        std::collections::HashSet<String>,
+    )> {
+        match job.sync_type {
+            SyncType::Full => self.discovery_full_sync(job, provider, cancellation_token).await,
+            SyncType::Incremental => {
+                self.discovery_incremental_sync(job, provider, cancellation_token)
+                    .await
+            }
+        }
+    }
+
+    /// Full sync discovery: List all media from provider
+    #[instrument(skip(self, job, provider, cancellation_token))]
+    async fn discovery_full_sync(
+        &self,
+        job: &mut SyncJob,
+        provider: &Arc<dyn StorageProvider>,
+        cancellation_token: &CancellationToken,
+    ) -> Result<(
+        Vec<RemoteFile>,
+        Option<String>,
+        std::collections::HashSet<String>,
+    )> {
+        info!("Starting full sync discovery");
         let mut all_files = Vec::new();
-        let mut cursor = job.cursor.clone();
+        let mut cursor = None;
         let mut page_count = 0;
 
         loop {
@@ -722,14 +826,14 @@ impl SyncCoordinator {
                 0, // Total unknown during discovery
                 &format!("Discovered {} files", all_files.len()),
             )?;
-            self.job_repository.update(self.db.as_ref(), &job).await?;
+            self.job_repository.update(self.db.as_ref(), job).await?;
 
             // Emit progress event
             self.event_bus
                 .emit(CoreEvent::Sync(SyncEvent::Progress {
-                    job_id: job_id.to_string(),
+                    job_id: job.id.to_string(),
                     items_processed: all_files.len() as u64,
-                    total_items: None, // Unknown during discovery
+                    total_items: None,
                     percent: 0,
                     phase: "discovering".to_string(),
                 }))
@@ -743,39 +847,159 @@ impl SyncCoordinator {
 
         info!("Discovered {} total files", all_files.len());
 
-        // Phase 2: Filter audio files
-        info!("Phase 2: Filtering audio files");
+        // Filter to audio files only
         let audio_files = self.filter_audio_files(all_files);
         info!("Filtered to {} audio files", audio_files.len());
 
+        // Build set of provider file IDs
+        let provider_file_ids: std::collections::HashSet<String> =
+            audio_files.iter().map(|f| f.id.clone()).collect();
+
+        Ok((audio_files, cursor, provider_file_ids))
+    }
+
+    /// Incremental sync discovery: Get changes since cursor
+    #[instrument(skip(self, job, provider, cancellation_token))]
+    async fn discovery_incremental_sync(
+        &self,
+        job: &mut SyncJob,
+        provider: &Arc<dyn StorageProvider>,
+        cancellation_token: &CancellationToken,
+    ) -> Result<(
+        Vec<RemoteFile>,
+        Option<String>,
+        std::collections::HashSet<String>,
+    )> {
+        info!("Starting incremental sync discovery");
+
+        // Get cursor from job
+        let cursor = job.cursor.clone();
+        
+        if cursor.is_none() {
+            warn!("No cursor found for incremental sync, falling back to full sync");
+            return self.discovery_full_sync(job, provider, cancellation_token).await;
+        }
+
+        let cursor = cursor.unwrap();
+        info!("Fetching changes since cursor: {}", cursor);
+
+        // Get changes from provider
+        let (changes, new_cursor) = provider
+            .get_changes(Some(cursor.clone()))
+            .await
+            .map_err(|e| {
+                warn!("Failed to get incremental changes: {}", e);
+                SyncError::Provider(format!("Failed to get changes: {}", e))
+            })?;
+
+        info!("Received {} changes from provider", changes.len());
+
+        // Separate changes by type
+        let mut added_modified = Vec::new();
+        let mut deleted_ids = Vec::new();
+
+        for change in changes {
+            if cancellation_token.is_cancelled() {
+                return Err(SyncError::Cancelled);
+            }
+
+            // Check if file is marked as deleted (provider-specific)
+            // Common pattern: deleted files have a trashed/deleted field in metadata
+            let is_deleted = change.metadata.get("trashed").map(|v| v == "true").unwrap_or(false)
+                || change.metadata.get("deleted").map(|v| v == "true").unwrap_or(false);
+
+            if is_deleted {
+                deleted_ids.push(change.id.clone());
+                info!("File deleted: {} ({})", change.name, change.id);
+            } else if !change.is_folder {
+                // Only process non-folder files
+                added_modified.push(change);
+            }
+        }
+
+        info!(
+            "Changes breakdown: {} added/modified, {} deleted",
+            added_modified.len(),
+            deleted_ids.len()
+        );
+
+        // Process deletions immediately using ConflictResolver
+        if !deleted_ids.is_empty() {
+            info!("Processing {} deletions", deleted_ids.len());
+            for deleted_id in &deleted_ids {
+                if cancellation_token.is_cancelled() {
+                    return Err(SyncError::Cancelled);
+                }
+
+                // Soft delete by default (preserves metadata, marks as unavailable)
+                match self.conflict_resolver.handle_deletion(deleted_id, false).await {
+                    Ok(result) => match result {
+                        crate::conflict_resolver::ResolutionResult::Deleted { track_id } => {
+                            debug!("Marked track {} as deleted: {}", track_id, deleted_id);
+                        }
+                        crate::conflict_resolver::ResolutionResult::NoAction => {
+                            debug!("Track not found for deletion: {}", deleted_id);
+                        }
+                        _ => {}
+                    },
+                    Err(e) => {
+                        warn!("Failed to handle deletion for {}: {}", deleted_id, e);
+                    }
+                }
+            }
+        }
+
+        // Filter added/modified files to audio only
+        let audio_files = self.filter_audio_files(added_modified);
+        info!("Filtered to {} audio files for processing", audio_files.len());
+
+        // For incremental sync, we need all current provider file IDs
+        // This requires a full list query, but we can optimize by querying the database
+        // For now, we'll build the set from the changes (this is approximate)
+        // TODO: Consider querying database for all known provider file IDs
+        let provider_file_ids: std::collections::HashSet<String> =
+            audio_files.iter().map(|f| f.id.clone()).collect();
+
+        // Update progress
+        job.update_progress(
+            audio_files.len() as u64,
+            audio_files.len() as u64,
+            &format!("Discovered {} changed files", audio_files.len()),
+        )?;
+        self.job_repository.update(self.db.as_ref(), job).await?;
+
+        Ok((audio_files, new_cursor, provider_file_ids))
+    }
+
+    /// Phase 2: Processing
+    ///
+    /// Processes discovered audio files:
+    /// - Enqueues work items
+    /// - Downloads and extracts metadata
+    /// - Updates library database
+    ///
+    /// Returns: SyncJobStats with items added/updated/failed
+    #[instrument(skip(self, job, provider, audio_files, cancellation_token))]
+    async fn processing_phase(
+        &self,
+        job: &mut SyncJob,
+        provider: &Arc<dyn StorageProvider>,
+        provider_id: &str,
+        audio_files: Vec<RemoteFile>,
+        cancellation_token: &CancellationToken,
+    ) -> Result<SyncJobStats> {
         if audio_files.is_empty() {
-            warn!("No audio files found, completing sync");
-            let stats = SyncJobStats {
+            warn!("No audio files to process");
+            return Ok(SyncJobStats {
                 items_added: 0,
                 items_updated: 0,
                 items_deleted: 0,
                 items_failed: 0,
-            };
-            let completed_job = job.complete(stats)?;
-            self.job_repository
-                .update(self.db.as_ref(), &completed_job)
-                .await?;
-            self.event_bus
-                .emit(CoreEvent::Sync(SyncEvent::Completed {
-                    job_id: job_id.to_string(),
-                    items_processed: 0,
-                    items_added: 0,
-                    items_updated: 0,
-                    items_deleted: 0,
-                    duration_secs: completed_job.duration_secs().unwrap_or(0),
-                }))
-                .ok();
-
-            return Ok(());
+            });
         }
 
-        // Phase 3: Enqueue work items
-        info!("Phase 3: Enqueueing {} work items", audio_files.len());
+        // Enqueue work items
+        info!("Enqueueing {} work items", audio_files.len());
         let mut file_name_map: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
 
@@ -793,13 +1017,10 @@ impl SyncCoordinator {
             .with_file_size(file.size.unwrap_or(0) as i64);
 
             self.scan_queue.enqueue(work_item).await?;
-
-            // Map remote_file_id -> file_name for metadata processing
             file_name_map.insert(file.id.clone(), file.name.clone());
         }
 
-        // Phase 4: Process queue with metadata extraction
-        info!("Phase 4: Processing queue with metadata extraction");
+        // Process queue
         let total_items = audio_files.len() as u64;
         let mut processed = 0u64;
         let mut added = 0u64;
@@ -820,8 +1041,6 @@ impl SyncCoordinator {
                         item.remote_file_id, processed, total_items
                     );
 
-                    // Process the work item with metadata extraction
-                    let provider_id = session.provider.to_string();
                     let file_name = file_name_map
                         .get(&item.remote_file_id)
                         .map(|s| s.as_str())
@@ -829,11 +1048,10 @@ impl SyncCoordinator {
 
                     match self
                         .metadata_processor
-                        .process_work_item(&item, &provider, &provider_id, file_name)
+                        .process_work_item(&item, provider, provider_id, file_name)
                         .await
                     {
                         Ok(result) => {
-                            // Update statistics based on result
                             if result.is_new {
                                 added += 1;
                             } else {
@@ -841,7 +1059,6 @@ impl SyncCoordinator {
                             }
                             total_bytes_downloaded += result.bytes_downloaded;
 
-                            // Mark as complete in scan queue
                             if let Err(e) = self.scan_queue.mark_complete(item.id).await {
                                 warn!("Failed to mark item complete: {}", e);
                             }
@@ -858,8 +1075,6 @@ impl SyncCoordinator {
                         Err(e) => {
                             error!("Failed to process work item {}: {}", item.remote_file_id, e);
                             failed += 1;
-
-                            // Mark as failed in scan queue
                             let _ = self
                                 .scan_queue
                                 .mark_failed(item.id, Some(e.to_string()))
@@ -879,23 +1094,21 @@ impl SyncCoordinator {
                             total_bytes_downloaded / (1024 * 1024)
                         ),
                     )?;
-                    self.job_repository.update(self.db.as_ref(), &job).await?;
+                    self.job_repository.update(self.db.as_ref(), job).await?;
 
-                    // Emit progress event every 10 items or at completion
                     if processed.is_multiple_of(10) || processed == total_items {
                         self.event_bus
                             .emit(CoreEvent::Sync(SyncEvent::Progress {
-                                job_id: job_id.to_string(),
+                                job_id: job.id.to_string(),
                                 items_processed: processed,
                                 total_items: Some(total_items),
                                 percent,
-                                phase: "metadata_extraction".to_string(),
+                                phase: "processing".to_string(),
                             }))
                             .ok();
                     }
                 }
                 Ok(None) => {
-                    // No more items in queue
                     info!(
                         "Queue processing complete: {} added, {} updated, {} failed",
                         added, updated, failed
@@ -909,68 +1122,37 @@ impl SyncCoordinator {
             }
         }
 
-        // Phase 5: Detect and resolve conflicts
-        info!("Phase 5: Resolving conflicts");
-
-        // Build a set of provider file IDs from the audio files discovered
-        let provider_file_ids: std::collections::HashSet<String> =
-            audio_files.iter().map(|f| f.id.clone()).collect();
-
-        // Execute conflict resolution workflow
-        let conflict_stats = self
-            .conflict_resolution_orchestrator
-            .resolve_conflicts(&job_id, &session.provider.to_string(), &provider_file_ids)
-            .await
-            .unwrap_or_else(|e| {
-                error!("Conflict resolution failed: {}", e);
-                // Don't fail the entire sync if conflict resolution fails
-                // Return empty stats and continue
-                ConflictResolutionStats::default()
-            });
-
-        info!(
-            "Conflict resolution complete: {} duplicates resolved, {} renames, {} deletions ({} soft, {} hard), {} bytes reclaimed",
-            conflict_stats.duplicates_resolved,
-            conflict_stats.renames_resolved,
-            conflict_stats.total_deleted(),
-            conflict_stats.deletions_soft,
-            conflict_stats.deletions_hard,
-            conflict_stats.space_reclaimed
-        );
-
-        // Phase 6: Complete sync job
-        info!("Phase 6: Completing sync job");
-        let stats = SyncJobStats {
+        Ok(SyncJobStats {
             items_added: added,
             items_updated: updated,
-            items_deleted: conflict_stats.total_deleted(),
+            items_deleted: 0, // Deletions handled in conflict resolution
             items_failed: failed,
-        };
+        })
+    }
 
-        let completed_job = job.complete(stats)?;
-        self.job_repository
-            .update(self.db.as_ref(), &completed_job)
-            .await?;
-        let duration_secs = chrono::Utc::now().timestamp() - completed_job.started_at.unwrap_or(0);
-
-        // Emit completion event
-        self.event_bus
-            .emit(CoreEvent::Sync(SyncEvent::Completed {
-                job_id: job_id.to_string(),
-                items_processed: processed,
-                items_added: added,
-                items_updated: updated,
-                items_deleted: conflict_stats.total_deleted(),
-                duration_secs: duration_secs.max(0) as u64,
-            }))
-            .ok();
-
-        info!(
-            "Sync job {} completed: {} added, {} updated, {} deleted, {} failed",
-            job_id, stats.items_added, stats.items_updated, stats.items_deleted, stats.items_failed
-        );
-
-        Ok(())
+    /// Phase 3: Conflict Resolution
+    ///
+    /// Resolves conflicts and handles cleanup:
+    /// - Detects duplicates
+    /// - Processes renames
+    /// - Handles orphaned tracks
+    ///
+    /// Returns: ConflictResolutionStats
+    #[instrument(skip(self, provider_file_ids))]
+    async fn conflict_resolution_phase(
+        &self,
+        job_id: &SyncJobId,
+        provider_id: &str,
+        provider_file_ids: &std::collections::HashSet<String>,
+    ) -> Result<ConflictResolutionStats> {
+        self.conflict_resolution_orchestrator
+            .resolve_conflicts(job_id, provider_id, provider_file_ids)
+            .await
+            .or_else(|e| {
+                error!("Conflict resolution failed: {}", e);
+                // Don't fail the entire sync
+                Ok(ConflictResolutionStats::default())
+            })
     }
 
     /// Filter files to only audio types
