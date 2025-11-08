@@ -1,10 +1,30 @@
 //! WebAssembly implementations of the secure and settings storage bridges.
 //!
-//! Secrets are encrypted using AES-256-GCM with a randomly generated master
-//! key that is itself persisted (base64 encoded) in `localStorage`. Settings
-//! leverage the same storage backend but store plaintext values since they are
-//! not considered sensitive. Namespaces ensure multiple host shells can coexist
-//! without clobbering each other's data.
+//! # Security Model
+//!
+//! Secrets are encrypted using AES-256-GCM with a randomly generated master key
+//! that is itself persisted (base64 encoded) in `localStorage`. This provides
+//! encryption-at-rest but relies on the browser's same-origin policy as the
+//! primary security boundary.
+//!
+//! **Threat Protection:**
+//! - ✅ Network interception (HTTPS + encrypted storage)
+//! - ✅ Accidental exposure in sync logs or backups
+//! - ✅ Plaintext visibility in browser dev tools
+//! - ✅ Server-side breaches (client-only storage)
+//!
+//! **Known Limitations:**
+//! - ❌ XSS attacks with JavaScript execution (can read localStorage entirely)
+//! - ❌ Malicious browser extensions with storage permissions
+//! - ❌ Physical device access (localStorage is accessible)
+//!
+//! This is the standard approach for browser-based OAuth token storage and aligns
+//! with industry practices. For higher security requirements, use native desktop
+//! builds with OS keychain integration.
+//!
+//! Settings leverage the same storage backend but store plaintext values since
+//! they are not considered sensitive. Namespaces ensure multiple host shells can
+//! coexist without clobbering each other's data.
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
