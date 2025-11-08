@@ -36,7 +36,7 @@ This is a multi-crate workspace with the following modules:
 | core-auth | ✅ | ✅ | OAuth flows |
 | core-library | ✅ | ✅ | Database abstraction |
 | core-metadata | ✅ | ✅ | Tag extraction |
-| core-playback | 🚧 | 🚧 | Audio decoding in progress |
+| core-playback | ✅ | ✅ | Audio decoding in progress |
 | core-sync | ✅ | ✅ | Sync coordinator |
 | core-service | 🚧 | 🚧 | Minor compilation issue |
 | bridge-traits | ✅ | ✅ | Platform abstractions |

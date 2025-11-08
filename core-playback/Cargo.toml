@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-Os', '--enable-bulk-memory', '--enable-nontrapping-float-to-int']
+
 [dependencies]
 bridge-traits = { path = "../bridge-traits" }
 core-runtime = { path = "../core-runtime" }
@@ -47,6 +53,16 @@ hex = "0.4"
 # For SHA-256 hashing
 sha2 = { workspace = true }
 
+# WASM dependencies
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bridge-wasm = { path = "../bridge-wasm" }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+wee_alloc = { version = "0.4", optional = true }
+
 [features]
 default = ["core-decoder", "decoder-mp3", "decoder-flac", "decoder-vorbis"]
 
@@ -80,6 +96,17 @@ http-streaming = ["dep:reqwest"]
 
 # Offline cache encryption
 offline-cache = ["aes-gcm"]
+
+# WASM features
+wasm = ["console_error_panic_hook"]
+wee_alloc_feature = ["wee_alloc"]
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Better optimization
+strip = true        # Strip symbols
+panic = "abort"     # Smaller panic handler
 
 [dev-dependencies]
 mockall = { workspace = true }

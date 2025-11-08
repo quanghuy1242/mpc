@@ -74,6 +74,10 @@ pub mod ring_buffer;
 pub mod streaming;
 pub mod traits;
 
+// WASM bindings
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
+
 // Re-export commonly used types
 pub use config::{StreamingConfig, StreamingState, StreamingStats};
 #[cfg(feature = "core-decoder")]
