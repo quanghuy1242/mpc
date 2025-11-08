@@ -370,7 +370,7 @@
     </div>
 
     <script type="module">
-        import init, { JsAudioDecoder } from './pkg/core_playback.js';
+        import init, { JsAudioDecoder, enableConsoleLogging } from './pkg/core_playback.js';
 
         // Global state
         let wasmDecoder = null;
@@ -415,6 +415,11 @@
         async function initWasm() {
             try {
                 await init();
+                
+                // Enable Rust console logging after WASM is loaded
+                enableConsoleLogging();
+                console.log('📝 Rust console logging initialized');
+                
                 log('✅ WASM decoder initialized successfully', 'info');
                 
                 // Use supported_formats from Rust instead of hard-coding

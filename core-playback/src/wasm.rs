@@ -17,6 +17,21 @@ use bytes::Bytes;
 
 // Note: init_panic_hook is already exported by core-library, no need to duplicate it
 
+/// Enable Rust logging to browser console
+/// Call this once at startup to see tracing logs in DevTools
+#[wasm_bindgen(js_name = enableConsoleLogging)]
+pub fn enable_console_logging() {
+    use core_runtime::logging::{init_logging, LoggingConfig, LogFormat};
+    use bridge_traits::time::LogLevel;
+    
+    let config = LoggingConfig::default()
+        .with_format(LogFormat::Compact)
+        .with_level(LogLevel::Debug);
+    
+    let _ = init_logging(config);
+    web_sys::console::log_1(&"✅ Rust console logging enabled (tracing-wasm)".into());
+}
+
 // =============================================================================
 // Audio Format Types - Exported to JavaScript
 // =============================================================================
