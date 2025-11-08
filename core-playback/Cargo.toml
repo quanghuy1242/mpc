@@ -18,8 +18,19 @@ tracing = { workspace = true }
 bytes = { workspace = true }
 parking_lot = "0.12"
 
-# Audio decoding
+# Audio decoding - Symphonia with format-specific features
+# Core symphonia
 symphonia = { workspace = true, optional = true }
+
+# Format-specific bundles (feature-gated for licensing and binary size)
+symphonia-bundle-mp3 = { version = "0.5", optional = true }
+symphonia-bundle-flac = { version = "0.5", optional = true }
+symphonia-format-ogg = { version = "0.5", optional = true }
+symphonia-codec-vorbis = { version = "0.5", optional = true }
+symphonia-codec-aac = { version = "0.5", optional = true }
+
+# HTTP streaming (optional, native only)
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls"] }
 
 # Cache management
 lru = { workspace = true }
@@ -28,8 +39,37 @@ lru = { workspace = true }
 aes-gcm = { version = "0.10", optional = true }
 
 [features]
-default = ["core-decoder"]
-core-decoder = ["symphonia"]
+default = ["core-decoder", "decoder-mp3", "decoder-flac", "decoder-vorbis"]
+
+# Core decoder feature (enables symphonia)
+core-decoder = [
+    "dep:symphonia",
+]
+
+# Format-specific features (granular control for licensing/size)
+decoder-mp3 = ["core-decoder", "dep:symphonia-bundle-mp3"]
+decoder-flac = ["core-decoder", "dep:symphonia-bundle-flac"]
+decoder-vorbis = ["core-decoder", "dep:symphonia-format-ogg", "dep:symphonia-codec-vorbis"]
+decoder-opus = ["core-decoder", "dep:symphonia-format-ogg"] # Opus codec in core
+decoder-aac = ["core-decoder", "dep:symphonia-codec-aac"]
+decoder-wav = ["core-decoder"] # WAV in core
+decoder-alac = ["core-decoder"] # ALAC in core
+
+# Bundle feature for all decoders
+decoder-all = [
+    "decoder-mp3",
+    "decoder-flac",
+    "decoder-vorbis",
+    "decoder-opus",
+    "decoder-aac",
+    "decoder-wav",
+    "decoder-alac",
+]
+
+# HTTP streaming support (native only)
+http-streaming = ["dep:reqwest"]
+
+# Offline cache encryption
 offline-cache = ["aes-gcm"]
 
 [dev-dependencies]
