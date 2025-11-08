@@ -604,6 +604,178 @@ pub struct Lyrics {
     pub updated_at: i64,
 }
 
+// =============================================================================
+// Cache Models
+// =============================================================================
+
+/// Status of a cached track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheStatus {
+    /// Track is not cached
+    NotCached,
+    /// Download is in progress
+    Downloading,
+    /// Track is fully cached and available
+    Cached,
+    /// Download failed
+    Failed,
+    /// Cache entry is stale/corrupted and needs re-download
+    Stale,
+}
+
+impl CacheStatus {
+    /// Returns true if the track is available for playback.
+    pub fn is_available(&self) -> bool {
+        matches!(self, CacheStatus::Cached)
+    }
+
+    /// Returns true if the track is currently being downloaded.
+    pub fn is_downloading(&self) -> bool {
+        matches!(self, CacheStatus::Downloading)
+    }
+
+    /// Returns true if the track needs to be downloaded or re-downloaded.
+    pub fn needs_download(&self) -> bool {
+        matches!(
+            self,
+            CacheStatus::NotCached | CacheStatus::Failed | CacheStatus::Stale
+        )
+    }
+}
+
+/// Metadata for a cached track.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedTrack {
+    /// Track identifier
+    pub track_id: TrackId,
+    /// File path in cache (relative to cache directory)
+    pub cache_path: String,
+    /// Original file size in bytes
+    pub file_size: u64,
+    /// Size on disk after compression/encryption
+    pub cached_size: u64,
+    /// Content hash for integrity verification (SHA-256)
+    pub content_hash: String,
+    /// Whether the file is encrypted
+    pub encrypted: bool,
+    /// Current status of the cache entry
+    pub status: CacheStatus,
+    /// Number of times this track has been played from cache
+    pub play_count: u32,
+    /// Unix timestamp when track was downloaded to cache
+    pub cached_at: i64,
+    /// Unix timestamp when track was last accessed/played
+    pub last_accessed_at: i64,
+    /// Unix timestamp when download started (for progress tracking)
+    pub download_started_at: Option<i64>,
+    /// Bytes downloaded so far (for progress tracking)
+    pub downloaded_bytes: u64,
+    /// Number of download attempts (for retry logic)
+    pub download_attempts: u32,
+    /// Last error message if download failed
+    pub last_error: Option<String>,
+}
+
+impl CachedTrack {
+    /// Create a new cache entry for a track.
+    pub fn new(track_id: TrackId, cache_path: String, file_size: u64) -> Self {
+        let now = chrono::Utc::now().timestamp();
+
+        Self {
+            track_id,
+            cache_path,
+            file_size,
+            cached_size: 0,
+            content_hash: String::new(),
+            encrypted: false,
+            status: CacheStatus::NotCached,
+            play_count: 0,
+            cached_at: now,
+            last_accessed_at: now,
+            download_started_at: None,
+            downloaded_bytes: 0,
+            download_attempts: 0,
+            last_error: None,
+        }
+    }
+
+    /// Mark the track as currently downloading.
+    pub fn mark_downloading(&mut self) {
+        self.status = CacheStatus::Downloading;
+        self.download_started_at = Some(chrono::Utc::now().timestamp());
+        self.download_attempts += 1;
+    }
+
+    /// Mark the track as successfully cached.
+    pub fn mark_cached(&mut self, cached_size: u64, content_hash: String, encrypted: bool) {
+        self.status = CacheStatus::Cached;
+        self.cached_size = cached_size;
+        self.content_hash = content_hash;
+        self.encrypted = encrypted;
+        self.downloaded_bytes = self.file_size;
+        self.download_started_at = None;
+        self.last_error = None;
+    }
+
+    /// Mark the track download as failed.
+    pub fn mark_failed(&mut self, error: String) {
+        self.status = CacheStatus::Failed;
+        self.last_error = Some(error);
+        self.download_started_at = None;
+    }
+
+    /// Mark the track as stale (needs re-download).
+    pub fn mark_stale(&mut self) {
+        self.status = CacheStatus::Stale;
+    }
+
+    /// Update download progress.
+    pub fn update_progress(&mut self, downloaded_bytes: u64) {
+        self.downloaded_bytes = downloaded_bytes;
+    }
+
+    /// Increment play count and update last accessed time.
+    pub fn record_play(&mut self) {
+        self.play_count += 1;
+        self.last_accessed_at = chrono::Utc::now().timestamp();
+    }
+
+    /// Calculate download progress percentage (0-100).
+    pub fn download_progress(&self) -> u8 {
+        if self.file_size == 0 {
+            return 0;
+        }
+        let percent = (self.downloaded_bytes as f64 / self.file_size as f64) * 100.0;
+        percent.min(100.0) as u8
+    }
+}
+
+/// Cache statistics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CacheStats {
+    /// Total number of tracks in cache
+    pub total_tracks: usize,
+    /// Number of tracks with status = Cached
+    pub cached_tracks: usize,
+    /// Number of tracks currently downloading
+    pub downloading_tracks: usize,
+    /// Number of failed downloads
+    pub failed_tracks: usize,
+    /// Total bytes used by cache
+    pub total_bytes: u64,
+    /// Total bytes of original files
+    pub total_original_bytes: u64,
+    /// Number of encrypted tracks
+    pub encrypted_tracks: usize,
+    /// Total play count across all cached tracks
+    pub total_plays: u64,
+    /// Number of tracks that need eviction
+    pub tracks_pending_eviction: usize,
+    /// Timestamp when stats were calculated
+    pub calculated_at: i64,
+}
+
 impl Lyrics {
     /// Create new lyrics
     pub fn new(track_id: String, source: String, synced: bool, body: String) -> Self {

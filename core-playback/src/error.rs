@@ -146,6 +146,10 @@ pub enum PlaybackError {
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
 
+    /// Library error from core-library.
+    #[error("Library error: {0}")]
+    LibraryError(#[from] core_library::error::LibraryError),
+
     /// Internal error (should not occur in normal operation).
     #[error("Internal error: {0}")]
     Internal(String),

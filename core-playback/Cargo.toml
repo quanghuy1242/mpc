@@ -38,6 +38,15 @@ lru = { workspace = true }
 # Optional: encryption for offline cache
 aes-gcm = { version = "0.10", optional = true }
 
+# For timestamps in cache metadata
+chrono = { workspace = true }
+
+# For hex encoding/decoding encryption keys
+hex = "0.4"
+
+# For SHA-256 hashing
+sha2 = { workspace = true }
+
 [features]
 default = ["core-decoder", "decoder-mp3", "decoder-flac", "decoder-vorbis"]
 

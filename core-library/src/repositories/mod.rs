@@ -24,15 +24,17 @@
 pub mod album;
 pub mod artist;
 pub mod artwork;
+pub mod cache;
 pub mod folder;
 pub mod lyrics;
-mod pagination;
+pub mod pagination;
 pub mod playlist;
 pub mod track;
 
 pub use album::{AlbumRepository, SqliteAlbumRepository};
 pub use artist::{ArtistRepository, SqliteArtistRepository};
 pub use artwork::{ArtworkRepository, SqliteArtworkRepository};
+pub use cache::{CacheMetadataRepository, SqliteCacheMetadataRepository};
 pub use folder::{FolderRepository, SqliteFolderRepository};
 pub use lyrics::{LyricsRepository, SqliteLyricsRepository};
 pub use pagination::{Page, PageRequest};

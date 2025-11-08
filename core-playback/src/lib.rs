@@ -65,6 +65,7 @@
 //! }
 //! ```
 
+pub mod cache;
 pub mod config;
 #[cfg(feature = "core-decoder")]
 pub mod decoder;

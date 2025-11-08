@@ -18,6 +18,9 @@ pub enum LibraryError {
 
     #[error("Migration failed: {0}")]
     Migration(String),
+
+    #[error("Cache error: {0}")]
+    CacheError(String),
 }
 
 pub type Result<T> = std::result::Result<T, LibraryError>;
