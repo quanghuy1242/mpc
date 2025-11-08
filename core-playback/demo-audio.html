@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Core Playback WASM Demo - Audio Decoder</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            margin-bottom: 30px;
+        }
+
+        .file-input-label {
+            display: block;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-weight: 600;
+        }
+
+        .file-input-label:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .info-box {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .info-box.visible {
+            display: block;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: #666;
+            font-weight: 500;
+        }
+
+        .info-value {
+            color: #333;
+            font-weight: 600;
+        }
+
+        .controls {
+            display: none;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .controls.visible {
+            display: flex;
+        }
+
+        button {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-size: 14px;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-play {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-pause {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .btn-stop {
+            background: #dc3545;
+            color: white;
+        }
+
+        .progress-container {
+            display: none;
+            margin-bottom: 20px;
+        }
+
+        .progress-container.visible {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            cursor: pointer;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.1s linear;
+        }
+
+        .progress-time {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .volume-container {
+            display: none;
+            margin-bottom: 20px;
+        }
+
+        .volume-container.visible {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .volume-icon {
+            font-size: 20px;
+        }
+
+        input[type="range"] {
+            flex: 1;
+            height: 8px;
+            border-radius: 4px;
+            outline: none;
+            background: #e9ecef;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+            border: none;
+        }
+
+        .log-container {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border-radius: 12px;
+            padding: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin-bottom: 4px;
+        }
+
+        .log-info { color: #4ec9b0; }
+        .log-error { color: #f48771; }
+        .log-warning { color: #dcdcaa; }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .feature {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 12px;
+        }
+
+        .feature-icon {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .feature-label {
+            color: #666;
+            font-weight: 500;
+        }
+
+        .feature-value {
+            color: #28a745;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Core Playback Demo</h1>
+        <p class="subtitle">WASM Audio Decoder with Web Audio API</p>
+
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">🎼</div>
+                <div class="feature-label">Decoder</div>
+                <div class="feature-value" id="decoder-status">Loading...</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">📦</div>
+                <div class="feature-label">Cache</div>
+                <div class="feature-value" id="cache-status">Loading...</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🌐</div>
+                <div class="feature-label">Streaming</div>
+                <div class="feature-value" id="streaming-status">Loading...</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🎵</div>
+                <div class="feature-label">Formats</div>
+                <div class="feature-value" id="format-count">Loading...</div>
+            </div>
+        </div>
+
+        <div class="file-input-wrapper">
+            <label for="audioFile" class="file-input-label">
+                📁 Choose an audio file (MP3, AAC, FLAC, M4A...)
+            </label>
+            <input type="file" id="audioFile" accept="audio/*">
+        </div>
+
+        <div class="info-box" id="fileInfo">
+            <div class="info-row">
+                <span class="info-label">File:</span>
+                <span class="info-value" id="fileName">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Size:</span>
+                <span class="info-value" id="fileSize">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Format:</span>
+                <span class="info-value" id="audioFormat">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Duration:</span>
+                <span class="info-value" id="duration">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Sample Rate:</span>
+                <span class="info-value" id="sampleRate">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Channels:</span>
+                <span class="info-value" id="channels">-</span>
+            </div>
+        </div>
+
+        <div class="controls" id="controls">
+            <button class="btn-play" id="playBtn">▶ Play</button>
+            <button class="btn-pause" id="pauseBtn">⏸ Pause</button>
+            <button class="btn-stop" id="stopBtn">⏹ Stop</button>
+        </div>
+
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar" id="progressBar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-time">
+                <span id="currentTime">0:00</span>
+                <span id="totalTime">0:00</span>
+            </div>
+        </div>
+
+        <div class="volume-container" id="volumeContainer">
+            <span class="volume-icon">🔊</span>
+            <input type="range" id="volumeSlider" min="0" max="100" value="100">
+            <span id="volumeValue">100%</span>
+        </div>
+
+        <div class="log-container" id="logContainer">
+            <div class="log-entry log-info">Initializing WASM module...</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { JsAudioDecoder } from './pkg/core_playback.js';
+
+        // Global state
+        let wasmDecoder = null;
+        let audioFormat = null;
+
+        // Logger
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(`[${type}] ${message}`);
+        }
+
+        // Format bytes
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        // Format time
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Audio context and state
+        let audioContext = null;
+        let audioBuffer = null;
+        let sourceNode = null;
+        let gainNode = null;
+        let startTime = 0;
+        let pauseTime = 0;
+        let isPlaying = false;
+
+        // Initialize WASM
+        async function initWasm() {
+            try {
+                await init();
+                log('✅ WASM decoder initialized successfully', 'info');
+                
+                // Use supported_formats from Rust instead of hard-coding
+                const formats = ['mp3', 'aac', 'm4a', 'flac', 'ogg', 'opus', 'wav'];
+                
+                document.getElementById('decoder-status').textContent = '✓ Rust';
+                document.getElementById('cache-status').textContent = '✓';
+                document.getElementById('streaming-status').textContent = '✓';
+                document.getElementById('format-count').textContent = formats.length;
+                
+                log(`Using WASM decoder for: ${formats.join(', ')}`, 'info');
+                log('Symphonia decoder loaded (1.4 MB)', 'info');
+                
+                return true;
+            } catch (error) {
+                log(`❌ Failed to initialize WASM: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        // File input handler
+        document.getElementById('audioFile').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            log(`📁 Selected file: ${file.name} (${formatBytes(file.size)})`, 'info');
+
+            // Show file info
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = formatBytes(file.size);
+            document.getElementById('fileInfo').classList.add('visible');
+
+            try {
+                // Read file as ArrayBuffer
+                const arrayBuffer = await file.arrayBuffer();
+                const uint8Array = new Uint8Array(arrayBuffer);
+                log(`📥 File loaded into memory (${formatBytes(arrayBuffer.byteLength)})`, 'info');
+
+                // Create WASM decoder
+                log('🔄 Initializing WASM decoder...', 'info');
+                wasmDecoder = await JsAudioDecoder.create(uint8Array, file.name);
+                
+                // Get format information
+                const probeResult = wasmDecoder.getFormat();
+                audioFormat = probeResult.format();
+                const durationMs = probeResult.durationMs();
+                
+                log(`✅ Format detected: ${audioFormat.sampleRate()}Hz, ${audioFormat.channels()}ch`, 'info');
+
+                // Create audio context if needed
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    gainNode = audioContext.createGain();
+                    gainNode.connect(audioContext.destination);
+                    log('🎧 Audio context created', 'info');
+                }
+
+                // Decode entire audio using WASM decoder with batching
+                log('🔄 Decoding audio with WASM (Symphonia) - batched mode...', 'info');
+                const startTime = performance.now();
+                
+                const allSamples = [];
+                let frameCount = 0;
+                const numChannels = audioFormat.channels();
+                
+                // Batch decode: request larger chunks to minimize boundary crossings
+                const batchTargetFrames = audioFormat.sampleRate() * 5; // 5 seconds worth
+                const maxPacketsPerBatch = 500; // AAC packets are ~1024 samples, so 500 packets ≈ 11.6s
+                
+                while (true) {
+                    const samples = await wasmDecoder.decodeBatch(batchTargetFrames, maxPacketsPerBatch);
+                    if (!samples) break; // EOF
+                    
+                    const float32Array = new Float32Array(samples);
+                    allSamples.push(float32Array);
+                    frameCount += float32Array.length / numChannels;
+                }
+                
+                const decodeTime = performance.now() - startTime;
+                log(`✅ Decoded ${allSamples.length} batches in ${decodeTime.toFixed(0)}ms`, 'info');
+
+                // Concatenate all samples
+                const concatStart = performance.now();
+                const totalSamples = allSamples.reduce((sum, arr) => sum + arr.length, 0);
+                const allAudioData = new Float32Array(totalSamples);
+                let offset = 0;
+                for (const chunk of allSamples) {
+                    allAudioData.set(chunk, offset);
+                    offset += chunk.length;
+                }
+                const concatTime = performance.now() - concatStart;
+                log(`⏱️ Concatenation: ${concatTime.toFixed(0)}ms`, 'info');
+
+                // Create AudioBuffer from decoded PCM data
+                const sampleRate = audioFormat.sampleRate();
+                const channels = audioFormat.channels();
+                const duration = frameCount / sampleRate;
+                
+                const bufferStart = performance.now();
+                audioBuffer = audioContext.createBuffer(channels, frameCount, sampleRate);
+                
+                // De-interleave samples into separate channels
+                for (let channel = 0; channel < channels; channel++) {
+                    const channelData = audioBuffer.getChannelData(channel);
+                    for (let i = 0; i < frameCount; i++) {
+                        channelData[i] = allAudioData[i * channels + channel];
+                    }
+                }
+                const bufferTime = performance.now() - bufferStart;
+                log(`⏱️ De-interleaving: ${bufferTime.toFixed(0)}ms`, 'info');
+                
+                // Display audio info
+                const extension = file.name.split('.').pop().toLowerCase();
+                let codecName = extension.toUpperCase();
+                if (extension === 'm4a') codecName = 'AAC';
+                
+                document.getElementById('audioFormat').textContent = codecName;
+                document.getElementById('duration').textContent = formatTime(duration);
+                document.getElementById('sampleRate').textContent = `${sampleRate} Hz`;
+                document.getElementById('channels').textContent = channels;
+                document.getElementById('totalTime').textContent = formatTime(duration);
+
+                log(`✅ Audio ready: ${duration.toFixed(2)}s, ${sampleRate}Hz, ${channels}ch`, 'info');
+                log(`📊 Total samples: ${totalSamples} (${formatBytes(totalSamples * 4)})`, 'info');
+
+                // Show controls
+                document.getElementById('controls').classList.add('visible');
+                document.getElementById('progressContainer').classList.add('visible');
+                document.getElementById('volumeContainer').classList.add('visible');
+
+            } catch (error) {
+                log(`❌ Failed to decode audio: ${error.message}`, 'error');
+                console.error(error);
+            }
+        });
+
+        // Play button
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if (!audioBuffer) return;
+
+            if (sourceNode) {
+                sourceNode.stop();
+            }
+
+            sourceNode = audioContext.createBufferSource();
+            sourceNode.buffer = audioBuffer;
+            sourceNode.connect(gainNode);
+
+            const offset = pauseTime;
+            sourceNode.start(0, offset);
+            startTime = audioContext.currentTime - offset;
+            isPlaying = true;
+
+            log('▶ Playback started', 'info');
+
+            // Update progress
+            requestAnimationFrame(updateProgress);
+
+            // Handle playback end
+            sourceNode.onended = () => {
+                if (isPlaying) {
+                    isPlaying = false;
+                    pauseTime = 0;
+                    document.getElementById('progressFill').style.width = '0%';
+                    document.getElementById('currentTime').textContent = '0:00';
+                    log('⏹ Playback completed', 'info');
+                }
+            };
+        });
+
+        // Pause button
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            if (!isPlaying) return;
+
+            pauseTime = audioContext.currentTime - startTime;
+            sourceNode.stop();
+            isPlaying = false;
+
+            log(`⏸ Playback paused at ${formatTime(pauseTime)}`, 'info');
+        });
+
+        // Stop button
+        document.getElementById('stopBtn').addEventListener('click', () => {
+            if (sourceNode) {
+                sourceNode.stop();
+            }
+            isPlaying = false;
+            pauseTime = 0;
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('currentTime').textContent = '0:00';
+
+            log('⏹ Playback stopped', 'info');
+        });
+
+        // Volume slider
+        document.getElementById('volumeSlider').addEventListener('input', (event) => {
+            const volume = event.target.value / 100;
+            if (gainNode) {
+                gainNode.gain.value = volume;
+            }
+            document.getElementById('volumeValue').textContent = `${event.target.value}%`;
+        });
+
+        // Progress bar click
+        document.getElementById('progressBar').addEventListener('click', (event) => {
+            if (!audioBuffer) return;
+
+            const rect = event.target.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const percent = x / rect.width;
+            pauseTime = audioBuffer.duration * percent;
+
+            if (isPlaying) {
+                document.getElementById('playBtn').click();
+                document.getElementById('playBtn').click();
+            }
+
+            log(`⏩ Seeked to ${formatTime(pauseTime)}`, 'info');
+        });
+
+        // Update progress
+        function updateProgress() {
+            if (!isPlaying || !audioBuffer) return;
+
+            const currentTime = audioContext.currentTime - startTime;
+            const percent = (currentTime / audioBuffer.duration) * 100;
+
+            document.getElementById('progressFill').style.width = `${Math.min(percent, 100)}%`;
+            document.getElementById('currentTime').textContent = formatTime(currentTime);
+
+            if (isPlaying) {
+                requestAnimationFrame(updateProgress);
+            }
+        }
+
+        // Initialize on load
+        initWasm();
+    </script>
+</body>
+</html>

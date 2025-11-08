@@ -145,11 +145,12 @@ impl SymphoniaDecoder {
             .sample_rate
             .ok_or_else(|| PlaybackError::InvalidFormat("Missing sample rate".to_string()))?;
 
+        // Channels might not be available until first decode (especially for AAC/M4A)
         let channels = track
             .codec_params
             .channels
             .map(|ch| ch.count() as u16)
-            .ok_or_else(|| PlaybackError::InvalidFormat("Missing channel count".to_string()))?;
+            .unwrap_or(2); // Default to stereo, will be updated after first decode
 
         let bits_per_sample = track.codec_params.bits_per_sample.map(|b| b as u16);
         // Note: Bitrate may not be available from codec params, it's calculated during decode
@@ -469,6 +470,15 @@ impl SymphoniaDecoder {
                 Ok(decoded) => {
                     let frame_count = decoded.frames() as u64;
                     self.position_frames += frame_count;
+
+                    // Update channel count from first decoded packet if it was unknown
+                    let decoded_channels = decoded.spec().channels.count() as u16;
+                    if self.channels != decoded_channels {
+                        debug!("Updating channel count from {} to {} (detected from decoded audio)", 
+                               self.channels, decoded_channels);
+                        self.channels = decoded_channels;
+                        self.format.channels = decoded_channels;
+                    }
 
                     debug!(
                         "Decoded packet: {} frames at position {}",
