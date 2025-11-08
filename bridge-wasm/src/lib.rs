@@ -31,13 +31,14 @@
 //! ```
 
 #![cfg(target_arch = "wasm32")]
-#![deny(unsafe_code)]
+// We allow unsafe_code only in bootstrap for core_async::fs::init_filesystem
 #![warn(missing_docs)]
 
 pub mod bootstrap;
 pub mod database;
 pub mod error;
 pub mod filesystem;
+pub mod fs_adapter;
 pub mod http;
 pub mod storage;
 
@@ -46,5 +47,6 @@ pub use bootstrap::{build_wasm_bridges, WasmBridgeConfig, WasmBridgeSet};
 pub use database::WasmDbAdapter;
 pub use error::{WasmError, WasmResult};
 pub use filesystem::WasmFileSystem;
+pub use fs_adapter::WasmFileSystemAdapter;
 pub use http::WasmHttpClient;
 pub use storage::{WasmSecureStore, WasmSettingsStore};

@@ -2,6 +2,8 @@
 //!
 //! These tests verify that the async abstraction works correctly with Tokio.
 
+#![cfg(not(target_arch = "wasm32"))]
+
 use core_async::{sync, task, time};
 use std::sync::Arc;
 

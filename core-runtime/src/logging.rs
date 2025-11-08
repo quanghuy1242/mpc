@@ -58,28 +58,25 @@ use crate::error::Result;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::error::{Error, Result};
 
-#[cfg(not(target_arch = "wasm32"))]
-use bridge_traits::time::{LogEntry, LogLevel, LoggerSink};
 #[cfg(target_arch = "wasm32")]
-use bridge_traits::time::{LogLevel, LoggerSink};
+use web_sys;
+
+use bridge_traits::time::{LogEntry, LogLevel, LoggerSink};
 
 #[cfg(not(target_arch = "wasm32"))]
 use core_async::runtime;
+#[cfg(target_arch = "wasm32")]
+use core_async::task;
 
-#[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashMap;
-#[cfg(not(target_arch = "wasm32"))]
 use std::fmt;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io;
 
 use std::sync::Arc;
 
-#[cfg(not(target_arch = "wasm32"))]
 use tracing::field::{Field, Visit};
-#[cfg(not(target_arch = "wasm32"))]
 use tracing::{Event, Subscriber};
-#[cfg(not(target_arch = "wasm32"))]
 use tracing_subscriber::{
     filter::EnvFilter,
     layer::{Context, SubscriberExt},
@@ -227,12 +224,31 @@ pub fn init_logging(config: LoggingConfig) -> Result<()> {
 
 /// Initialize logging for WASM target.
 ///
-/// On WASM, we use a simplified logging setup since tracing-subscriber
-/// has limited support for the WASM target. Console logging is used directly.
+/// On WASM, we use tracing-wasm for browser console integration
 #[cfg(target_arch = "wasm32")]
-pub fn init_logging(_config: LoggingConfig) -> Result<()> {
-    // On WASM, we rely on console_error_panic_hook and web-sys console
-    // for logging. The tracing infrastructure is too complex for WASM.
+pub fn init_logging(config: LoggingConfig) -> Result<()> {
+    // Set up tracing-wasm for console output
+    tracing_wasm::set_as_global_default_with_config(
+        tracing_wasm::WASMLayerConfigBuilder::default()
+            .set_max_level(tracing::Level::TRACE)
+            .build()
+    );
+    
+    // Note: LoggerSink integration on WASM is limited by tracing-subscriber's
+    // Send+Sync requirements. The LoggerSinkLayer struct and on_event() method
+    // are enabled for WASM (using spawn() instead of block_on), but cannot be
+    // integrated into the tracing-subscriber registry system because:
+    // 1. Arc<dyn LoggerSink> on WASM doesn't implement Send+Sync (uses PlatformSendSync)
+    // 2. tracing_subscriber::registry() requires Send+Sync subscribers
+    // 3. tracing-wasm uses a custom non-Send subscriber setup
+    //
+    // For now, logs go to browser console. LoggerSink on WASM would need either:
+    // - A separate event hook outside the tracing layer system, or
+    // - A custom WASM-specific subscriber that doesn't use registry()
+    if config.logger_sink.is_some() {
+        web_sys::console::warn_1(&"LoggerSink not integrated with tracing on WASM (Send+Sync constraint)".into());
+    }
+    
     Ok(())
 }
 
@@ -389,20 +405,17 @@ where
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Layer that forwards events to a `LoggerSink` implementation.
 struct LoggerSinkLayer {
     sink: Option<Arc<dyn LoggerSink>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl LoggerSinkLayer {
     fn new(sink: Option<Arc<dyn LoggerSink>>) -> Self {
         Self { sink }
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl<S> Layer<S> for LoggerSinkLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -453,11 +466,15 @@ where
         }
 
         #[cfg(target_arch = "wasm32")]
-        runtime::block_on(async move {
-            if let Err(err) = sink.log(entry).await {
-                eprintln!("LoggerSink error: {}", err);
-            }
-        });
+        {
+            // On WASM, use spawn() fire-and-forget since we cannot block the event loop
+            let _handle = task::spawn(async move {
+                if let Err(err) = sink.log(entry).await {
+                    eprintln!("LoggerSink error: {}", err);
+                }
+            });
+            return;
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         if let Err(err) = runtime::block_on(async move { sink.log(entry).await }) {
@@ -466,15 +483,12 @@ where
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct SinkVisitor {
     message: Option<String>,
     fields: HashMap<String, String>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl SinkVisitor {
     fn record_value(&mut self, field: &Field, value: String) {
         if field.name() == "message" {
@@ -485,7 +499,6 @@ impl SinkVisitor {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl Visit for SinkVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
         self.record_value(field, value.to_string());
@@ -516,7 +529,6 @@ impl Visit for SinkVisitor {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn tracing_level_to_log_level(level: tracing::Level) -> LogLevel {
     match level {
         tracing::Level::TRACE => LogLevel::Trace,

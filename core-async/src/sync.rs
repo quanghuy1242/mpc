@@ -54,7 +54,7 @@ pub use tokio_util::sync::CancellationToken;
 pub use futures::channel::{mpsc, oneshot};
 
 #[cfg(target_arch = "wasm32")]
-use std::{cell::Cell, rc::Rc};
+
 
 #[cfg(target_arch = "wasm32")]
 /// An async mutex for protecting shared data.
@@ -66,27 +66,7 @@ pub struct Mutex<T> {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Clone, Default)]
-pub struct CancellationToken {
-    cancelled: Rc<Cell<bool>>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl CancellationToken {
-    pub fn new() -> Self {
-        Self {
-            cancelled: Rc::new(Cell::new(false)),
-        }
-    }
-
-    pub fn cancel(&self) {
-        self.cancelled.set(true);
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.get()
-    }
-}
+pub use crate::wasm::{CancellationToken, Notify, Semaphore, SemaphorePermit, Barrier, BarrierWaitResult};
 
 #[cfg(target_arch = "wasm32")]
 impl<T> Mutex<T> {
@@ -328,117 +308,7 @@ impl<'a, T: std::fmt::Display> std::fmt::Display for RwLockWriteGuard<'a, T> {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-/// A synchronization primitive for notifying tasks.
-///
-/// This is a simplified version for WASM.
-pub struct Notify {
-    notified: std::rc::Rc<std::cell::Cell<bool>>,
-}
 
-#[cfg(target_arch = "wasm32")]
-impl Notify {
-    /// Creates a new `Notify`.
-    pub fn new() -> Self {
-        Self {
-            notified: std::rc::Rc::new(std::cell::Cell::new(false)),
-        }
-    }
-
-    /// Notifies one waiting task.
-    ///
-    /// On WASM, this is a no-op for now since we don't have proper
-    /// async notification support.
-    pub fn notify_one(&self) {
-        self.notified.set(true);
-    }
-
-    /// Notifies all waiting tasks.
-    pub fn notify_waiters(&self) {
-        self.notified.set(true);
-    }
-
-    /// Waits for a notification.
-    ///
-    /// On WASM, this checks if notified and resets the flag.
-    pub async fn notified(&self) {
-        // Simple spin-wait for WASM
-        while !self.notified.get() {
-            crate::task::yield_now().await;
-        }
-        self.notified.set(false);
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl Default for Notify {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-/// A barrier for synchronizing multiple tasks.
-///
-/// This is a simplified version for WASM. Not fully implemented.
-pub struct Barrier {
-    _phantom: std::marker::PhantomData<()>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl Barrier {
-    /// Creates a new barrier that waits for `n` tasks.
-    ///
-    /// # Panics
-    ///
-    /// Panics on WASM as barriers are not yet fully supported.
-    pub fn new(_n: usize) -> Self {
-        panic!("Barrier is not fully supported on WASM");
-    }
-
-    /// Waits for all tasks to reach the barrier.
-    pub async fn wait(&self) {
-        panic!("Barrier is not fully supported on WASM");
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-/// A counting semaphore.
-///
-/// This is a simplified version for WASM. Not fully implemented.
-pub struct Semaphore {
-    _phantom: std::marker::PhantomData<()>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl Semaphore {
-    /// Creates a new semaphore with `permits` permits.
-    ///
-    /// # Panics
-    ///
-    /// Panics on WASM as semaphores are not yet fully supported.
-    pub fn new(_permits: usize) -> Self {
-        panic!("Semaphore is not fully supported on WASM");
-    }
-
-    /// Acquires a permit.
-    pub async fn acquire(&self) -> Result<SemaphorePermit<'_>, ()> {
-        panic!("Semaphore is not fully supported on WASM");
-    }
-
-    /// Returns the number of available permits.
-    ///
-    /// Note: On WASM this always returns 0 as semaphores are not fully implemented.
-    pub fn available_permits(&self) -> usize {
-        0
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-/// A permit from a semaphore.
-pub struct SemaphorePermit<'a> {
-    _phantom: std::marker::PhantomData<&'a ()>,
-}
 
 // ============================================================================
 // Broadcast Channel (WASM Implementation)
@@ -448,11 +318,15 @@ pub struct SemaphorePermit<'a> {
 /// Broadcast channel types.
 ///
 /// On WASM, broadcast channels use a single-threaded implementation
-/// with `Rc` and `RefCell` for interior mutability.
+/// with `Rc` and `RefCell` for interior mutability, with proper Waker-based
+/// async notification instead of spin loops.
 pub mod broadcast {
     use std::cell::RefCell;
     use std::collections::VecDeque;
     use std::rc::Rc;
+    use std::task::{Context, Poll, Waker};
+    use std::pin::Pin;
+    use std::future::Future;
 
     /// Error type for broadcast operations.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -493,6 +367,8 @@ pub mod broadcast {
         closed: bool,
         receiver_count: usize,
         total_sent: u64,
+        /// Wakers for receivers waiting for messages.
+        waiters: Vec<Waker>,
     }
 
     /// A broadcast sender.
@@ -523,7 +399,17 @@ pub mod broadcast {
                 shared.buffer.pop_front();
             }
 
-            Ok(shared.receiver_count)
+            let receiver_count = shared.receiver_count;
+
+            // Wake all waiting receivers
+            let waiters = std::mem::take(&mut shared.waiters);
+            drop(shared); // Drop borrow before waking
+            
+            for waker in waiters {
+                waker.wake();
+            }
+
+            Ok(receiver_count)
         }
 
         /// Creates a new receiver for this broadcast channel.
@@ -553,9 +439,18 @@ pub mod broadcast {
 
     impl<T> Drop for Sender<T> {
         fn drop(&mut self) {
-            // If this is the last sender, close the channel
+            // If this is the last sender, close the channel and wake all waiters
             if Rc::strong_count(&self.shared) == self.shared.borrow().receiver_count + 1 {
-                self.shared.borrow_mut().closed = true;
+                let mut shared = self.shared.borrow_mut();
+                shared.closed = true;
+                
+                // Wake all waiting receivers so they get RecvError::Closed
+                let waiters = std::mem::take(&mut shared.waiters);
+                drop(shared); // Drop borrow before waking
+                
+                for waker in waiters {
+                    waker.wake();
+                }
             }
         }
     }
@@ -571,22 +466,12 @@ pub mod broadcast {
     impl<T: Clone> Receiver<T> {
         /// Receives the next value from the channel.
         ///
-        /// Waits asynchronously if no messages are available.
+        /// Waits asynchronously using proper Waker notification (no spin loop).
         pub async fn recv(&mut self) -> Result<T, RecvError> {
-            loop {
-                let result = self.try_recv();
-
-                match result {
-                    Ok(value) => return Ok(value),
-                    Err(TryRecvError::Empty) => {
-                        // Wait a bit before trying again
-                        crate::task::yield_now().await;
-                        continue;
-                    }
-                    Err(TryRecvError::Closed) => return Err(RecvError::Closed),
-                    Err(TryRecvError::Lagged(n)) => return Err(RecvError::Lagged(n)),
-                }
+            RecvFuture {
+                receiver: self,
             }
+            .await
         }
 
         /// Attempts to receive the next value without blocking.
@@ -626,6 +511,30 @@ pub mod broadcast {
         }
     }
 
+    /// Future implementation for receiving from broadcast channel.
+    struct RecvFuture<'a, T> {
+        receiver: &'a mut Receiver<T>,
+    }
+
+    impl<'a, T: Clone> Future for RecvFuture<'a, T> {
+        type Output = Result<T, RecvError>;
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            // Try to receive immediately
+            match self.receiver.try_recv() {
+                Ok(value) => Poll::Ready(Ok(value)),
+                Err(TryRecvError::Closed) => Poll::Ready(Err(RecvError::Closed)),
+                Err(TryRecvError::Lagged(n)) => Poll::Ready(Err(RecvError::Lagged(n))),
+                Err(TryRecvError::Empty) => {
+                    // Register waker to be notified when message arrives
+                    let mut shared = self.receiver.shared.borrow_mut();
+                    shared.waiters.push(cx.waker().clone());
+                    Poll::Pending
+                }
+            }
+        }
+    }
+
     /// Error type for try_recv operations.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum TryRecvError {
@@ -656,6 +565,7 @@ pub mod broadcast {
             closed: false,
             receiver_count: 1, // One receiver created by default
             total_sent: 0,
+            waiters: Vec::new(),
         }));
 
         let sender = Sender {
@@ -676,34 +586,4 @@ pub mod broadcast {
 // ============================================================================
 
 #[cfg(target_arch = "wasm32")]
-/// Watch channel types.
-///
-/// On WASM, watch channels are not yet implemented.
-pub mod watch {
-    /// Error type for watch operations.
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct RecvError;
-
-    /// Error type for send operations.
-    #[derive(Debug)]
-    pub struct SendError<T>(pub T);
-
-    /// A watch sender.
-    pub struct Sender<T> {
-        _phantom: std::marker::PhantomData<T>,
-    }
-
-    /// A watch receiver.
-    pub struct Receiver<T> {
-        _phantom: std::marker::PhantomData<T>,
-    }
-
-    /// Creates a new watch channel.
-    ///
-    /// # Panics
-    ///
-    /// Panics on WASM as watch channels are not yet supported.
-    pub fn channel<T>(_initial: T) -> (Sender<T>, Receiver<T>) {
-        panic!("watch channels are not yet supported on WASM");
-    }
-}
+pub use crate::wasm::watch;

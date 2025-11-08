@@ -23,6 +23,7 @@ wasm-bindgen-futures = { workspace = true }
 gloo-timers = { version = "0.3", features = ["futures"] }
 wasm-bindgen-test = { version = "0.3" }
 web-sys = { workspace = true, features = ["Window", "Performance"] }
+bytes = { workspace = true }
 
 [dev-dependencies]
 # For testing

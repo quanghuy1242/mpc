@@ -44,13 +44,16 @@ pub mod test_support {
 }
 
 // Core modules
-#[cfg(not(target_arch = "wasm32"))]
 pub mod fs;
 pub mod io;
 pub mod runtime;
 pub mod sync;
 pub mod task;
 pub mod time;
+
+// WASM-specific implementations
+#[cfg(target_arch = "wasm32")]
+mod wasm;
 
 // Re-export commonly used types at crate root for convenience
 pub use task::spawn;

@@ -2,10 +2,11 @@
 //!
 //! On native targets we wrap Tokio's runtime primitives so that downstream
 //! crates never need to depend on Tokio directly. For WebAssembly targets we
-//! currently provide lightweight stubs and helpers that rely on the browser
-//! event loop.
+//! provide a LocalPool-based implementation that actually waits for completion.
 
-use std::future::Future;
+// ============================================================================
+// Native Implementation (Tokio)
+// ============================================================================
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use tokio::runtime::{Builder, Handle, Runtime};
@@ -14,7 +15,7 @@ pub use tokio::runtime::{Builder, Handle, Runtime};
 #[cfg(not(target_arch = "wasm32"))]
 pub fn block_on<F>(future: F) -> F::Output
 where
-    F: Future,
+    F: std::future::Future,
 {
     Builder::new_current_thread()
         .enable_all()
@@ -23,19 +24,12 @@ where
         .block_on(future)
 }
 
-/// Runs the provided future to completion on WebAssembly.
-///
-/// We cannot synchronously block the browser event loop, so the future is
-/// scheduled using `spawn_local` and the function always returns immediately.
+// ============================================================================
+// WASM Implementation - Now actually blocks until completion!
+// ============================================================================
+
 #[cfg(target_arch = "wasm32")]
-pub fn block_on<F>(future: F)
-where
-    F: Future<Output = ()> + 'static,
-{
-    wasm_bindgen_futures::spawn_local(async move {
-        future.await;
-    });
-}
+pub use crate::wasm::runtime::block_on;
 
 #[cfg(target_arch = "wasm32")]
 pub use wasm_bindgen_futures::spawn_local;

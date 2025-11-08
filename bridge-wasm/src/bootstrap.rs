@@ -6,7 +6,7 @@
 //! `bridge-desktop` crate plays for native targets, giving wasm builds a single
 //! entry point for assembling bridge trait objects.
 
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use bridge_traits::{
     database::{DatabaseAdapter, DatabaseConfig},
@@ -16,8 +16,8 @@ use bridge_traits::{
 };
 
 use crate::{
-    filesystem::WasmFileSystem, http::WasmHttpClient, storage::WasmSecureStore,
-    storage::WasmSettingsStore, WasmDbAdapter,
+    filesystem::WasmFileSystem, fs_adapter::WasmFileSystemAdapter, http::WasmHttpClient,
+    storage::WasmSecureStore, storage::WasmSettingsStore, WasmDbAdapter,
 };
 
 /// Configuration for [`build_wasm_bridges`].
@@ -103,11 +103,27 @@ impl WasmBridgeSet {
 /// core crates.
 pub async fn build_wasm_bridges(config: WasmBridgeConfig) -> BridgeResult<WasmBridgeSet> {
     let http_client: Arc<dyn HttpClient> = Arc::new(WasmHttpClient::new()?);
+    
+    // Create two filesystem instances that share the same underlying IndexedDB
+    // This is acceptable because WasmFileSystem uses Arc<IdbDatabase> internally,
+    // so both instances reference the same database. WASM is single-threaded anyway.
+    
+    // Instance 1: For core_async::fs (requires Rc)
+    let wasm_fs_for_core = WasmFileSystem::new(&config.namespace)
+        .await
+        .map_err(BridgeError::from)?;
+    let fs_adapter = Rc::new(WasmFileSystemAdapter::new(Rc::new(wasm_fs_for_core)));
+    unsafe {
+        core_async::fs::init_filesystem(fs_adapter);
+    }
+    
+    // Instance 2: For bridge traits (requires Arc)
     let filesystem: Arc<dyn FileSystemAccess> = Arc::new(
         WasmFileSystem::new(&config.namespace)
             .await
             .map_err(BridgeError::from)?,
     );
+    
     let database: Arc<dyn DatabaseAdapter> = Arc::new(
         WasmDbAdapter::new(config.database.clone())
             .await

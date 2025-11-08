@@ -6,17 +6,46 @@ A cross-platform music playback core library written in Rust, designed to power 
 
 This is a multi-crate workspace with the following modules:
 
+### Core Modules
+- **core-async** - Runtime-agnostic async primitives (task, sync, fs, time)
+- **core-async-macros** - Proc macros for async runtime abstraction
 - **core-runtime** - Logging, config, event bus, task scheduler
 - **core-auth** - Authentication & credential management
 - **core-sync** - Sync orchestration & indexing
 - **core-library** - Database & repository layer
 - **core-metadata** - Tag extraction, artwork, lyrics
 - **core-playback** - Streaming & audio decoding
+- **core-service** - Main façade API
+
+### Storage Provider Connectors
 - **provider-google-drive** - Google Drive connector
 - **provider-onedrive** - OneDrive connector
-- **bridge-traits** - Host platform abstractions
-- **bridge-desktop** - Desktop default implementations
-- **core-service** - Main façade API
+
+### Platform Bridge Layer
+- **bridge-traits** - Host platform abstractions (filesystem, database, HTTP, storage)
+- **bridge-desktop** - Native desktop implementations (Tokio, SQLite, reqwest)
+- **bridge-wasm** - WebAssembly implementations (IndexedDB, Fetch API)
+
+## Platform Support Matrix
+
+| Module | Native | WASM | Notes |
+|--------|--------|------|-------|
+| core-async | ✅ | ✅ | Full async runtime parity |
+| core-async-macros | ✅ | ✅ | Proc macro crate |
+| core-runtime | ✅ | ✅ | Event bus, logging |
+| core-auth | ✅ | ✅ | OAuth flows |
+| core-library | ✅ | ✅ | Database abstraction |
+| core-metadata | ✅ | ✅ | Tag extraction |
+| core-playback | 🚧 | 🚧 | Audio decoding in progress |
+| core-sync | ✅ | ✅ | Sync coordinator |
+| core-service | 🚧 | 🚧 | Minor compilation issue |
+| bridge-traits | ✅ | ✅ | Platform abstractions |
+| bridge-desktop | ✅ | ❌ | Native-only |
+| bridge-wasm | ❌ | ✅ | WASM-only |
+| provider-google-drive | ✅ | ✅ | HTTP-based |
+| provider-onedrive | 🚧 | 🚧 | To do |
+
+**Legend**: ✅ Fully supported | 🚧 In progress | ⚠️ Compiles with warnings | ❌ Not applicable
 
 ## Building
 
@@ -32,6 +61,24 @@ cargo build --workspace --release
 
 # Run tests
 cargo test --workspace
+```
+
+## Building for Different Targets
+
+```bash
+# Native desktop build
+cargo build --workspace --release
+
+# WebAssembly build (requires wasm-pack)
+wasm-pack build bridge-wasm --target web
+wasm-pack build core-library --target web
+
+# Run tests
+cargo test --workspace
+
+# WASM-specific tests
+cargo test -p bridge-wasm --target wasm32-unknown-unknown
+cargo test -p core-async --target wasm32-unknown-unknown
 ```
 
 ## Features
@@ -51,9 +98,4 @@ This project is currently in initial development. See `docs/ai_task_list.md` for
 
 ## License
 
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
+Don't know, updating...
