@@ -65,11 +65,17 @@
 //! }
 //! ```
 
+pub mod config;
 pub mod error;
+pub mod ring_buffer;
+pub mod streaming;
 pub mod traits;
 
 // Re-export commonly used types
+pub use config::{StreamingConfig, StreamingState, StreamingStats};
 pub use error::{PlaybackError, Result};
+pub use ring_buffer::RingBuffer;
+pub use streaming::{StreamingRequest, StreamingService};
 pub use traits::{
     AudioCodec, AudioDecoder, AudioFormat, AudioFrameChunk, AudioSource, PlaybackAdapter,
     ProbeResult,
