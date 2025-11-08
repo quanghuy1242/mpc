@@ -308,6 +308,13 @@
             <input type="file" id="audioFile" accept="audio/*">
         </div>
 
+        <div style="text-align: center; margin-bottom: 20px;">
+            <label style="display: inline-flex; align-items: center; gap: 10px; cursor: pointer;">
+                <input type="checkbox" id="useNativeDecoder" style="width: 18px; height: 18px;">
+                <span style="color: #666; font-size: 14px;">Use browser's native decoder (for comparison)</span>
+            </label>
+        </div>
+
         <div class="info-box" id="fileInfo">
             <div class="info-row">
                 <span class="info-label">File:</span>
@@ -433,7 +440,11 @@
             const file = event.target.files[0];
             if (!file) return;
 
+            const useNative = document.getElementById('useNativeDecoder').checked;
+            const decoderType = useNative ? 'Browser Native' : 'WASM (Symphonia)';
+
             log(`📁 Selected file: ${file.name} (${formatBytes(file.size)})`, 'info');
+            log(`🔧 Using decoder: ${decoderType}`, 'info');
 
             // Show file info
             document.getElementById('fileName').textContent = file.name;
@@ -465,9 +476,47 @@
                     log('🎧 Audio context created', 'info');
                 }
 
-                // Decode entire audio using WASM decoder with batching
-                log('🔄 Decoding audio with WASM (Symphonia) - batched mode...', 'info');
-                const startTime = performance.now();
+                if (useNative) {
+                    // Use browser's native decoder (AudioContext.decodeAudioData)
+                    log('🔄 Decoding audio with browser native decoder...', 'info');
+                    const startTime = performance.now();
+                    
+                    audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    
+                    const decodeTime = performance.now() - startTime;
+                    log(`✅ Decoded with native decoder in ${decodeTime.toFixed(0)}ms`, 'info');
+
+                    // Display audio info
+                    const extension = file.name.split('.').pop().toLowerCase();
+                    let codecName = extension.toUpperCase();
+                    if (extension === 'm4a') codecName = 'AAC';
+                    
+                    document.getElementById('audioFormat').textContent = codecName + ' (Native)';
+                    document.getElementById('duration').textContent = formatTime(audioBuffer.duration);
+                    document.getElementById('sampleRate').textContent = `${audioBuffer.sampleRate} Hz`;
+                    document.getElementById('channels').textContent = audioBuffer.numberOfChannels;
+                    document.getElementById('totalTime').textContent = formatTime(audioBuffer.duration);
+
+                    const totalSamples = audioBuffer.length * audioBuffer.numberOfChannels;
+                    log(`✅ Audio ready: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.sampleRate}Hz, ${audioBuffer.numberOfChannels}ch`, 'info');
+                    log(`📊 Total samples: ${totalSamples} (${formatBytes(totalSamples * 4)})`, 'info');
+
+                } else {
+                    // Use WASM decoder
+                    // Create WASM decoder
+                    log('🔄 Initializing WASM decoder...', 'info');
+                    wasmDecoder = await JsAudioDecoder.create(uint8Array, file.name);
+                    
+                    // Get format information
+                    const probeResult = wasmDecoder.getFormat();
+                    audioFormat = probeResult.format();
+                    const durationMs = probeResult.durationMs();
+                    
+                    log(`✅ Format detected: ${audioFormat.sampleRate()}Hz, ${audioFormat.channels()}ch`, 'info');
+
+                    // Decode entire audio using WASM decoder with batching
+                    log('🔄 Decoding audio with WASM (Symphonia) - batched mode...', 'info');
+                    const startTime = performance.now();
                 
                 const allSamples = [];
                 let frameCount = 0;
@@ -530,8 +579,9 @@
                 document.getElementById('channels').textContent = channels;
                 document.getElementById('totalTime').textContent = formatTime(duration);
 
-                log(`✅ Audio ready: ${duration.toFixed(2)}s, ${sampleRate}Hz, ${channels}ch`, 'info');
-                log(`📊 Total samples: ${totalSamples} (${formatBytes(totalSamples * 4)})`, 'info');
+                    log(`✅ Audio ready: ${duration.toFixed(2)}s, ${sampleRate}Hz, ${channels}ch`, 'info');
+                    log(`📊 Total samples: ${totalSamples} (${formatBytes(totalSamples * 4)})`, 'info');
+                }
 
                 // Show controls
                 document.getElementById('controls').classList.add('visible');
