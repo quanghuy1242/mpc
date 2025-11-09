@@ -13,12 +13,27 @@ use crate::repositories::{
     SqliteArtistRepository, SqliteLyricsRepository, SqliteTrackRepository, TrackRepository,
 };
 use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
-use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use sqlx::SqlitePool;
 use std::collections::VecDeque;
+
+// Platform-specific imports
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+#[cfg(target_arch = "wasm32")]
+use std::rc::Rc as Arc;
+
+#[cfg(not(target_arch = "wasm32"))]
+use futures::stream::{self, BoxStream};
+#[cfg(target_arch = "wasm32")]
+use futures::stream::{self, LocalBoxStream};
+
+// Platform-specific stream type for conditional Send bounds
+#[cfg(not(target_arch = "wasm32"))]
+type TrackStream = BoxStream<'static, Result<TrackListItem>>;
+#[cfg(target_arch = "wasm32")]
+type TrackStream = LocalBoxStream<'static, Result<TrackListItem>>;
 
 /// Item returned when querying tracks. Includes the base `Track` plus
 /// commonly needed relational metadata to avoid additional round-trips.
@@ -248,7 +263,7 @@ impl LibraryQueryService {
     pub fn stream_tracks(
         &self,
         filter: TrackFilter,
-    ) -> Result<BoxStream<'static, Result<TrackListItem>>> {
+    ) -> Result<TrackStream> {
         validate_duration_range(filter.min_duration_ms, filter.max_duration_ms)?;
         if filter.folder_id.is_some() {
             return Err(LibraryError::InvalidInput {
@@ -291,7 +306,14 @@ impl LibraryQueryService {
             }
         });
 
-        Ok(Box::pin(stream))
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Ok(Box::pin(stream))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Ok(Box::pin(stream))
+        }
     }
 
     /// Query albums with filtering, sorting, pagination, and aggregated metadata.
