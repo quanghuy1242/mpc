@@ -44,6 +44,13 @@ import init, {
   getEventSeverity,
   getEventDescription,
   
+  // Event Constructors (Helper functions)
+  createAuthSignedInEvent,
+  createSyncStartedEvent,
+  createSyncProgressEvent,
+  createLibraryTrackAddedEvent,
+  createPlaybackStartedEvent,
+  
   // Enums
   JsEventType,
   JsEventSeverity,
@@ -662,6 +669,208 @@ async function completeExample() {
 }
 
 // ============================================================================
+// ONE EventBus for ALL Services - Real-World Architecture
+// ============================================================================
+
+/**
+ * Demonstrates the recommended pattern: ONE EventBus shared by ALL modules.
+ * 
+ * Key points:
+ * - Single EventBus instance created once
+ * - All services (auth, sync, playback, etc.) receive the SAME bus
+ * - Multiple subscribers can listen independently
+ * - Events from ANY service are broadcast to ALL subscribers
+ * - Cross-module coordination without tight coupling
+ */
+async function demonstrateSharedEventBus() {
+  console.log('\n=== ONE EventBus for ALL Services ===\n');
+  
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP 1: Create ONE EventBus (capacity = 100 events)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const eventBus = new JsEventBus(100);
+  console.log('✓ Created EventBus (capacity: 100)');
+  
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP 2: Pass SAME bus to ALL services
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  // Note: These services are imported from other modules (not shown in this file)
+  // import { JsAuthManager } from './core_auth';
+  // import { JsSyncService } from './core_sync';
+  // import { JsPlaybackEngine } from './core_playback';
+  
+  console.log('\nServices that would use this EventBus:');
+  console.log('  - JsAuthManager(eventBus, httpClient, secureStore)');
+  console.log('  - JsSyncService(eventBus, library, httpClient)');
+  console.log('  - JsPlaybackEngine(eventBus, audioContext)');
+  console.log('  - JsLibrary(eventBus, database)');
+  
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP 3: Create multiple subscribers (each gets ALL events)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  // Subscriber 1: Main UI updates
+  const uiReceiver = eventBus.subscribe();
+  console.log('\n✓ UI subscriber created');
+  
+  // Subscriber 2: Analytics/logging
+  const analyticsReceiver = eventBus.subscribe();
+  console.log('✓ Analytics subscriber created');
+  
+  // Subscriber 3: Debug console
+  const debugReceiver = eventBus.subscribe();
+  console.log('✓ Debug subscriber created');
+  
+  console.log(`\n📊 Active subscribers: ${eventBus.subscriberCount()}`);
+  
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP 4: Start event loops for each subscriber
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  let eventsProcessed = 0;
+  const maxEvents = 5; // Process a few events for demo
+  
+  // UI Event Loop (updates user interface)
+  const uiLoop = (async () => {
+    console.log('\n[UI Loop] Started');
+    while (eventsProcessed < maxEvents) {
+      try {
+        const eventJson = await uiReceiver.recv();
+        const event: CoreEvent = JSON.parse(eventJson);
+        
+        console.log(`[UI] 🖥️  ${event.type}.${event.payload.event}`);
+        
+        // Example: Update UI based on event
+        switch (event.type) {
+          case 'Auth':
+            if (event.payload.event === 'SignedIn') {
+              console.log(`[UI]    → Show user profile: ${event.payload.profile_id}`);
+            }
+            break;
+          case 'Sync':
+            if (event.payload.event === 'Progress') {
+              console.log(`[UI]    → Update progress bar: ${event.payload.percent}%`);
+            }
+            break;
+          case 'Library':
+            if (event.payload.event === 'TrackAdded') {
+              console.log(`[UI]    → Refresh track list`);
+            }
+            break;
+          case 'Playback':
+            if (event.payload.event === 'Started') {
+              console.log(`[UI]    → Update now playing: ${event.payload.title}`);
+            }
+            break;
+        }
+      } catch (error) {
+        if (String(error).includes('Lagged')) {
+          console.warn('[UI] ⚠️  Lagged behind, some events missed');
+        } else if (String(error).includes('Closed')) {
+          console.log('[UI] 🛑 EventBus closed');
+          break;
+        }
+      }
+    }
+    console.log('[UI Loop] Stopped');
+  })();
+  
+  // Analytics Event Loop (tracks metrics)
+  const analyticsLoop = (async () => {
+    console.log('[Analytics Loop] Started');
+    while (eventsProcessed < maxEvents) {
+      try {
+        const eventJson = await analyticsReceiver.recv();
+        const event: CoreEvent = JSON.parse(eventJson);
+        
+        console.log(`[Analytics] 📊 ${event.type}.${event.payload.event}`);
+        
+        // Example: Send to analytics service
+        // await sendToAnalytics({
+        //   eventType: `${event.type}.${event.payload.event}`,
+        //   timestamp: Date.now(),
+        //   ...event.payload
+        // });
+      } catch (error) {
+        if (String(error).includes('Closed')) {
+          break;
+        }
+      }
+    }
+    console.log('[Analytics Loop] Stopped');
+  })();
+  
+  // Debug Event Loop (logs everything)
+  const debugLoop = (async () => {
+    console.log('[Debug Loop] Started');
+    while (eventsProcessed < maxEvents) {
+      try {
+        const eventJson = await debugReceiver.recv();
+        const event: CoreEvent = JSON.parse(eventJson);
+        
+        console.log(`[Debug] 🔍 ${JSON.stringify(event, null, 2).substring(0, 100)}...`);
+        eventsProcessed++; // Count here since debug sees all
+      } catch (error) {
+        if (String(error).includes('Closed')) {
+          break;
+        }
+      }
+    }
+    console.log('[Debug Loop] Stopped');
+  })();
+  
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP 5: Simulate services publishing events
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  
+  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('Simulating events from different services...');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+  
+  await new Promise(resolve => setTimeout(resolve, 100)); // Let loops start
+  
+  // Event 1: Auth service publishes SignedIn
+  console.log('📤 [AuthManager] Publishing Auth.SignedIn...');
+  eventBus.emit(createAuthSignedInEvent('user-abc-123', 'GoogleDrive'));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  // Event 2: Sync service publishes Started
+  console.log('📤 [SyncService] Publishing Sync.Started...');
+  eventBus.emit(createSyncStartedEvent('job-001', 'user-abc-123', 'GoogleDrive', true));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  // Event 3: Sync service publishes Progress
+  console.log('📤 [SyncService] Publishing Sync.Progress...');
+  eventBus.emit(createSyncProgressEvent('job-001', BigInt(150), BigInt(300), 50, 'scanning'));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  // Event 4: Library service publishes TrackAdded
+  console.log('📤 [Library] Publishing Library.TrackAdded...');
+  eventBus.emit(createLibraryTrackAddedEvent('track-001', 'Bohemian Rhapsody', 'Queen', 'A Night at the Opera'));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  // Event 5: Playback service publishes Started
+  console.log('📤 [Playback] Publishing Playback.Started...');
+  eventBus.emit(createPlaybackStartedEvent('track-001', 'Bohemian Rhapsody'));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  // Wait for all events to be processed
+  await Promise.all([uiLoop, analyticsLoop, debugLoop]);
+  
+  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('✅ All subscribers received ALL events from ALL services!');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+  
+  console.log('Key takeaways:');
+  console.log('  ✓ ONE EventBus shared by all services');
+  console.log('  ✓ Each subscriber gets independent copy of every event');
+  console.log('  ✓ await receiver.recv() uses async/await (no CPU spinning!)');
+  console.log('  ✓ Cross-module coordination without tight coupling');
+  console.log('  ✓ Inner type: VecDeque<T> circular buffer with Waker notifications');
+}
+
+// ============================================================================
 // Run All Examples
 // ============================================================================
 
@@ -675,6 +884,7 @@ async function main() {
     demonstrateMetadataConfig();
     await demonstrateEventFiltering();
     await completeExample();
+    await demonstrateSharedEventBus(); // ← NEW: Show ONE bus architecture
     
     console.log('\n🎉 All examples completed successfully!');
   } catch (e) {
