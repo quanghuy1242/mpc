@@ -82,6 +82,7 @@ use bridge_traits::{
     BackgroundExecutor, FileSystemAccess, HttpClient, LifecycleObserver, NetworkMonitor,
     SecureStore, SettingsStore,
 };
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -177,7 +178,7 @@ impl std::fmt::Debug for CoreConfig {
 ///
 /// Features can be enabled during configuration to unlock additional capabilities,
 /// but may require corresponding bridge implementations to function correctly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct FeatureFlags {
     /// Enable lyrics fetching from external providers
     pub enable_lyrics: bool,
@@ -220,7 +221,7 @@ pub struct FeatureFlags {
 ///     rate_limit_delay_ms: 1000, // 1 request per second
 /// };
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MetadataApiConfig {
     /// MusicBrainz user agent string (format: "AppName/Version (Contact)")
     ///

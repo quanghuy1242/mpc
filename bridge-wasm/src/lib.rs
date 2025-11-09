@@ -42,6 +42,10 @@ pub mod fs_adapter;
 pub mod http;
 pub mod storage;
 
+// WebAssembly bindings (JavaScript-accessible wrappers)
+#[cfg(feature = "wasm-bindgen")]
+pub mod wasm;
+
 // Re-export commonly used types
 pub use bootstrap::{build_wasm_bridges, WasmBridgeConfig, WasmBridgeSet};
 pub use database::WasmDbAdapter;
@@ -50,3 +54,7 @@ pub use filesystem::WasmFileSystem;
 pub use fs_adapter::WasmFileSystemAdapter;
 pub use http::WasmHttpClient;
 pub use storage::{WasmSecureStore, WasmSettingsStore};
+
+// Re-export wasm bindings
+#[cfg(feature = "wasm-bindgen")]
+pub use wasm::{JsHttpClient, JsSecureStore};

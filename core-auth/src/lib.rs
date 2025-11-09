@@ -22,6 +22,9 @@ pub mod oauth;
 pub mod token_store;
 pub mod types;
 
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
+
 pub use error::{AuthError, Result};
 pub use manager::{AuthManager, ProviderInfo, Session};
 pub use oauth::{OAuthConfig, OAuthFlowManager, PkceVerifier};

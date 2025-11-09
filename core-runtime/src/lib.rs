@@ -17,4 +17,7 @@ pub mod error;
 pub mod events;
 pub mod logging;
 
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
+
 pub use error::{Error, Result};

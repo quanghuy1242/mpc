@@ -14,7 +14,7 @@ wasm-opt = ['-Os', '--enable-bulk-memory', '--enable-nontrapping-float-to-int']
 bridge-traits = { path = "../bridge-traits" }
 core-runtime = { path = "../core-runtime" }
 core-auth = { path = "../core-auth" }
-core-library = { path = "../core-library" }
+core-library = { path = "../core-library", optional = true }
 core-async = { path = "../core-async" }
 
 async-trait = { workspace = true }
@@ -95,7 +95,7 @@ decoder-all = [
 http-streaming = ["dep:reqwest"]
 
 # Offline cache encryption
-offline-cache = ["aes-gcm"]
+offline-cache = ["aes-gcm", "core-library"]
 
 # WASM features
 wasm = ["console_error_panic_hook"]

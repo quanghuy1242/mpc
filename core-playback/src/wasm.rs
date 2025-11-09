@@ -3,6 +3,7 @@
 //! This module provides JavaScript/TypeScript-friendly bindings for the playback
 //! functionality using wasm-bindgen.
 
+#[cfg(feature = "offline-cache")]
 use crate::cache::{CacheConfig, EvictionPolicy};
 use crate::traits::{AudioCodec, AudioFormat, AudioSource, ProbeResult};
 use wasm_bindgen::prelude::*;
@@ -15,22 +16,8 @@ use crate::traits::AudioDecoder;
 #[cfg(feature = "core-decoder")]
 use bytes::Bytes;
 
-// Note: init_panic_hook is already exported by core-library, no need to duplicate it
-
-/// Enable Rust logging to browser console
-/// Call this once at startup to see tracing logs in DevTools
-#[wasm_bindgen(js_name = enableConsoleLogging)]
-pub fn enable_console_logging() {
-    use core_runtime::logging::{init_logging, LoggingConfig, LogFormat};
-    use bridge_traits::time::LogLevel;
-    
-    let config = LoggingConfig::default()
-        .with_format(LogFormat::Compact)
-        .with_level(LogLevel::Debug);
-    
-    let _ = init_logging(config);
-    web_sys::console::log_1(&"✅ Rust console logging enabled (tracing-wasm)".into());
-}
+// NOTE: Logging functions (init_panic_hook, enableConsoleLogging, initLogging) 
+// are already exported by core-runtime. Don't duplicate them here.
 
 // =============================================================================
 // Audio Format Types - Exported to JavaScript
@@ -140,12 +127,14 @@ impl From<ProbeResult> for JsProbeResult {
 // Cache Configuration - Exported to JavaScript
 // =============================================================================
 
+#[cfg(feature = "offline-cache")]
 /// JavaScript-accessible cache configuration
 #[wasm_bindgen]
 pub struct JsCacheConfig {
     inner: CacheConfig,
 }
 
+#[cfg(feature = "offline-cache")]
 #[wasm_bindgen]
 impl JsCacheConfig {
     /// Create a new cache config with defaults
@@ -194,6 +183,7 @@ impl JsCacheConfig {
     }
 }
 
+#[cfg(feature = "offline-cache")]
 impl Default for JsCacheConfig {
     fn default() -> Self {
         Self::new()
@@ -204,10 +194,12 @@ impl Default for JsCacheConfig {
 // Cache Status - Exported to JavaScript
 // =============================================================================
 
-/// JavaScript-accessible cache status
+#[cfg(feature = "offline-cache")]
+/// JavaScript-accessible cache status for playback
+/// NOTE: Named differently from core-library's JsCacheStatus to avoid conflicts
 #[wasm_bindgen]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum JsCacheStatus {
+pub enum JsPlaybackCacheStatus {
     NotCached,
     Downloading,
     Cached,

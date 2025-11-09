@@ -35,9 +35,15 @@ use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn};
 
 /// Offline cache manager for downloading and managing cached tracks.
+#[cfg(not(target_arch = "wasm32"))]
+type PlatformArc<T> = Arc<T>;
+
+#[cfg(target_arch = "wasm32")]
+type PlatformArc<T> = std::rc::Rc<T>;
+
 pub struct OfflineCacheManager {
     config: CacheConfig,
-    repository: Arc<dyn CacheMetadataRepository>,
+    repository: PlatformArc<dyn CacheMetadataRepository>,
     track_repository: Arc<dyn TrackRepository>,
     fs: Arc<dyn FileSystemAccess>,
     http_client: Arc<dyn HttpClient>,
@@ -79,13 +85,13 @@ impl OfflineCacheManager {
     /// ```
     pub fn new(
         config: CacheConfig,
-        db: Arc<dyn DatabaseAdapter>,
+        db: PlatformArc<dyn DatabaseAdapter>,
         track_repository: Arc<dyn TrackRepository>,
         fs: Arc<dyn FileSystemAccess>,
         http_client: Arc<dyn HttpClient>,
         storage_provider: Arc<dyn StorageProvider>,
     ) -> Self {
-        let repository = Arc::new(SqliteCacheMetadataRepository::new(db));
+        let repository = PlatformArc::new(SqliteCacheMetadataRepository::new(db));
         let download_semaphore = Arc::new(Semaphore::new(config.max_concurrent_downloads));
 
         Self {

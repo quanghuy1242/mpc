@@ -144,20 +144,22 @@ The **core-service** module serves as the unified façade and orchestration laye
               ┌──────────────────────────────┐
               │  CoreServiceMain (2-3MB)     │
               │  • Auth UI flows             │
-              │  • Query service (read-only) │
               │  • Event subscription        │
               │  • Worker coordination       │
+              │  • UI state management       │
               └──────┬──────────────┬────────┘
                      │              │
           postMessage│              │postMessage
+          (queries)  │              │(audio data)
                      │              │
       ┌──────────────▼─┐        ┌──▼─────────────┐
       │ Web Worker 1-N │        │  Audio Worker  │
       │ CoreServiceWork│        │ CoreServiceAud │
-      │ (3-4MB)        │        │ (2-3MB)        │
-      │ • Sync jobs    │        │ • Decode       │
-      │ • Metadata ext │        │ • Streaming    │
-      │ • DB writes    │        │ • Ring buffer  │
+      │ (4-5MB)        │        │ (2-3MB)        │
+      │ • core-library │        │ • Decode       │
+      │ • core-sync    │        │ • Streaming    │
+      │ • core-metadata│        │ • Ring buffer  │
+      │ • Database     │        │                │
       └────────────────┘        └────────┬───────┘
                                          │
                                          ▼
@@ -193,9 +195,15 @@ The **core-service** module serves as the unified façade and orchestration laye
   - Real-time guarantees
 
 **Bundle Breakdown**:
-- **Main Bundle** (2-3MB): core-auth, core-library queries, event bus
-- **Worker Bundle** (3-4MB): core-sync, core-metadata, core-library writes
+- **Main Bundle** (2-3MB): core-auth (OAuth flows), event bus, UI coordination
+- **Worker Bundle** (4-5MB): core-sync, core-metadata, **core-library** (complete database)
 - **Audio Bundle** (2-3MB): core-playback, Symphonia decoder
+
+**Critical Design Decision**: core-library MUST be entirely in the worker bundle because:
+- Database connections cannot be shared across JavaScript contexts
+- IndexedDB/OPFS access is per-context
+- Sync operations need to write to database
+- Main thread queries database via postMessage to worker
 
 **Characteristics**:
 - ✅ Optimal bundle sizes (8-10MB total vs 24MB monolithic)
@@ -215,7 +223,8 @@ The **core-service** module serves as the unified façade and orchestration laye
 | **Architecture** | Direct modules | Wrapper + modules | 3-bundle split |
 | **Threading** | Tokio multi-threaded | Tokio multi-threaded | Single-threaded + Workers |
 | **Parallelism** | True (shared memory) | True (shared memory) | Simulated (postMessage) |
-| **Bundle Size** | Single binary | Single binary | 8-10MB (3 bundles) |
+| **Bundle Size** | Single binary | Single binary | 9-11MB (3 bundles) |
+| **Database Location** | Any thread | Any thread | Worker ONLY |
 | **Initialization** | Manual wiring | Single call | Multi-context setup |
 | **Performance** | Excellent | Excellent | Good |
 | **Flexibility** | Maximum | Medium | Limited |

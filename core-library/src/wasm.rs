@@ -62,12 +62,18 @@ fn library_error_to_js(err: LibraryError) -> JsValue {
 // Utility Functions
 // =============================================================================
 
+// NOTE: These are only exported when building as standalone WASM.
+// When used as a dependency (e.g., in core-playback), these are disabled
+// to avoid symbol conflicts with other modules.
+
+#[cfg(feature = "wasm-standalone")]
 /// Get the library version
 #[wasm_bindgen]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+#[cfg(feature = "wasm-standalone")]
 /// Get the library name
 #[wasm_bindgen]
 pub fn name() -> String {

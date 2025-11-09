@@ -65,6 +65,7 @@
 //! }
 //! ```
 
+#[cfg(feature = "offline-cache")]
 pub mod cache;
 pub mod config;
 #[cfg(feature = "core-decoder")]

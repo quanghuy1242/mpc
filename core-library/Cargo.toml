@@ -52,3 +52,4 @@ panic = "abort"     # Smaller panic handler
 [features]
 default = ["console_error_panic_hook"]
 wee_alloc_feature = ["wee_alloc"]
+wasm-standalone = []  # Enable when building as standalone WASM (not as dependency)

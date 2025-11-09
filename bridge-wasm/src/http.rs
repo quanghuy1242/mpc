@@ -26,6 +26,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{AbortController, Request, RequestInit, RequestMode, Response, Window};
 
 /// WebAssembly HTTP client backed by the browser's `fetch` API.
+#[derive(Clone)]
 pub struct WasmHttpClient {
     window: Window,
 }

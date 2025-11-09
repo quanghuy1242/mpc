@@ -8,6 +8,9 @@ authors.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [dependencies]
 # Bridge traits
 bridge-traits = { path = "../bridge-traits" }
@@ -86,4 +89,5 @@ console_error_panic_hook = "0.1"
 wasm-bindgen-test.workspace = true
 
 [features]
-default = []
+default = ["wasm-bindgen"]
+wasm-bindgen = []

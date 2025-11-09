@@ -205,6 +205,8 @@ pub const DEFAULT_EVENT_BUFFER_SIZE: usize = 100;
 /// It wraps domain-specific event types for different modules.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", content = "payload")]
+#[cfg_attr(target_arch = "wasm32", derive(tsify::Tsify))]
+#[cfg_attr(target_arch = "wasm32", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum CoreEvent {
     /// Authentication-related events
     Auth(AuthEvent),
@@ -260,6 +262,8 @@ pub enum EventSeverity {
 /// Events related to authentication and profile management.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event")]
+#[cfg_attr(target_arch = "wasm32", derive(tsify::Tsify))]
+#[cfg_attr(target_arch = "wasm32", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum AuthEvent {
     /// User signed out from a profile.
     SignedOut {
@@ -321,6 +325,8 @@ impl AuthEvent {
 /// Events related to synchronization with cloud storage providers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event")]
+#[cfg_attr(target_arch = "wasm32", derive(tsify::Tsify))]
+#[cfg_attr(target_arch = "wasm32", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum SyncEvent {
     /// Sync job initiated.
     Started {
@@ -400,6 +406,8 @@ impl SyncEvent {
 /// Events related to library content changes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event")]
+#[cfg_attr(target_arch = "wasm32", derive(tsify::Tsify))]
+#[cfg_attr(target_arch = "wasm32", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum LibraryEvent {
     /// New track added to library.
     TrackAdded {
@@ -471,6 +479,8 @@ impl LibraryEvent {
 /// Events related to audio playback.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event")]
+#[cfg_attr(target_arch = "wasm32", derive(tsify::Tsify))]
+#[cfg_attr(target_arch = "wasm32", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum PlaybackEvent {
     /// Playback started.
     Started {

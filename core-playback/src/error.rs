@@ -147,6 +147,7 @@ pub enum PlaybackError {
     IoError(#[from] std::io::Error),
 
     /// Library error from core-library.
+    #[cfg(feature = "offline-cache")]
     #[error("Library error: {0}")]
     LibraryError(#[from] core_library::error::LibraryError),
 
