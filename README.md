@@ -15,7 +15,6 @@ This is a multi-crate workspace with the following modules:
 - **core-library** - Database & repository layer
 - **core-metadata** - Tag extraction, artwork, lyrics
 - **core-playback** - Streaming & audio decoding
-- **core-service** - Main façade API
 
 ### Storage Provider Connectors
 - **provider-google-drive** - Google Drive connector
@@ -38,7 +37,6 @@ This is a multi-crate workspace with the following modules:
 | core-metadata | ✅ | ✅ | Tag extraction |
 | core-playback | ✅ | ✅ | Audio decoding in progress |
 | core-sync | ✅ | ✅ | Sync coordinator |
-| core-service | 🚧 | 🚧 | Minor compilation issue |
 | bridge-traits | ✅ | ✅ | Platform abstractions |
 | bridge-desktop | ✅ | ❌ | Native-only |
 | bridge-wasm | ❌ | ✅ | WASM-only |
