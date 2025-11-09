@@ -2,13 +2,12 @@
 
 use crate::error::{LibraryError, Result};
 use crate::models::Artwork;
-use crate::repositories::{Page, PageRequest};
+use crate::repositories::{Page, PageRequest, PlatformArc};
 use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
 use bridge_traits::error::BridgeError;
 use bridge_traits::platform::PlatformSendSync;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use sqlx::SqlitePool;
-use std::sync::Arc;
 
 /// Artwork repository interface for data access operations
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
@@ -71,12 +70,12 @@ pub trait ArtworkRepository: PlatformSendSync {
 
 /// SQLite implementation of the artwork repository
 pub struct SqliteArtworkRepository {
-    adapter: Arc<dyn DatabaseAdapter>,
+    adapter: PlatformArc<dyn DatabaseAdapter>,
 }
 
 impl SqliteArtworkRepository {
     /// Create a new artwork repository with the given database adapter
-    pub fn new(adapter: Arc<dyn DatabaseAdapter>) -> Self {
+    pub fn new(adapter: PlatformArc<dyn DatabaseAdapter>) -> Self {
         Self { adapter }
     }
 
@@ -84,7 +83,7 @@ impl SqliteArtworkRepository {
     /// Create a new artwork repository from a SQLite connection pool (native only)
     pub fn from_pool(pool: SqlitePool) -> Self {
         use crate::adapters::SqliteAdapter;
-        Self::new(Arc::new(SqliteAdapter::from_pool(pool)))
+        Self::new(PlatformArc::new(SqliteAdapter::from_pool(pool)))
     }
 
     // Helper functions for extracting values from QueryRow

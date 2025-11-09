@@ -21,6 +21,12 @@
 //! - `ArtworkRepository` - Album artwork with deduplication support
 //! - `LyricsRepository` - Track lyrics (plain text and synced LRC format)
 
+// Platform-conditional Arc type (Rc for WASM, Arc for native)
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use std::sync::Arc as PlatformArc;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use std::rc::Rc as PlatformArc;
+
 pub mod album;
 pub mod artist;
 pub mod artwork;

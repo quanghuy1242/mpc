@@ -2,12 +2,11 @@
 
 use crate::error::{LibraryError, Result};
 use crate::models::Track;
-use crate::repositories::{Page, PageRequest};
+use crate::repositories::{Page, PageRequest, PlatformArc};
 use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
 use bridge_traits::platform::PlatformSendSync;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use sqlx::SqlitePool;
-use std::sync::Arc;
 
 const TRACK_COLUMNS: &str = "id, provider_id, provider_file_id, hash, \
     title, normalized_title, album_id, artist_id, album_artist_id, \
@@ -52,12 +51,12 @@ pub trait TrackRepository: PlatformSendSync {
 
 /// Adapter-backed track repository (works for both native and WASM targets).
 pub struct SqliteTrackRepository {
-    adapter: Arc<dyn DatabaseAdapter>,
+    adapter: PlatformArc<dyn DatabaseAdapter>,
 }
 
 impl SqliteTrackRepository {
     /// Create a new repository using the provided database adapter.
-    pub fn new(adapter: Arc<dyn DatabaseAdapter>) -> Self {
+    pub fn new(adapter: PlatformArc<dyn DatabaseAdapter>) -> Self {
         Self { adapter }
     }
 

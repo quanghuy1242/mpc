@@ -36,7 +36,6 @@ pub mod adapters;
 pub mod db;
 pub mod error;
 pub mod models;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod query;
 pub mod repositories;
 
@@ -52,7 +51,6 @@ pub use adapters::SqliteAdapter;
 pub use db::{create_pool, create_test_pool, DatabaseConfig};
 pub use error::{LibraryError, Result};
 pub use models::{AlbumId, ArtistId, PlaylistId, Track, TrackId};
-#[cfg(not(target_arch = "wasm32"))]
 pub use query::{
     AlbumFilter, AlbumListItem, AlbumSearchItem, AlbumSort, ArtistSearchItem, LibraryQueryService,
     PlaylistSearchItem, SearchResults, TrackDetails, TrackFilter, TrackListItem, TrackSort,

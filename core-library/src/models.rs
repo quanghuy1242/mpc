@@ -195,6 +195,53 @@ pub struct Track {
 }
 
 impl Track {
+    /// Create a new track with required fields
+    /// 
+    /// # Arguments
+    /// * `title` - Track title
+    /// * `provider_id` - Provider identifier (e.g., "google_drive")
+    /// * `provider_file_id` - Provider's file identifier
+    /// * `duration_ms` - Duration in milliseconds
+    /// * `disc_number` - Disc number (typically 1)
+    pub fn new(
+        title: String,
+        provider_id: String,
+        provider_file_id: String,
+        duration_ms: i64,
+        disc_number: i32,
+    ) -> Self {
+        let normalized_title = Self::normalize(&title);
+        let now = chrono::Utc::now().timestamp();
+        
+        Self {
+            id: Uuid::new_v4().to_string(),
+            provider_id,
+            provider_file_id,
+            hash: None,
+            title,
+            normalized_title,
+            album_id: None,
+            artist_id: None,
+            album_artist_id: None,
+            track_number: None,
+            disc_number,
+            genre: None,
+            year: None,
+            duration_ms,
+            bitrate: None,
+            sample_rate: None,
+            channels: None,
+            format: "unknown".to_string(),
+            file_size: None,
+            mime_type: None,
+            artwork_id: None,
+            lyrics_status: "none".to_string(),
+            created_at: now,
+            updated_at: now,
+            provider_modified_at: None,
+        }
+    }
+
     /// Validate track data
     pub fn validate(&self) -> Result<(), String> {
         if self.title.trim().is_empty() {

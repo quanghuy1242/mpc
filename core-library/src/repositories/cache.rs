@@ -4,8 +4,8 @@
 
 use crate::error::{LibraryError, Result};
 use crate::models::{CachedTrack, CacheStats, CacheStatus, TrackId};
+use crate::repositories::PlatformArc;
 use bridge_traits::database::{DatabaseAdapter, QueryRow, QueryValue};
-use std::sync::Arc;
 use tracing::{debug, error, instrument};
 
 // Schema is now managed via migrations/003_add_cache_metadata.sql
@@ -53,12 +53,12 @@ pub trait CacheMetadataRepository {
 
 /// SQLite implementation of CacheMetadataRepository.
 pub struct SqliteCacheMetadataRepository {
-    db: Arc<dyn DatabaseAdapter>,
+    db: PlatformArc<dyn DatabaseAdapter>,
 }
 
 impl SqliteCacheMetadataRepository {
     /// Create a new repository with the given database adapter.
-    pub fn new(db: Arc<dyn DatabaseAdapter>) -> Self {
+    pub fn new(db: PlatformArc<dyn DatabaseAdapter>) -> Self {
         Self { db }
     }
 
