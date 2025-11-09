@@ -14,7 +14,7 @@ use crate::cache::{
     config::{CacheConfig, EvictionPolicy},
     encryption::{CacheEncryptor, EncryptionKey},
     stats::{CacheStats, DownloadProgress},
-    CachedTrack, CacheMetadataRepository, CacheStatus, RepoCacheStats, SqliteCacheMetadataRepository,
+    CachedTrack, CacheMetadataRepository, CacheStatus, SqliteCacheMetadataRepository,
 };
 use crate::error::{PlaybackError, Result};
 use bridge_traits::{
@@ -26,7 +26,7 @@ use core_async::sync::{Mutex, Semaphore};
 use core_async::time::timeout;
 use core_library::models::{Track, TrackId};
 use core_library::repositories::TrackRepository;
-use core_runtime::events::{CoreEvent, EventBus};
+use core_runtime::events::EventBus;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -241,147 +241,209 @@ const response = await fetch('https://api.example.com/user', {
 - Web Audio API only available on main thread
 - Need fast playback start and low memory usage
 
-### Solution: Chunked Streaming with Transferable Buffers
+### Solution: StreamingService + Shared Ring Buffer
 
-**Architecture:**
-```
-Worker                           Main Thread
-──────                           ───────────
-Decode 2-sec chunk  ──Transfer──▶ Queue chunk
-     │                                │
-     │                                ▼
-     ▼                           Play chunk 1
-Decode next chunk   ──Transfer──▶ Queue chunk
-     │                                │
-     │                                ▼
-     ▼                           Play chunk 2 (seamless)
-   ...                              ...
-```
+The WASM bindings now expose `JsStreamingSession`, which wraps the Rust `StreamingService` and fills a shared `JsRingBuffer`. The worker stays responsible for networking and decoding; the main thread only receives ready-to-play PCM slabs.
 
-### Implementation
-
-**Worker: Decode and Stream**
+**Worker Setup (All-in-Worker)**
 ```javascript
 // WEB WORKER
-const CHUNK_DURATION_SECS = 2;
-const SAMPLE_RATE = 44100;
+import {
+  JsStreamingConfig,
+  JsStreamingSession,
+  JsRingBuffer,
+  JsAudioSource,
+  JsStreamingState,
+} from '../core-playback/pkg/core_playback.js';
+import { JsHttpClient } from '../bridge-wasm/pkg/bridge_wasm.js';
 
-async function decodeAndStreamTrack(trackId) {
-  // Load cached audio file
-  const audioFile = await library.getCachedAudio(trackId);
-  
-  // Initialize decoder
-  const decoder = new Symphonia(audioFile);
-  
-  let chunkIndex = 0;
-  while (!decoder.isComplete()) {
-    // Decode 2 seconds of audio
-    const pcmData = await decoder.decodeNextSeconds(CHUNK_DURATION_SECS);
-    // pcmData is Float32Array (interleaved stereo)
-    
-    // Transfer buffer to main thread (ZERO-COPY!)
-    self.postMessage({
-      type: 'audio-chunk',
-      trackId,
-      chunkIndex: chunkIndex++,
-      buffer: pcmData.buffer,      // ← ArrayBuffer
-      sampleRate: SAMPLE_RATE,
-      channels: 2,
-      length: pcmData.length / 2,  // Samples per channel
-      isLast: decoder.isComplete()
-    }, [pcmData.buffer]); // ← Transferable list (zero-copy!)
-    
-    // ⚠️ After transfer, pcmData is DETACHED in worker
-    
-    // Small delay to avoid flooding main thread
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
-  
-  self.postMessage({ type: 'decode-complete', trackId });
-}
-```
+const httpClient = new JsHttpClient(null);
+const streams = new Map(); // trackId → { session, ring, sampleRate, channels }
 
-**Main Thread: Queue and Play**
-```javascript
-// MAIN THREAD
-const audioContext = new AudioContext();
-const chunkQueues = new Map(); // trackId → AudioBuffer[]
-let currentPlayback = null;
+self.onmessage = async (msg) => {
+  switch (msg.data.type) {
+    case 'play-track': {
+      const { trackId, url, headers } = msg.data;
 
-// Start playing a track
-function playTrack(trackId) {
-  chunkQueues.set(trackId, []);
-  worker.postMessage({ type: 'start-decode', trackId });
-}
+      // Seed buffer (session will return its canonical buffer after creation)
+      const seedBuffer = new JsRingBuffer(44100 * 6, 2);
 
-// Receive decoded chunks
-worker.onmessage = (msg) => {
-  if (msg.data.type === 'audio-chunk') {
-    const { trackId, buffer, channels, sampleRate, length } = msg.data;
-    
-    // Create AudioBuffer from transferred data
-    const audioBuffer = audioContext.createBuffer(
-      channels,
-      length,
-      sampleRate
-    );
-    
-    // Copy PCM data (interleaved → separate channels)
-    const pcmData = new Float32Array(buffer);
-    for (let ch = 0; ch < channels; ch++) {
-      const channelData = audioBuffer.getChannelData(ch);
-      for (let i = 0; i < length; i++) {
-        channelData[i] = pcmData[i * channels + ch];
-      }
+      const config = new JsStreamingConfig();
+      config.setBufferFrames(44100 * 4);    // 4 seconds target buffer
+      config.setMinBufferFrames(44100);     // wait for 1 second before playback
+      config.setPrefetchThreshold(0.35);
+      config.setDecodeChunkFrames(4096);
+      config.validate();
+
+      const source = JsAudioSource.fromRemote(url, headers ?? null);
+      const session = await JsStreamingSession.create(source, seedBuffer, config, httpClient);
+
+      const ring = session.ringBuffer();
+      const probe = session.format();
+      const format = probe.format();
+
+      streams.set(trackId, {
+        session,
+        ring,
+        sampleRate: format.sampleRate(),
+        channels: format.channels(),
+      });
+
+      session.start();
+
+      self.postMessage({
+        type: 'stream-started',
+        trackId,
+        sampleRate: format.sampleRate(),
+        channels: format.channels(),
+        durationMs: probe.durationMs() ?? null,
+      });
+
+      pumpRing(trackId).catch(console.error);
+      break;
     }
-    
-    // Add to queue
-    const queue = chunkQueues.get(trackId);
-    queue.push(audioBuffer);
-    
-    // Start playback on first chunk
-    if (queue.length === 1 && !currentPlayback) {
-      scheduleNextChunk(trackId);
+
+    case 'pause-track': {
+      const state = streams.get(msg.data.trackId);
+      if (state) state.session.pause();
+      break;
+    }
+
+    case 'resume-track': {
+      const state = streams.get(msg.data.trackId);
+      if (state) state.session.resume();
+      break;
+    }
+
+    case 'stop-track': {
+      const state = streams.get(msg.data.trackId);
+      if (state) {
+        state.session.stop();
+        streams.delete(msg.data.trackId);
+      }
+      break;
     }
   }
 };
 
-// Schedule chunks for seamless playback
-function scheduleNextChunk(trackId) {
-  const queue = chunkQueues.get(trackId);
-  if (!queue || queue.length === 0) return;
-  
-  const buffer = queue.shift();
-  const source = audioContext.createBufferSource();
-  source.buffer = buffer;
-  source.connect(audioContext.destination);
-  
-  // Chain next chunk when this one ends
-  source.onended = () => {
-    scheduleNextChunk(trackId);
-  };
-  
-  source.start();
-  currentPlayback = { trackId, source, startTime: audioContext.currentTime };
-}
+async function pumpRing(trackId) {
+  const state = streams.get(trackId);
+  if (!state) return;
 
-// Pause playback
-function pause() {
-  if (currentPlayback) {
-    currentPlayback.source.stop();
-    // Calculate position for resume
-    const elapsed = audioContext.currentTime - currentPlayback.startTime;
-    currentPlayback.pausedAt = elapsed;
-  }
-}
+  const { session, ring, sampleRate, channels } = state;
+  const framesPerChunk = Math.floor(sampleRate * 0.25); // ~250ms chunks
 
-// Resume playback
-function resume() {
-  if (currentPlayback) {
-    scheduleNextChunk(currentPlayback.trackId);
+  while (streams.has(trackId)) {
+    const chunk = ring.readFrames(framesPerChunk);
+    if (chunk) {
+      self.postMessage({
+        type: 'pcm-chunk',
+        trackId,
+        buffer: chunk.buffer,
+        sampleRate,
+        channels,
+      }, [chunk.buffer]);
+      continue;
+    }
+
+    if (session.state() === JsStreamingState.Completed) {
+      await session.awaitCompletion();
+      self.postMessage({ type: 'stream-complete', trackId });
+      streams.delete(trackId);
+      break;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 8));
   }
 }
 ```
+
+**Main Thread: Schedule PCM Playback**
+```javascript
+// MAIN THREAD
+const audioContext = new AudioContext();
+const playback = new Map(); // trackId → { nextStart, sampleRate, channels }
+
+function playTrack(trackId, url) {
+  playback.set(trackId, {
+    nextStart: audioContext.currentTime,
+    sampleRate: null,
+    channels: null,
+  });
+
+  worker.postMessage({ type: 'play-track', trackId, url });
+}
+
+worker.onmessage = (msg) => {
+  switch (msg.data.type) {
+    case 'stream-started': {
+      const state = playback.get(msg.data.trackId);
+      if (state) {
+        state.sampleRate = msg.data.sampleRate;
+        state.channels = msg.data.channels;
+        state.nextStart = audioContext.currentTime;
+      }
+      break;
+    }
+
+    case 'pcm-chunk': {
+      const state = playback.get(msg.data.trackId);
+      if (!state) return;
+
+      const { sampleRate, channels } = state;
+      if (!sampleRate || !channels) return;
+
+      const samples = new Float32Array(msg.data.buffer);
+      const frames = samples.length / channels;
+      const audioBuffer = audioContext.createBuffer(channels, frames, sampleRate);
+
+      for (let ch = 0; ch < channels; ch++) {
+        const channelData = audioBuffer.getChannelData(ch);
+        for (let i = 0; i < frames; i++) {
+          channelData[i] = samples[i * channels + ch];
+        }
+      }
+
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+
+      const startAt = Math.max(audioContext.currentTime, state.nextStart);
+      source.start(startAt);
+      state.nextStart = startAt + frames / sampleRate;
+      break;
+    }
+
+    case 'stream-complete': {
+      playback.delete(msg.data.trackId);
+      break;
+    }
+  }
+};
+
+function pause(trackId) {
+  worker.postMessage({ type: 'pause-track', trackId });
+}
+
+function resume(trackId) {
+  worker.postMessage({ type: 'resume-track', trackId });
+}
+
+function stop(trackId) {
+  worker.postMessage({ type: 'stop-track', trackId });
+  playback.delete(trackId);
+}
+```
+
+### Seeking Support
+
+`JsStreamingSession` keeps decoding from the last cursor position. To seek:
+
+1. Send `stop-track` to halt the current session and drain the ring buffer.
+2. Create a new `JsAudioSource` with the desired offset (for remote sources use HTTP range headers, for cached content use `JsAudioSource.fromCachedChunk` plus decoder-assisted offset).
+3. Issue another `play-track` message – the new session starts filling the ring buffer immediately.
+
+Because the architecture is streaming-first, main thread state stays simple while WASM handles buffering, adaptive prefetch, and underrun recovery.
 
 ### Zero-Copy Transfer Verification
 
@@ -416,38 +478,76 @@ self.postMessage({ audio: float32Array });
 self.postMessage({ audio: float32Array.buffer }, [float32Array.buffer]);
 ```
 
-### Seeking Support
+## Offline Cache (Encrypted Downloads)
 
-**Challenge:** Can't seek in already-decoded chunks.
+The worker can orchestrate encrypted offline storage without leaving WASM by using `JsOfflineCacheManager`. The binding hides SQLite schema setup, encryption, and Google Drive / OneDrive connectors so JavaScript only handles high-level commands.
 
-**Solution:** Re-decode from seek point
+**Worker Initialization**
 ```javascript
-// MAIN THREAD: User seeks to 1:30
-function seek(trackId, positionSec) {
-  // Stop current playback
-  if (currentPlayback) {
-    currentPlayback.source.stop();
-  }
-  
-  // Clear queue
-  chunkQueues.set(trackId, []);
-  
-  // Request worker to decode from position
-  worker.postMessage({ 
-    type: 'start-decode', 
-    trackId, 
-    startPosition: positionSec 
-  });
-}
+import {
+  JsOfflineCacheManager,
+  JsCacheConfig,
+  JsStorageProviderConfig,
+  JsPlaybackCacheStatus,
+} from '../core-playback/pkg/core_playback.js';
+import { JsLibrary } from '../core-library/pkg/core_library.js';
+import { JsHttpClient } from '../bridge-wasm/pkg/bridge_wasm.js';
+import { JsEventBus } from '../core-runtime/pkg/core_runtime.js';
 
-// WORKER: Decode from position
-async function decodeAndStreamTrack(trackId, startPosition = 0) {
-  const decoder = new Symphonia(audioFile);
-  decoder.seekTo(startPosition); // Seek in compressed file
-  
-  // Continue normal chunked decode...
-}
+const library = await JsLibrary.create('indexeddb://music');
+const httpClient = new JsHttpClient(null);
+const eventBus = new JsEventBus(256);
+const storage = JsStorageProviderConfig.googleDrive(accessToken);
+
+const cacheConfig = new JsCacheConfig();
+cacheConfig.setMaxSizeMB(512);
+cacheConfig.setEvictionPolicy('lru');
+cacheConfig.setEncryption(true);
+cacheConfig.setMaxConcurrentDownloads(4);
+cacheConfig.setCacheDirectory('music-cache');
+
+const offlineCache = await JsOfflineCacheManager.create(
+  library,
+  cacheConfig,
+  'music-cache',
+  httpClient,
+  storage,
+  eventBus,
+  null // optional encryption override
+);
+
+await offlineCache.initialize();
 ```
+
+**Download + Status Reporting**
+```javascript
+self.onmessage = async (msg) => {
+  switch (msg.data.type) {
+    case 'cache-download': {
+      await offlineCache.downloadTrack(msg.data.trackId);
+      const status = await offlineCache.cacheStatus(msg.data.trackId);
+      self.postMessage({
+        type: 'cache-status',
+        trackId: msg.data.trackId,
+        status, // numeric enum → JsPlaybackCacheStatus
+      });
+      break;
+    }
+
+    case 'cache-read': {
+      const bytes = await offlineCache.readTrack(msg.data.trackId);
+      self.postMessage({
+        type: 'cache-bytes',
+        trackId: msg.data.trackId,
+        buffer: bytes.buffer,
+      }, [bytes.buffer]);
+      break;
+    }
+  }
+};
+```
+
+Forward `eventBus` messages (e.g., `CoreEvent::Playback::DownloadProgress`) to the UI to provide real-time speed indicators and queue state. The same manager exposes eviction utilities (`evictBytes`, `clearCache`) and statistics (`cacheStats`, `activeDownloads`) for cache management dashboards.
 
 ---
 

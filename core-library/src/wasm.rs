@@ -942,7 +942,6 @@ impl JsLibrary {
             }))
         })
     }
-
     // Helper methods to create repositories on-demand (repositories use Arc)
     fn track_repo(&self) -> SqliteTrackRepository {
         SqliteTrackRepository::new(self.adapter_rc.clone())
@@ -1524,6 +1523,13 @@ impl JsLibrary {
                 .map_err(|e| to_js_error(format!("Failed to delete lyrics: {}", e)))?;
             Ok(JsValue::from_bool(deleted))
         })
+    }
+}
+
+impl JsLibrary {
+    /// Clone the underlying database adapter for internal Rust consumers.
+    pub fn adapter_handle(&self) -> Rc<dyn DatabaseAdapter> {
+        self.adapter_rc.clone()
     }
 }
 

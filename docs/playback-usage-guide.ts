@@ -26,7 +26,17 @@ import init, {
   
   // Cache
   JsCacheConfig,
-  JsCacheStatus,
+  JsPlaybackCacheStatus,
+  JsOfflineCacheManager,
+  JsStorageProviderConfig,
+  
+  // Streaming
+  JsStreamingConfig,
+  JsStreamingSession,
+  JsRingBuffer,
+  JsAudioSource,
+  JsStreamingState,
+  JsStreamingStats,
   
   // Utilities
   playback_version,
@@ -41,6 +51,10 @@ import init, {
   initLogging,
   JsLoggingConfig,
 } from '../core-playback/pkg/core_playback.js';
+
+import { JsHttpClient } from '../bridge-wasm/pkg/bridge_wasm.js';
+import { JsLibrary } from '../core-library/pkg/core_library.js';
+import { JsEventBus } from '../core-runtime/pkg/core_runtime.js';
 
 // ============================================================================
 // 1. Initialize WASM
@@ -289,39 +303,51 @@ async function formatDetection() {
 }
 
 // ============================================================================
-// 8. Cache Configuration
+// 8. Offline Cache Manager
 // ============================================================================
 
-function cacheConfiguration() {
-  console.log('=== Cache Configuration ===\n');
-  
+async function offlineCacheExample(library: JsLibrary) {
+  console.log('=== Offline Cache Manager ===\n');
+
+  // Bridge dependencies
+  const httpClient = new JsHttpClient(null);
+  const eventBus = new JsEventBus(256);
+
+  // Google Drive connector (storage provider)
+  const storage = JsStorageProviderConfig.googleDrive('oauth-access-token');
+
+  // Configure cache (500 MB encrypted, 4 concurrent downloads)
   const cacheConfig = new JsCacheConfig();
-  
-  // Set max cache size (in MB)
-  cacheConfig.setMaxSizeMB(500); // 500 MB
-  
-  // Set eviction policy
-  cacheConfig.setEvictionPolicy('lru'); // or 'lfu', 'fifo', 'largest_first'
-  
-  // Enable encryption
+  cacheConfig.setMaxSizeMB(500);
+  cacheConfig.setEvictionPolicy('lru');
   cacheConfig.setEncryption(true);
-  
-  // Set max concurrent downloads
   cacheConfig.setMaxConcurrentDownloads(4);
-  
-  // Set cache directory
-  cacheConfig.setCacheDirectory('/data/music-cache');
-  
-  console.log('Cache configuration:');
-  console.log('  Max size: 500 MB');
-  console.log('  Policy: LRU');
-  console.log('  Encryption: enabled');
-  console.log('  Max concurrent downloads: 4');
-  
-  console.log('\n✓ Cache configured\n');
-  
-  // Note: Actual cache manager (OfflineCacheManager) not yet exposed to JS
-  // This will be added in a future iteration
+  cacheConfig.setCacheDirectory('music-cache');
+
+  // Create offline cache manager (namespace isolates filesystem root)
+  const manager = await JsOfflineCacheManager.create(
+    library,
+    cacheConfig,
+    'my-app',
+    httpClient,
+    storage,
+    eventBus,
+    null // Optional encryption key override
+  );
+
+  await manager.initialize();
+  console.log('Cache initialized');
+
+  // Kick off a download
+  const trackId = 'track_123';
+  await manager.downloadTrack(trackId);
+  console.log('Download started');
+
+  // Poll cache status
+  const status = await manager.cacheStatus(trackId) as JsPlaybackCacheStatus;
+  console.log(`Status: ${JsPlaybackCacheStatus[status]}`);
+
+  console.log('\n✓ Offline cache manager ready\n');
 }
 
 // ============================================================================
@@ -329,144 +355,183 @@ function cacheConfiguration() {
 // ============================================================================
 
 class StreamingPlayer {
-  private audioContext: AudioContext;
-  private decoder: any = null;
-  private currentSource: AudioBufferSourceNode | null = null;
+  private readonly audioContext = new AudioContext();
+  private readonly httpClient = new JsHttpClient(null);
+  private session: JsStreamingSession | null = null;
+  private ringBuffer: JsRingBuffer | null = null;
+  private format: JsAudioFormat | null = null;
   private isPlaying = false;
-  
-  constructor() {
-    this.audioContext = new AudioContext();
+  private pumpHandle: number | null = null;
+  private framesPerPull = 2048;
+  private nextStartTime = this.audioContext.currentTime;
+
+  async loadFromRemote(url: string, headers: Record<string, string> = {}) {
+    await this.stop();
+
+    const source = JsAudioSource.fromRemote(url, headers);
+    const streamingConfig = new JsStreamingConfig();
+    streamingConfig.setBufferFrames(44100 * 4); // 4 seconds target buffer
+    streamingConfig.setMinBufferFrames(44100);  // 1 second before playback
+    streamingConfig.validate();
+
+    const initialRing = new JsRingBuffer(44100 * 6, 2); // Placeholder until session reports actual layout
+
+    this.session = await JsStreamingSession.create(
+      source,
+      initialRing,
+      streamingConfig,
+      this.httpClient,
+    );
+
+    this.ringBuffer = this.session.ringBuffer();
+    const probe = this.session.format();
+    this.format = probe.format();
+
+    // Configure chunk size to ~250ms
+    this.framesPerPull = Math.floor(this.format.sampleRate() * 0.25);
+    this.nextStartTime = this.audioContext.currentTime;
+
+    console.log(`Streaming prepared: ${this.format.sampleRate()}Hz / ${this.format.channels()}ch`);
   }
-  
-  async loadTrack(url: string) {
-    console.log(`Loading track: ${url}`);
-    
-    // Fetch audio data
-    const response = await fetch(url);
-    const audioData = new Uint8Array(await response.arrayBuffer());
-    
-    // Create decoder
-    const filename = url.split('/').pop() || 'audio';
-    this.decoder = await JsAudioDecoder.create(audioData, filename);
-    
-    // Get format info
-    const probe = this.decoder.getFormat();
-    const format = probe.format();
-    const durationMs = probe.durationMs();
-    console.log(`Loaded: ${format.sampleRate()}Hz, ${format.channels()}ch, ${durationMs !== undefined ? (Number(durationMs) / 1000).toFixed(2) : 'unknown'}s`);
-    
-    return format;
-  }
-  
+
   async play() {
-    if (!this.decoder) {
-      throw new Error('No track loaded');
+    if (!this.session || !this.ringBuffer || !this.format) {
+      throw new Error('Stream not prepared');
     }
-    
+
     if (this.isPlaying) {
-      console.log('Already playing');
       return;
     }
-    
+
     this.isPlaying = true;
-    
-    // Reset decoder
-    await this.decoder.reset();
-    
-    // Start playback loop
-    await this.playbackLoop();
+    await this.audioContext.resume();
+    this.session.start();
+    this.schedulePump();
   }
-  
-  async playbackLoop() {
-    const probe = this.decoder.getFormat();
-    const format = probe.format();
-    const chunkDuration = 1.0; // 1 second chunks
-    const chunkFrames = Math.floor(format.sampleRate() * chunkDuration);
-    
-    while (this.isPlaying) {
-      // Decode chunk
-      const samples = await this.decoder.decodeBatch(chunkFrames, 50);
-      
-      if (samples === null) {
-        // End of track
-        this.isPlaying = false;
-        console.log('Playback completed');
-        break;
-      }
-      
-      // Create and play audio buffer
-      await this.playChunk(samples, format);
+
+  pause() {
+    if (!this.session || !this.isPlaying) {
+      return;
     }
-  }
-  
-  async playChunk(samples: Float32Array, format: any) {
-    const frameCount = samples.length / format.channels();
-    const audioBuffer = this.audioContext.createBuffer(
-      format.channels(),
-      frameCount,
-      format.sampleRate()
-    );
-    
-    // De-interleave
-    for (let channel = 0; channel < format.channels(); channel++) {
-      const channelData = audioBuffer.getChannelData(channel);
-      for (let i = 0; i < frameCount; i++) {
-        channelData[i] = samples[i * format.channels() + channel];
-      }
-    }
-    
-    // Play
-    const source = this.audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(this.audioContext.destination);
-    source.start();
-    
-    this.currentSource = source;
-    
-    // Wait for chunk to finish
-    await new Promise(resolve => {
-      source.onended = resolve;
-    });
-  }
-  
-  stop() {
+
     this.isPlaying = false;
-    if (this.currentSource) {
-      this.currentSource.stop();
-      this.currentSource = null;
+    this.session.pause();
+    this.cancelPump();
+  }
+
+  resume() {
+    if (!this.session || this.isPlaying) {
+      return;
+    }
+
+    this.isPlaying = true;
+    this.session.resume();
+    this.schedulePump();
+  }
+
+  async stop() {
+    this.isPlaying = false;
+    this.cancelPump();
+
+    if (this.session) {
+      this.session.stop();
+      await this.session.awaitCompletion();
+    }
+
+    this.session = null;
+    this.ringBuffer = null;
+    this.format = null;
+    this.nextStartTime = this.audioContext.currentTime;
+  }
+
+  private schedulePump() {
+    if (this.pumpHandle !== null) {
+      return;
+    }
+
+    const step = () => {
+      if (!this.isPlaying || !this.session || !this.ringBuffer || !this.format) {
+        this.cancelPump();
+        return;
+      }
+
+      const available = this.ringBuffer.availableFrames();
+      if (available > 0) {
+        const framesToRead = Math.min(this.framesPerPull, available);
+        const samples = this.ringBuffer.readFrames(framesToRead);
+        if (samples) {
+          this.playSamples(samples);
+        }
+      } else if (this.session.state() === JsStreamingState.Completed) {
+        console.log('Streaming completed');
+        this.stop();
+        return;
+      }
+
+      this.pumpHandle = requestAnimationFrame(step);
+    };
+
+    this.pumpHandle = requestAnimationFrame(step);
+  }
+
+  private cancelPump() {
+    if (this.pumpHandle !== null) {
+      cancelAnimationFrame(this.pumpHandle);
+      this.pumpHandle = null;
     }
   }
-  
-  async seek(position: number) {
-    if (!this.decoder) {
-      throw new Error('No track loaded');
+
+  private playSamples(samples: Float32Array) {
+    if (!this.format) {
+      return;
     }
-    
-    const wasPlaying = this.isPlaying;
-    this.stop();
-    
-    await this.decoder.seek(position);
-    
-    if (wasPlaying) {
-      await this.play();
+
+    const frames = samples.length / this.format.channels();
+    const buffer = this.audioContext.createBuffer(
+      this.format.channels(),
+      frames,
+      this.format.sampleRate(),
+    );
+
+    for (let channel = 0; channel < this.format.channels(); channel++) {
+      const channelData = buffer.getChannelData(channel);
+      for (let i = 0; i < frames; i++) {
+        channelData[i] = samples[i * this.format.channels() + channel];
+      }
     }
+
+    const source = this.audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.audioContext.destination);
+
+    const startTime = Math.max(this.audioContext.currentTime, this.nextStartTime);
+    source.start(startTime);
+    this.nextStartTime = startTime + frames / this.format.sampleRate();
+  }
+
+  stats(): JsStreamingStats | null {
+    return this.session ? this.session.stats() : null;
   }
 }
 
 // Usage:
 async function streamingPlayerExample() {
-  console.log('=== Streaming Player Example ===\n');
-  
+  console.log('=== Streaming Player (StreamingService) ===\n');
+
   const player = new StreamingPlayer();
-  
-  await player.loadTrack('/path/to/song.mp3');
+  await player.loadFromRemote('https://example.com/audio/song.mp3');
   await player.play();
-  
-  // Seek after 5 seconds
-  setTimeout(async () => {
-    console.log('Seeking to 30 seconds...');
-    await player.seek(30.0);
-  }, 5000);
+
+  // Pause after 15 seconds and resume after 3
+  setTimeout(() => {
+    console.log('Pausing playback...');
+    player.pause();
+
+    setTimeout(() => {
+      console.log('Resuming playback...');
+      player.resume();
+    }, 3000);
+  }, 15000);
 }
 
 // ============================================================================
@@ -513,7 +578,8 @@ async function main() {
     // await decodeAndPlay();
     // await seekExample();
     // await formatDetection();
-    // cacheConfiguration();
+    // const library = await JsLibrary.create('indexeddb://music-core');
+    // await offlineCacheExample(library as JsLibrary);
     // await streamingPlayerExample();
     
     performanceTips();
@@ -538,7 +604,7 @@ export {
   decodeAndPlay,
   seekExample,
   formatDetection,
-  cacheConfiguration,
+  offlineCacheExample,
   StreamingPlayer,
   performanceTips,
 };

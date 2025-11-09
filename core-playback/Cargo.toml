@@ -16,6 +16,7 @@ core-runtime = { path = "../core-runtime" }
 core-auth = { path = "../core-auth" }
 core-library = { path = "../core-library", optional = true }
 core-async = { path = "../core-async" }
+provider-google-drive = { path = "../provider-google-drive", optional = true }
 
 async-trait = { workspace = true }
 thiserror = { workspace = true }
@@ -62,6 +63,7 @@ js-sys = { workspace = true }
 web-sys = { workspace = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 wee_alloc = { version = "0.4", optional = true }
+serde-wasm-bindgen = { workspace = true }
 
 [features]
 default = ["decoder-all", "offline-cache"]
@@ -95,7 +97,7 @@ decoder-all = [
 http-streaming = ["dep:reqwest"]
 
 # Offline cache encryption
-offline-cache = ["aes-gcm", "core-library"]
+offline-cache = ["aes-gcm", "core-library", "dep:provider-google-drive"]
 
 # WASM features
 wasm = ["console_error_panic_hook"]
