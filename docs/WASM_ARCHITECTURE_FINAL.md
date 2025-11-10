@@ -356,6 +356,9 @@ async function pumpRing(trackId) {
     await new Promise(resolve => setTimeout(resolve, 8));
   }
 }
+
+> **Architectural Note:** The `pumpRing` function uses a polling loop with `setTimeout` to check for new audio data. While effective and non-blocking because it's in a worker, a more power-efficient approach could be event-driven. A future optimization might involve exposing a notification mechanism (e.g., an `await`-able promise from Rust) that resolves only when new data is written to the buffer, allowing the pump loop to sleep efficiently instead of polling.
+
 ```
 
 **Main Thread: Schedule PCM Playback**
@@ -847,6 +850,9 @@ self.onmessage = async (msg) => {
    - No bundle coordination
    - Easier to maintain
 
+> **Design Rationale:** A single monolithic bundle was chosen because the `core-*` modules are highly interdependent, making it difficult to split them into separate, logical bundles. Furthermore, WASM dynamic linking is not yet a mature or standardized technology, making a single bundle the most robust and maintainable approach at this time.
+
+
 5. **Zero-Copy Audio**
    - Transferable buffers
    - No memory duplication
@@ -895,6 +901,9 @@ self.onmessage = async (msg) => {
 - Periodic state snapshots to IndexedDB
 - Automatic worker restart
 - State restoration on restart
+
+> **Architectural Note:** Implementing robust crash recovery is critical for a production application. This adds significant responsibility to the "thin" main thread, which must act as a supervisor. It needs a reliable mechanism (like a heartbeat) to detect a worker failure and then orchestrate the complex process of restarting the worker and restoring its state from a persisted source like IndexedDB.
+
 
 ---
 

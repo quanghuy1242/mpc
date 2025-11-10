@@ -47,6 +47,11 @@ pub struct RingBuffer {
     inner: Arc<RingBufferInner>,
 }
 
+// TODO (Optimization): The current native implementation uses a mutex to guard the buffer.
+// While `parking_lot::Mutex` is fast, a truly lock-free SPSC (Single-Producer, Single-Consumer)
+// ring buffer could offer higher performance under contention. If profiling reveals that this
+// mutex is a bottleneck, consider replacing this implementation with one based on a specialized
+// crate like `ringbuf`.
 #[cfg(not(target_arch = "wasm32"))]
 struct RingBufferInner {
     buffer: parking_lot::Mutex<Vec<f32>>,

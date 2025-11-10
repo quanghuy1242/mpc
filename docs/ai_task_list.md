@@ -2322,6 +2322,8 @@ Successfully implemented comprehensive playback traits for the music platform co
 ### TASK-802: Implement WASM Bindings [P2, Complexity: 4]
 **Description**: Create web-compatible bindings with `wasm-bindgen`.
 
+**Status (2025-11-09)**: Core playback bindings now expose `StreamingService`, `RingBuffer`, and `OfflineCacheManager` to JS via `core-playback/src/wasm.rs`, including Google Drive-backed downloads and config types. Remaining work: consolidate TypeScript definitions, publish npm packaging, and integrate example web app.
+
 **Implementation Steps**:
 1. Create `core-wasm/` crate with `wasm` feature
 2. Use `wasm-bindgen` for JS interop
